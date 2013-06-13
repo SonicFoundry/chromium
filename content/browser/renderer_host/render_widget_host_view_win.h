@@ -101,7 +101,6 @@ class RenderWidgetHostViewWin
     MSG_WM_CREATE(OnCreate)
     MSG_WM_ACTIVATE(OnActivate)
     MSG_WM_DESTROY(OnDestroy)
-    MSG_WM_PAINT(OnPaint)
     MSG_WM_NCPAINT(OnNCPaint)
     MSG_WM_NCHITTEST(OnNCHitTest)
     MSG_WM_ERASEBKGND(OnEraseBkgnd)
@@ -113,6 +112,8 @@ class RenderWidgetHostViewWin
     MSG_WM_INPUTLANGCHANGE(OnInputLangChange)
     MSG_WM_THEMECHANGED(OnThemeChanged)
     MSG_WM_NOTIFY(OnNotify)
+    MESSAGE_HANDLER(WM_PAINT, OnPaint);
+    MESSAGE_HANDLER(WM_TIMER, OnTimer);
     MESSAGE_HANDLER(WM_IME_SETCONTEXT, OnImeSetContext)
     MESSAGE_HANDLER(WM_IME_STARTCOMPOSITION, OnImeStartComposition)
     MESSAGE_HANDLER(WM_IME_COMPOSITION, OnImeComposition)
@@ -165,6 +166,7 @@ class RenderWidgetHostViewWin
   virtual bool IsShowing() OVERRIDE;
   virtual gfx::Rect GetViewBounds() const OVERRIDE;
   virtual void SetBackground(const SkBitmap& background) OVERRIDE;
+  void SetLayeredWindow(HWND layered);
 
   // Implementation of RenderWidgetHostViewPort.
   virtual void InitAsPopup(RenderWidgetHostView* parent_host_view,
@@ -293,7 +295,8 @@ class RenderWidgetHostViewWin
   LRESULT OnCreate(CREATESTRUCT* create_struct);
   void OnActivate(UINT, BOOL, HWND);
   void OnDestroy();
-  void OnPaint(HDC unused_dc);
+  LRESULT OnPaint(
+      UINT message, WPARAM wparam, LPARAM lparam, BOOL& handled);
   void OnNCPaint(HRGN update_region);
   LRESULT OnNCHitTest(const CPoint& pt);
   LRESULT OnEraseBkgnd(HDC dc);
@@ -316,6 +319,8 @@ class RenderWidgetHostViewWin
   LRESULT OnImeRequest(
       UINT message, WPARAM wparam, LPARAM lparam, BOOL& handled);
   LRESULT OnMouseEvent(
+      UINT message, WPARAM wparam, LPARAM lparam, BOOL& handled);
+  LRESULT OnTimer(
       UINT message, WPARAM wparam, LPARAM lparam, BOOL& handled);
   LRESULT OnKeyEvent(
       UINT message, WPARAM wparam, LPARAM lparam, BOOL& handled);
@@ -581,6 +586,11 @@ class RenderWidgetHostViewWin
 
   // Are touch events currently enabled?
   bool touch_events_enabled_;
+
+  // Transparency with proper click-through hit-testing requires layered painting
+  HWND layered_parent_;
+  bool is_layered_window_;
+  bool update_layered_window_;
 
   scoped_ptr<ui::GestureRecognizer> gesture_recognizer_;
 

@@ -393,6 +393,8 @@ RenderWidgetHostViewWin::RenderWidgetHostViewWin(RenderWidgetHost* widget)
       pointer_down_context_(false),
       last_touch_location_(-1, -1),
       touch_events_enabled_(false),
+      update_layered_window_(false),
+      is_layered_window_(false),
       ALLOW_THIS_IN_INITIALIZER_LIST(
           gesture_recognizer_(ui::GestureRecognizer::Create(this))) {
   render_widget_host_->SetView(this);
@@ -736,6 +738,7 @@ void RenderWidgetHostViewWin::DidUpdateBackingStore(
     pixel_rect.Inset(-1, -1);
     RECT bounds = pixel_rect.ToRECT();
     InvalidateRect(&bounds, false);
+    update_layered_window_ = true;
   }
 
   if (!scroll_rect.IsEmpty()) {
@@ -1213,8 +1216,13 @@ void RenderWidgetHostViewWin::OnDestroy() {
   TrackMouseLeave(false);
 }
 
-void RenderWidgetHostViewWin::OnPaint(HDC unused_dc) {
+LRESULT RenderWidgetHostViewWin::OnPaint(UINT message, WPARAM wparam, LPARAM lparam, BOOL& handled) {
   TRACE_EVENT0("browser", "RenderWidgetHostViewWin::OnPaint");
+  if (is_layered_window_) {
+    handled = FALSE;
+    return 0L; // return value doesn't seem to matter since we are setting handled to FALSE
+  }
+  handled = TRUE;
 
   // Grab the region to paint before creation of paint_dc since it clears the
   // damage region.
@@ -1224,7 +1232,7 @@ void RenderWidgetHostViewWin::OnPaint(HDC unused_dc) {
   CPaintDC paint_dc(m_hWnd);
 
   if (!render_widget_host_)
-    return;
+    return 0L;
 
   DCHECK(render_widget_host_->GetProcess()->HasConnection());
 
@@ -1241,13 +1249,13 @@ void RenderWidgetHostViewWin::OnPaint(HDC unused_dc) {
       paint_dc.FillRect(&host_rect,
           reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
     }
-    return;
+    return 0L;
   }
 
   if (accelerated_surface_.get() &&
       render_widget_host_->is_accelerated_compositing_active()) {
     AcceleratedPaint(paint_dc.m_hDC);
-    return;
+    return 0L;
   }
 
   about_to_validate_and_paint_ = true;
@@ -1266,7 +1274,7 @@ void RenderWidgetHostViewWin::OnPaint(HDC unused_dc) {
 
   gfx::Rect damaged_rect(paint_dc.m_ps.rcPaint);
   if (damaged_rect.IsEmpty())
-    return;
+    return 0L;
 
   if (backing_store) {
     gfx::Rect bitmap_rect(gfx::Point(),
@@ -1303,7 +1311,7 @@ void RenderWidgetHostViewWin::OnPaint(HDC unused_dc) {
       gfx::Rect paint_rect =
           gfx::IntersectRects(bitmap_rect, gfx::Rect(region_rects[i]));
       if (!paint_rect.IsEmpty()) {
-        BitBlt(paint_dc.m_hDC,
+          BitBlt(paint_dc.m_hDC,
                paint_rect.x(),
                paint_rect.y(),
                paint_rect.width(),
@@ -1357,6 +1365,42 @@ void RenderWidgetHostViewWin::OnPaint(HDC unused_dc) {
     if (whiteout_start_time_.is_null())
       whiteout_start_time_ = TimeTicks::Now();
   }
+
+  return 0L;
+}
+
+void RenderWidgetHostViewWin::SetLayeredWindow(HWND layered) {
+  is_layered_window_ = true;
+  layered_parent_ = layered;
+  SetTimer(NULL, 10, NULL);
+}
+
+LRESULT RenderWidgetHostViewWin::OnTimer(UINT message, WPARAM wparam, LPARAM lparam, BOOL& handled) {
+  handled = TRUE;
+
+  if (update_layered_window_) {
+    HDC dc = ::GetDC(layered_parent_);
+    BLENDFUNCTION ftn = {
+      AC_SRC_OVER, 0, 255, AC_SRC_ALPHA
+    };
+    RECT win_rect;
+    ::GetWindowRect(layered_parent_, &win_rect);
+    POINT ptDest = {win_rect.left, win_rect.top};
+    SIZE sizeDest = {
+      win_rect.right - win_rect.left,
+      win_rect.bottom - win_rect.top
+    };
+    POINT ptSrc = {0, 0};
+    BackingStoreWin* backing_store = static_cast<BackingStoreWin*>(
+        render_widget_host_->GetBackingStore(true));
+
+    if (!UpdateLayeredWindow(layered_parent_, dc, &ptDest, &sizeDest, backing_store->hdc(), &ptSrc, 0, &ftn, ULW_ALPHA)) {
+      LOG(ERROR) << "Unable to update layered window. GLE=" << std::hex << GetLastError();
+    }
+    update_layered_window_ = false;
+  }
+
+  return 0;
 }
 
 void RenderWidgetHostViewWin::DrawBackground(const RECT& dirty_rect,
@@ -2674,8 +2718,10 @@ LRESULT RenderWidgetHostViewWin::OnSessionChange(UINT message,
       break;
     case WTS_SESSION_UNLOCK:
       // Force a repaint to update the window contents.
-      if (!is_hidden_)
+      if (!is_hidden_) {
         InvalidateRect(NULL, FALSE);
+        update_layered_window_ = true;
+      }
       accelerated_surface_->SetIsSessionLocked(false);
       break;
     default:

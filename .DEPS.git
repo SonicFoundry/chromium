@@ -142,7 +142,7 @@ deps = {
     'src/third_party/node':
         'https://github.com/zcbenz/node.git@origin/master',
     'src/content/nw':
-        'https://github.com/SonicFoundry/node-webkit.git@origin/sofo-master',
+        'https://github.com/SonicFoundry/node-webkit.git@origin/layered-transparency',
     'src/webkit/media/crypto/ppapi/cdm':
         Var('git_url') + '/chromium/cdm.git@c2b192a02546916d28233cfd8b7717ffcdcc8347',
 }
