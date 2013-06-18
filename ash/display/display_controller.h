@@ -30,6 +30,8 @@ template <typename T> class JSONValueConverter;
 
 namespace ash {
 namespace internal {
+class DisplayManager;
+class FocusActivationStore;
 class RootWindowController;
 }
 
@@ -43,6 +45,10 @@ struct ASH_EXPORT DisplayLayout {
     BOTTOM,
     LEFT
   };
+  // Factory method to create DisplayLayout from ints. The |mirrored| is
+  // set to false and |primary_id| is set to gfx::Display::kInvalidDisplayId.
+  // Used for persistence and webui.
+  static DisplayLayout FromInts(int position, int offsets);
 
   DisplayLayout();
   DisplayLayout(Position position, int offset);
@@ -65,6 +71,12 @@ struct ASH_EXPORT DisplayLayout {
   // based on the top/left edge of the primary display.
   int offset;
 
+  // True if displays are mirrored.
+  bool mirrored;
+
+  // The id of the display used as a primary display.
+  int64 primary_id;
+
   // Returns string representation of the layout for debugging/testing.
   std::string ToString() const;
 };
@@ -79,6 +91,10 @@ class ASH_EXPORT DisplayController : public gfx::DisplayObserver {
     // but before the change is applied to aura/ash.
     virtual void OnDisplayConfigurationChanging() = 0;
 
+    // Invoked when the all display configuration changes
+    // have been applied.
+    virtual void OnDisplayConfigurationChanged() {};
+
    protected:
     virtual ~Observer() {}
   };
@@ -86,6 +102,7 @@ class ASH_EXPORT DisplayController : public gfx::DisplayObserver {
   DisplayController();
   virtual ~DisplayController();
 
+  void Start();
   void Shutdown();
 
   // Returns primary display. This is safe to use after ash::Shell is
@@ -158,6 +175,8 @@ class ASH_EXPORT DisplayController : public gfx::DisplayObserver {
   void RegisterLayoutForDisplayIdPair(int64 id1,
                                       int64 id2,
                                       const DisplayLayout& layout);
+  // OBSOLETE
+  // TODO(oshima): Remove this in m28.
   void RegisterLayoutForDisplayId(int64 id, const DisplayLayout& layout);
 
   // Sets the layout for the current display pair. The |layout| specifies
@@ -173,6 +192,16 @@ class ASH_EXPORT DisplayController : public gfx::DisplayObserver {
   // Returns the display layout registered for the given display id |pair|.
   DisplayLayout GetRegisteredDisplayLayout(const DisplayIdPair& pair) const;
 
+  // Checks if the mouse pointer is on one of displays, and moves to
+  // the center of the nearest display if it's outside of all displays.
+  void EnsurePointerInDisplays();
+
+  gfx::Point GetNativeMouseCursorLocation() const;
+
+  // Update the current cursor image that is sutable for the given
+  // |point_in_native|.
+  void UpdateMouseCursor(const gfx::Point& point_in_native);
+
   // aura::DisplayObserver overrides:
   virtual void OnDisplayBoundsChanged(
       const gfx::Display& display) OVERRIDE;
@@ -180,6 +209,11 @@ class ASH_EXPORT DisplayController : public gfx::DisplayObserver {
   virtual void OnDisplayRemoved(const gfx::Display& display) OVERRIDE;
 
  private:
+  friend class internal::DisplayManager;
+
+  // Create a root window for given |display|.
+  aura::RootWindow* CreateRootWindowForDisplay(const gfx::Display& display);
+
   // Creates a root window for |display| and stores it in the |root_windows_|
   // map.
   aura::RootWindow* AddRootWindowForDisplay(const gfx::Display& display);
@@ -187,6 +221,7 @@ class ASH_EXPORT DisplayController : public gfx::DisplayObserver {
   void UpdateDisplayBoundsForLayout();
 
   void NotifyDisplayConfigurationChanging();
+  void NotifyDisplayConfigurationChanged();
 
   void SetLayoutForDisplayIdPair(const DisplayIdPair& display_pair,
                                  const DisplayLayout& layout);
@@ -196,6 +231,10 @@ class ASH_EXPORT DisplayController : public gfx::DisplayObserver {
       int64 id2,
       const DisplayLayout& layout,
       bool override);
+
+  void OnFadeOutForSwapDisplayFinished();
+
+  bool in_bootstrap() const { return in_bootstrap_; }
 
   class DisplayChangeLimiter {
    public:
@@ -226,15 +265,15 @@ class ASH_EXPORT DisplayController : public gfx::DisplayObserver {
   // Display layout per pair of devices.
   std::map<DisplayIdPair, DisplayLayout> paired_layouts_;
 
-  // The ID of the display which should be primary when connected.
-  // kInvalidDisplayID if no such preference is specified.
-  int64 desired_primary_display_id_;
-
   ObserverList<Observer> observers_;
 
   // Store the primary root window temporarily while replacing
   // display.
   aura::RootWindow* primary_root_window_for_replace_;
+
+  bool in_bootstrap_;
+
+  scoped_ptr<internal::FocusActivationStore> focus_activation_store_;
 
   DISALLOW_COPY_AND_ASSIGN(DisplayController);
 };

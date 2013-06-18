@@ -24,9 +24,9 @@
 #include "chrome/browser/chrome_page_zoom.h"
 #include "chrome/browser/custom_home_pages_table_model.h"
 #include "chrome/browser/download/download_prefs.h"
+#include "chrome/browser/gpu/gpu_mode_manager.h"
+#include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/net/url_fixer_upper.h"
-#include "chrome/browser/policy/user_cloud_policy_manager.h"
-#include "chrome/browser/policy/user_cloud_policy_manager_factory.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/printing/cloud_print/cloud_print_proxy_service.h"
 #include "chrome/browser/printing/cloud_print/cloud_print_proxy_service_factory.h"
@@ -36,6 +36,7 @@
 #include "chrome/browser/profiles/profile_info_util.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_shortcut_manager.h"
+#include "chrome/browser/search/search.h"
 #include "chrome/browser/search_engines/template_url.h"
 #include "chrome/browser/search_engines/template_url_service.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
@@ -51,7 +52,6 @@
 #include "chrome/browser/ui/chrome_select_file_policy.h"
 #include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/options/options_util.h"
-#include "chrome/browser/ui/search/search.h"
 #include "chrome/browser/ui/webui/favicon_source.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_notification_types.h"
@@ -76,8 +76,8 @@
 #include "grit/generated_resources.h"
 #include "grit/locale_settings.h"
 #include "grit/theme_resources.h"
-#include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebView.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/webui/web_ui_util.h"
 
@@ -89,6 +89,7 @@
 #if !defined(OS_CHROMEOS)
 #include "chrome/browser/printing/cloud_print/cloud_print_setup_handler.h"
 #include "chrome/browser/ui/webui/options/advanced_options_utils.h"
+#include "chromeos/chromeos_switches.h"
 #endif
 
 #if defined(OS_CHROMEOS)
@@ -101,6 +102,7 @@
 #include "chrome/browser/policy/browser_policy_connector.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/webui/options/chromeos/timezone_options_util.h"
+#include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/power_manager_client.h"
 #include "ui/gfx/image/image_skia.h"
@@ -123,11 +125,23 @@ using content::UserMetricsAction;
 
 namespace options {
 
+namespace {
+
+bool ShouldShowMultiProfilesUserList() {
+#if defined(OS_CHROMEOS)
+  // On Chrome OS we use different UI for multi-profiles.
+  return false;
+#else
+  return ProfileManager::IsMultipleProfilesEnabled();
+#endif
+}
+
+}  // namespace
+
 BrowserOptionsHandler::BrowserOptionsHandler()
     : page_initialized_(false),
       template_url_service_(NULL),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_(this)) {
-  multiprofile_ = ProfileManager::IsMultipleProfilesEnabled();
+      weak_ptr_factory_(this) {
 #if !defined(OS_MACOSX)
   default_browser_worker_ = new ShellIntegration::DefaultBrowserWorker(this);
 #endif
@@ -223,7 +237,6 @@ void BrowserOptionsHandler::GetLocalizedValues(DictionaryValue* values) {
     { "homePageShowHomeButton", IDS_OPTIONS_TOOLBAR_SHOW_HOME_BUTTON },
     { "homePageUseNewTab", IDS_OPTIONS_HOMEPAGE_USE_NEWTAB },
     { "homePageUseURL", IDS_OPTIONS_HOMEPAGE_USE_URL },
-    { "instantConfirmMessage", IDS_INSTANT_OPT_IN_MESSAGE },
     { "importData", IDS_OPTIONS_IMPORT_DATA_BUTTON },
     { "improveBrowsingExperience", IDS_OPTIONS_IMPROVE_BROWSING_EXPERIENCE },
     { "languageAndSpellCheckSettingsButton",
@@ -349,14 +362,17 @@ void BrowserOptionsHandler::GetLocalizedValues(DictionaryValue* values) {
 #if defined(OS_CHROMEOS) && defined(USE_ASH)
     { "setWallpaper", IDS_SET_WALLPAPER_BUTTON },
 #endif
+    { "advancedSectionTitleSystem",
+      IDS_OPTIONS_ADVANCED_SECTION_TITLE_SYSTEM },
 #if !defined(OS_MACOSX) && !defined(OS_CHROMEOS)
-    { "advancedSectionTitleBackground",
-      IDS_OPTIONS_ADVANCED_SECTION_TITLE_BACKGROUND },
-    { "backgroundModeCheckbox", IDS_OPTIONS_BACKGROUND_ENABLE_BACKGROUND_MODE },
+    { "backgroundModeCheckbox", IDS_OPTIONS_SYSTEM_ENABLE_BACKGROUND_MODE },
 #endif
-
-    // Strings with product-name substitutions.
 #if !defined(OS_CHROMEOS)
+    { "gpuModeCheckbox",
+      IDS_OPTIONS_SYSTEM_ENABLE_HARDWARE_ACCELERATION_MODE },
+    { "gpuModeResetRestart",
+      IDS_OPTIONS_SYSTEM_ENABLE_HARDWARE_ACCELERATION_MODE_RESTART },
+    // Strings with product-name substitutions.
     { "syncOverview", IDS_SYNC_OVERVIEW, IDS_PRODUCT_NAME },
     { "syncButtonTextStart", IDS_SYNC_START_SYNC_BUTTON_LABEL,
       IDS_SHORT_PRODUCT_NAME },
@@ -394,7 +410,6 @@ void BrowserOptionsHandler::GetLocalizedValues(DictionaryValue* values) {
 #endif
 
   RegisterStrings(values, resources, arraysize(resources));
-  RegisterTitle(values, "instantConfirmOverlay", IDS_INSTANT_OPT_IN_TITLE);
   RegisterTitle(values, "doNotTrackConfirmOverlay",
                 IDS_OPTIONS_ENABLE_DO_NOT_TRACK_BUBBLE_TITLE);
   RegisterTitle(values, "spellingConfirmOverlay",
@@ -407,19 +422,13 @@ void BrowserOptionsHandler::GetLocalizedValues(DictionaryValue* values) {
       "defaultSearchGroupLabel",
       l10n_util::GetStringFUTF16(IDS_SEARCH_PREF_EXPLANATION, omnibox_url));
 
-  string16 instant_learn_more_url = ASCIIToUTF16(chrome::kInstantLearnMoreURL);
-  int instant_message_id = IDS_INSTANT_PREF_WITH_WARNING;
-  if (chrome::search::IsInstantExtendedAPIEnabled(
-      Profile::FromWebUI(web_ui()))) {
-    instant_message_id = IDS_INSTANT_EXTENDED_PREF_WITH_WARNING;
-    values->SetString("instant_enabled", "instant_extended.enabled");
-  } else {
-    values->SetString("instant_enabled", "instant.enabled");
-  }
+  std::string instant_pref_name = chrome::GetInstantPrefName();
+  int instant_message_id = instant_pref_name == prefs::kInstantEnabled ?
+      IDS_INSTANT_PREF_WITH_WARNING : IDS_INSTANT_EXTENDED_PREF_WITH_WARNING;
+  values->SetString("instant_enabled", instant_pref_name);
   values->SetString(
       "instantPrefAndWarning",
-      l10n_util::GetStringFUTF16(instant_message_id, instant_learn_more_url));
-  values->SetString("instantLearnMoreLink", instant_learn_more_url);
+      l10n_util::GetStringUTF16(instant_message_id));
 
 #if defined(OS_CHROMEOS)
   const chromeos::User* user = chromeos::UserManager::Get()->GetLoggedInUser();
@@ -462,7 +471,7 @@ void BrowserOptionsHandler::GetLocalizedValues(DictionaryValue* values) {
   // Sets flag of whether kiosk section should be enabled.
   values->SetBoolean(
       "enableKioskSection",
-      CommandLine::ForCurrentProcess()->HasSwitch(switches::kEnableAppMode) &&
+      !CommandLine::ForCurrentProcess()->HasSwitch(switches::kDisableAppMode) &&
       (chromeos::UserManager::Get()->IsCurrentUserOwner() ||
        !base::chromeos::IsRunningOnChromeOS()));
 #endif
@@ -474,13 +483,19 @@ void BrowserOptionsHandler::GetLocalizedValues(DictionaryValue* values) {
       g_browser_process->profile_manager()->GetNumberOfProfiles() > 1);
 #endif
 
-  if (multiprofile_)
+  if (ShouldShowMultiProfilesUserList())
     values->Set("profilesInfo", GetProfilesInfoList().release());
 
 #if defined(ENABLE_MANAGED_USERS)
   ManagedUserService* service =
       ManagedUserServiceFactory::GetForProfile(Profile::FromWebUI(web_ui()));
   values->SetBoolean("profileIsManaged", service->ProfileIsManaged());
+#endif
+
+#if !defined(OS_CHROMEOS)
+  values->SetBoolean(
+      "gpuEnabledAtStart",
+      g_browser_process->gpu_mode_manager()->initial_gpu_mode_pref());
 #endif
 }
 
@@ -594,6 +609,11 @@ void BrowserOptionsHandler::RegisterMessages() {
       "performFactoryResetRestart",
       base::Bind(&BrowserOptionsHandler::PerformFactoryResetRestart,
                  base::Unretained(this)));
+#else
+  web_ui()->RegisterMessageCallback(
+      "restartBrowser",
+      base::Bind(&BrowserOptionsHandler::HandleRestartBrowser,
+                 base::Unretained(this)));
 #endif
 }
 
@@ -609,6 +629,14 @@ void BrowserOptionsHandler::OnSigninAllowedPrefChange() {
                                    *GetSyncStateDictionary());
 
   SendProfilesInfo();
+}
+
+void BrowserOptionsHandler::OnSearchSuggestPrefChange() {
+  Profile* profile = Profile::FromWebUI(web_ui());
+  web_ui()->CallJavascriptFunction(
+      "BrowserOptions.updateInstantState",
+      base::FundamentalValue(chrome::IsInstantCheckboxEnabled(profile)),
+      base::FundamentalValue(chrome::IsInstantCheckboxChecked(profile)));
 }
 
 void BrowserOptionsHandler::PageLoadStarted() {
@@ -686,6 +714,11 @@ void BrowserOptionsHandler::InitializeHandler() {
       prefs::kSigninAllowed,
       base::Bind(&BrowserOptionsHandler::OnSigninAllowedPrefChange,
                  base::Unretained(this)));
+  profile_pref_registrar_.Add(
+      prefs::kSearchSuggestEnabled,
+      base::Bind(&BrowserOptionsHandler::OnSearchSuggestPrefChange,
+                 base::Unretained(this)));
+
 #if !defined(OS_CHROMEOS)
   profile_pref_registrar_.Add(
       prefs::kProxy,
@@ -696,7 +729,10 @@ void BrowserOptionsHandler::InitializeHandler() {
 
 void BrowserOptionsHandler::InitializePage() {
   page_initialized_ = true;
+
+  // Note that OnTemplateURLServiceChanged calls OnSearchSuggestPrefChange.
   OnTemplateURLServiceChanged();
+
   ObserveThemeChanged();
   OnStateChanged();
   UpdateDefaultBrowserState();
@@ -888,6 +924,10 @@ void BrowserOptionsHandler::OnTemplateURLServiceChanged() {
       base::FundamentalValue(default_index),
       base::FundamentalValue(
           template_url_service_->is_default_search_managed()));
+
+  // Update the state of the Instant checkbox as the new search engine may
+  // not support Instant.
+  OnSearchSuggestPrefChange();
 }
 
 // static
@@ -945,8 +985,7 @@ void BrowserOptionsHandler::Observe(
       break;
 #endif
     case chrome::NOTIFICATION_PROFILE_CACHED_INFO_CHANGED:
-      if (multiprofile_)
-        SendProfilesInfo();
+      SendProfilesInfo();
       break;
     case chrome::NOTIFICATION_GOOGLE_SIGNIN_SUCCESSFUL:
     case chrome::NOTIFICATION_GOOGLE_SIGNED_OUT:
@@ -974,8 +1013,6 @@ void BrowserOptionsHandler::ToggleAutoLaunch(const ListValue* args) {
   CHECK_EQ(args->GetSize(), 1U);
   CHECK(args->GetBoolean(0, &enable));
 
-  // Make sure we keep track of how many disable and how many enable.
-  auto_launch_trial::UpdateToggleAutoLaunchMetric(enable);
   Profile* profile = Profile::FromWebUI(web_ui());
   content::BrowserThread::PostTask(
       content::BrowserThread::FILE, FROM_HERE,
@@ -1003,7 +1040,6 @@ scoped_ptr<ListValue> BrowserOptionsHandler::GetProfilesInfoList() {
                               profile_path == current_profile_path);
     profile_value->SetBoolean("isManaged", cache.ProfileIsManagedAtIndex(i));
 
-
     bool is_gaia_picture =
         cache.IsUsingGAIAPictureOfProfileAtIndex(i) &&
         cache.GetGAIAPictureOfProfileAtIndex(i);
@@ -1025,6 +1061,8 @@ scoped_ptr<ListValue> BrowserOptionsHandler::GetProfilesInfoList() {
 }
 
 void BrowserOptionsHandler::SendProfilesInfo() {
+  if (!ShouldShowMultiProfilesUserList())
+    return;
   web_ui()->CallJavascriptFunction("BrowserOptions.setProfilesInfo",
                                    *GetProfilesInfoList());
 }
@@ -1122,12 +1160,17 @@ scoped_ptr<DictionaryValue> BrowserOptionsHandler::GetSyncStateDictionary() {
     return sync_status.Pass();
   }
 
+  bool signout_prohibited = false;
+#if !defined(OS_CHROMEOS)
   // Signout is not allowed if the user has policy (crbug.com/172204).
-  SigninManager* signin = SigninManagerFactory::GetForProfile(profile);
-  DCHECK(signin);
-  sync_status->SetBoolean("signoutAllowed", !signin->IsSignoutProhibited());
+  signout_prohibited =
+      SigninManagerFactory::GetForProfile(profile)->IsSignoutProhibited();
+#endif
+
   ProfileSyncService* service(
       ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile));
+  SigninManagerBase* signin = service->signin();
+  sync_status->SetBoolean("signoutAllowed", !signout_prohibited);
   sync_status->SetBoolean("signinAllowed", signin->IsSigninAllowed());
   sync_status->SetBoolean("syncSystemEnabled", !!service);
   sync_status->SetBoolean("setupCompleted",
@@ -1170,8 +1213,11 @@ void BrowserOptionsHandler::HandleSelectDownloadLocation(
       ui::SelectFileDialog::SELECT_FOLDER,
       l10n_util::GetStringUTF16(IDS_OPTIONS_DOWNLOADLOCATION_BROWSE_TITLE),
       pref_service->GetFilePath(prefs::kDownloadDefaultDirectory),
-      &info, 0, FILE_PATH_LITERAL(""),
-      web_ui()->GetWebContents()->GetView()->GetTopLevelNativeWindow(), NULL);
+      &info,
+      0,
+      base::FilePath::StringType(),
+      web_ui()->GetWebContents()->GetView()->GetTopLevelNativeWindow(),
+      NULL);
 }
 
 void BrowserOptionsHandler::FileSelected(const base::FilePath& path, int index,
@@ -1224,6 +1270,10 @@ void BrowserOptionsHandler::HandleDefaultZoomFactor(const ListValue* args) {
     default_zoom_level_.SetValue(
         WebKit::WebView::zoomFactorToZoomLevel(zoom_factor));
   }
+}
+
+void BrowserOptionsHandler::HandleRestartBrowser(const ListValue* args) {
+  chrome::AttemptRestart();
 }
 
 #if !defined(OS_CHROMEOS)
@@ -1392,7 +1442,8 @@ void BrowserOptionsHandler::SetupAccessibilityFeatures() {
 void BrowserOptionsHandler::SetupMetricsReportingSettingVisibility() {
 #if defined(GOOGLE_CHROME_BUILD) && defined(OS_CHROMEOS)
   // Don't show the reporting setting if we are in the guest mode.
-  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kGuestSession)) {
+  if (CommandLine::ForCurrentProcess()->HasSwitch(
+          chromeos::switches::kGuestSession)) {
     base::FundamentalValue visible(false);
     web_ui()->CallJavascriptFunction(
         "BrowserOptions.setMetricsReportingSettingVisibility", visible);

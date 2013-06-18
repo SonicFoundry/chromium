@@ -8,6 +8,7 @@ used by the bisection scripts."""
 
 import errno
 import os
+import shutil
 import subprocess
 
 
@@ -22,11 +23,14 @@ solutions = [
                               "chrome/data/page_cycler/.git",
       "src/tools/perf/data": "https://chrome-internal.googlesource.com/" +
                              "chrome/tools/perf/data/.git",
+      "src/v8_bleeding_edge": "git://github.com/v8/v8.git",
     },
     "safesync_url": "",
   },
 ]
 """
+GCLIENT_SPEC = ''.join([l for l in GCLIENT_SPEC.splitlines()])
+FILE_DEPS_GIT = '.DEPS.git'
 
 
 def OutputAnnotationStepStart(name):
@@ -36,15 +40,19 @@ def OutputAnnotationStepStart(name):
   Args:
     name: The name of the step.
   """
+  print
   print '@@@SEED_STEP %s@@@' % name
   print '@@@STEP_CURSOR %s@@@' % name
   print '@@@STEP_STARTED@@@'
+  print
 
 
 def OutputAnnotationStepClosed():
   """Outputs appropriate annotation to signal the closing of a step to
   a trybot."""
+  print
   print '@@@STEP_CLOSED@@@'
+  print
 
 
 def CreateAndChangeToSourceDirectory(working_directory):
@@ -75,8 +83,15 @@ def RunGClient(params):
   Returns:
     The return code of the call.
   """
+  if os.name == 'nt':
+    # "HOME" isn't normally defined on windows, but is needed
+    # for git to find the user's .netrc file.
+    if not os.getenv('HOME'):
+      os.environ['HOME'] = os.environ['USERPROFILE']
+
+  shell = os.name == 'nt'
   cmd = ['gclient'] + params
-  return subprocess.call(cmd)
+  return subprocess.call(cmd, shell=shell)
 
 
 def RunGClientAndCreateConfig():
@@ -90,18 +105,55 @@ def RunGClientAndCreateConfig():
   return return_code
 
 
-def RunGClientAndSync():
+def IsDepsFileBlink():
+  """Reads .DEPS.git and returns whether or not we're using blink.
+
+  Returns:
+    True if blink, false if webkit.
+  """
+  locals = {'Var': lambda _: locals["vars"][_],
+            'From': lambda *args: None}
+  execfile(FILE_DEPS_GIT, {}, locals)
+  return 'blink.git' in locals['vars']['webkit_url']
+
+
+def RemoveThirdPartyWebkitDirectory():
+  """Removes third_party/WebKit.
+
+  Returns:
+    True on success.
+  """
+  try:
+    path_to_dir = os.path.join(os.getcwd(), 'third_party', 'WebKit')
+    if os.path.exists(path_to_dir):
+      shutil.rmtree(path_to_dir)
+  except OSError, e:
+    if e.errno != errno.ENOENT:
+      return False
+  return True
+
+
+def RunGClientAndSync(reset):
   """Runs gclient and does a normal sync.
+
+  Args:
+    reset: Whether to reset any changes to the depot.
 
   Returns:
     The return code of the call.
   """
-  return RunGClient(['sync'])
+  params = ['sync', '--verbose']
+  if reset:
+    params.extend(['--reset', '--force', '--delete_unversioned_trees'])
+  return RunGClient(params)
 
 
-def SetupGitDepot(output_buildbot_annotations):
+def SetupGitDepot(output_buildbot_annotations, reset):
   """Sets up the depot for the bisection. The depot will be located in a
   subdirectory called 'bisect'.
+
+  Args:
+    reset: Whether to reset any changes to the depot.
 
   Returns:
     True if gclient successfully created the config file and did a sync, False
@@ -115,7 +167,17 @@ def SetupGitDepot(output_buildbot_annotations):
   passed = False
 
   if not RunGClientAndCreateConfig():
-    if not RunGClientAndSync():
+    passed_deps_check = True
+    if os.path.isfile(os.path.join('src', FILE_DEPS_GIT)):
+      cwd = os.getcwd()
+      os.chdir('src')
+      if not IsDepsFileBlink():
+        passed_deps_check = RemoveThirdPartyWebkitDirectory()
+      else:
+        passed_deps_check = True
+      os.chdir(cwd)
+
+    if passed_deps_check and not RunGClientAndSync(reset):
       passed = True
 
   if output_buildbot_annotations:
@@ -125,12 +187,13 @@ def SetupGitDepot(output_buildbot_annotations):
   return passed
 
 
-def CreateBisectDirectoryAndSetupDepot(opts):
+def CreateBisectDirectoryAndSetupDepot(opts, reset=False):
   """Sets up a subdirectory 'bisect' and then retrieves a copy of the depot
   there using gclient.
 
   Args:
     opts: The options parsed from the command line through parse_args().
+    reset: Whether to reset any changes to the depot.
 
   Returns:
     Returns 0 on success, otherwise 1.
@@ -140,7 +203,7 @@ def CreateBisectDirectoryAndSetupDepot(opts):
     print
     return 1
 
-  if not SetupGitDepot(opts.output_buildbot_annotations):
+  if not SetupGitDepot(opts.output_buildbot_annotations, reset):
     print 'Error: Failed to grab source.'
     print
     return 1

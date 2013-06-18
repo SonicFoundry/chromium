@@ -4,24 +4,24 @@
 
 #include "webkit/compositor_bindings/web_solid_color_layer_impl.h"
 
-#include "cc/solid_color_layer.h"
+#include "cc/layers/solid_color_layer.h"
 #include "webkit/compositor_bindings/web_layer_impl.h"
 
 using cc::SolidColorLayer;
 
-namespace WebKit {
+namespace webkit {
 
 WebSolidColorLayerImpl::WebSolidColorLayerImpl()
-    : layer_(new WebLayerImpl(SolidColorLayer::create())) {
-  layer_->layer()->setIsDrawable(true);
+    : layer_(new WebLayerImpl(SolidColorLayer::Create())) {
+  layer_->layer()->SetIsDrawable(true);
 }
 
 WebSolidColorLayerImpl::~WebSolidColorLayerImpl() {}
 
-WebLayer* WebSolidColorLayerImpl::layer() { return layer_.get(); }
+WebKit::WebLayer* WebSolidColorLayerImpl::layer() { return layer_.get(); }
 
-void WebSolidColorLayerImpl::setBackgroundColor(WebColor color) {
+void WebSolidColorLayerImpl::setBackgroundColor(WebKit::WebColor color) {
   layer_->setBackgroundColor(color);
 }
 
-}  // namespace WebKit
+}  // namespace webkit

@@ -22,7 +22,7 @@ class MockURLRequestJob : public URLRequestJob {
                     const URLRequestStatus& status)
       : URLRequestJob(request, network_delegate),
         status_(status),
-        ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {}
+        weak_factory_(this) {}
 
   virtual void Start() OVERRIDE {
     // Start reading asynchronously so that all error reporting and data
@@ -60,7 +60,7 @@ class DummyProtocolHandler : public URLRequestJobFactory::ProtocolHandler {
 TEST(URLRequestJobFactoryTest, NoProtocolHandler) {
   TestDelegate delegate;
   TestURLRequestContext request_context;
-  TestURLRequest request(GURL("foo://bar"), &delegate, &request_context);
+  TestURLRequest request(GURL("foo://bar"), &delegate, &request_context, NULL);
   request.Start();
 
   MessageLoop::current()->Run();
@@ -74,7 +74,7 @@ TEST(URLRequestJobFactoryTest, BasicProtocolHandler) {
   TestURLRequestContext request_context;
   request_context.set_job_factory(&job_factory);
   job_factory.SetProtocolHandler("foo", new DummyProtocolHandler);
-  TestURLRequest request(GURL("foo://bar"), &delegate, &request_context);
+  TestURLRequest request(GURL("foo://bar"), &delegate, &request_context, NULL);
   request.Start();
 
   MessageLoop::current()->Run();

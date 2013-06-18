@@ -5,7 +5,7 @@
 #import "chrome/browser/ui/cocoa/menu_controller.h"
 
 #include "base/logging.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #import "chrome/browser/ui/cocoa/event_utils.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/accelerators/platform_accelerator_cocoa.h"
@@ -97,7 +97,7 @@
 }
 
 // Adds an item or a hierarchical menu to the item at the |index|,
-// associated with the entry in the model indentifed by |modelIndex|.
+// associated with the entry in the model identified by |modelIndex|.
 - (void)addItemToMenu:(NSMenu*)menu
               atIndex:(NSInteger)index
             fromModel:(ui::MenuModel*)model {

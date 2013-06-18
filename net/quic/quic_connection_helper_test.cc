@@ -23,13 +23,14 @@ namespace net {
 namespace test {
 
 const char kData[] = "foo";
+const bool kHasData = true;
 
 class TestConnection : public QuicConnection {
  public:
   TestConnection(QuicGuid guid,
                  IPEndPoint address,
                  QuicConnectionHelper* helper)
-      : QuicConnection(guid, address, helper) {
+      : QuicConnection(guid, address, helper, false) {
   }
 
   void SendAck() {
@@ -58,10 +59,7 @@ class QuicConnectionHelperTest : public ::testing::Test {
 
   QuicConnectionHelperTest()
       : guid_(2),
-        framer_(kQuicVersion1,
-                QuicDecrypter::Create(kNULL),
-                QuicEncrypter::Create(kNULL)),
-        creator_(guid_, &framer_, QuicRandom::GetInstance()),
+        framer_(kQuicVersion1, QuicTime::Zero(), false),
         net_log_(BoundNetLog()),
         frame_(1, false, 0, kData) {
     Initialize();
@@ -99,16 +97,16 @@ class QuicConnectionHelperTest : public ::testing::Test {
     socket_data_.reset(new StaticSocketDataProvider(NULL, 0, mock_writes_.get(),
                                                     writes_.size()));
 
-    MockUDPClientSocket* socket =
-        new MockUDPClientSocket(socket_data_.get(), net_log_.net_log());
-    socket->Connect(IPEndPoint());
+    socket_.reset(new MockUDPClientSocket(socket_data_.get(),
+                                          net_log_.net_log()));
+    socket_->Connect(IPEndPoint());
     runner_ = new TestTaskRunner(&clock_);
-    helper_.reset(new QuicConnectionHelper(runner_.get(), &clock_,
-                                           &random_generator_, socket));
+    helper_ = new QuicConnectionHelper(runner_.get(), &clock_,
+                                       &random_generator_, socket_.get());
     send_algorithm_ = new testing::StrictMock<MockSendAlgorithm>();
-    EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _)).
+    EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _, _)).
         WillRepeatedly(testing::Return(QuicTime::Delta::Zero()));
-    connection_.reset(new TestConnection(guid_, IPEndPoint(), helper_.get()));
+    connection_.reset(new TestConnection(guid_, IPEndPoint(), helper_));
     connection_->set_visitor(&visitor_);
     connection_->SetSendAlgorithm(send_algorithm_);
   }
@@ -136,7 +134,7 @@ class QuicConnectionHelperTest : public ::testing::Test {
       QuicPacketSequenceNumber sequence_number) {
     InitializeHeader(sequence_number);
 
-    QuicAckFrame ack(0, sequence_number);
+    QuicAckFrame ack(0, QuicTime::Zero(), sequence_number);
     ack.sent_info.entropy_hash = 0;
     ack.received_info.entropy_hash = 0;
 
@@ -150,7 +148,8 @@ class QuicConnectionHelperTest : public ::testing::Test {
     frames.push_back(QuicFrame(&feedback));
     scoped_ptr<QuicPacket> packet(
         framer_.ConstructFrameDataPacket(header_, frames).packet);
-    return framer_.EncryptPacket(header_.packet_sequence_number, *packet);
+    return framer_.EncryptPacket(
+        ENCRYPTION_NONE, header_.packet_sequence_number, *packet);
   }
 
   // Returns a newly created packet to send a connection close frame.
@@ -160,7 +159,7 @@ class QuicConnectionHelperTest : public ::testing::Test {
     InitializeHeader(sequence_number);
 
     QuicFrames frames;
-    QuicAckFrame ack(0, least_waiting + 1);
+    QuicAckFrame ack(0, QuicTime::Zero(), least_waiting + 1);
     ack.sent_info.entropy_hash = 0;
     ack.received_info.entropy_hash = 0;
     QuicConnectionCloseFrame close;
@@ -172,8 +171,9 @@ class QuicConnectionHelperTest : public ::testing::Test {
 
   testing::StrictMock<MockSendAlgorithm>* send_algorithm_;
   scoped_refptr<TestTaskRunner> runner_;
-  scoped_ptr<QuicConnectionHelper> helper_;
-  scoped_array<MockWrite> mock_writes_;
+  QuicConnectionHelper* helper_;
+  scoped_ptr<MockUDPClientSocket> socket_;
+  scoped_ptr<MockWrite[]> mock_writes_;
   MockClock clock_;
   MockRandom random_generator_;
   scoped_ptr<TestConnection> connection_;
@@ -183,7 +183,7 @@ class QuicConnectionHelperTest : public ::testing::Test {
   void InitializeHeader(QuicPacketSequenceNumber sequence_number) {
     header_.public_header.guid = guid_;
     header_.public_header.reset_flag = false;
-    header_.public_header.version_flag = false;
+    header_.public_header.version_flag = true;
     header_.packet_sequence_number = sequence_number;
     header_.entropy_flag = false;
     header_.fec_entropy_flag = false;
@@ -197,12 +197,12 @@ class QuicConnectionHelperTest : public ::testing::Test {
     frames.push_back(frame);
     scoped_ptr<QuicPacket> packet(
         framer_.ConstructFrameDataPacket(header_, frames).packet);
-    return framer_.EncryptPacket(header_.packet_sequence_number, *packet);
+    return framer_.EncryptPacket(
+        ENCRYPTION_NONE, header_.packet_sequence_number, *packet);
   }
 
   QuicGuid guid_;
   QuicFramer framer_;
-  QuicPacketCreator creator_;
   QuicPacketHeader header_;
   BoundNetLog net_log_;
   QuicStreamFrame frame_;
@@ -223,12 +223,14 @@ TEST_F(QuicConnectionHelperTest, IsSendAlarmSet) {
 }
 
 TEST_F(QuicConnectionHelperTest, SetSendAlarm) {
-  helper_->SetSendAlarm(QuicTime::Delta::Zero());
+  helper_->SetSendAlarm(
+      clock_.ApproximateNow().Add(QuicTime::Delta::FromSeconds(1)));
   EXPECT_TRUE(helper_->IsSendAlarmSet());
 }
 
 TEST_F(QuicConnectionHelperTest, UnregisterSendAlarmIfRegistered) {
-  helper_->SetSendAlarm(QuicTime::Delta::Zero());
+  helper_->SetSendAlarm(
+      clock_.ApproximateNow().Add(QuicTime::Delta::FromSeconds(1)));
   helper_->UnregisterSendAlarmIfRegistered() ;
   EXPECT_FALSE(helper_->IsSendAlarmSet());
 }
@@ -248,7 +250,7 @@ TEST_F(QuicConnectionHelperTest, SetAckAlarm) {
   EXPECT_EQ(base::TimeDelta::FromMicroseconds(delta.ToMicroseconds()),
             runner_->GetPostedTasks()[1].delay);
 
-  EXPECT_CALL(*send_algorithm_, SentPacket(_, 1, _, false));
+  EXPECT_CALL(*send_algorithm_, SentPacket(_, 1, _, NOT_RETRANSMISSION));
   runner_->RunNextTask();
   EXPECT_EQ(QuicTime::Zero().Add(delta), clock_.ApproximateNow());
 }
@@ -292,7 +294,7 @@ TEST_F(QuicConnectionHelperTest, ResetAckAlarm) {
   // Verify that the ack alarm task has been re-posted.
   ASSERT_EQ(2u, runner_->GetPostedTasks().size());
 
-  EXPECT_CALL(*send_algorithm_, SentPacket(_, 1, _, false));
+  EXPECT_CALL(*send_algorithm_, SentPacket(_, 1, _, NOT_RETRANSMISSION));
   runner_->RunNextTask();
   EXPECT_EQ(QuicTime::Zero().Add(delta2), clock_.ApproximateNow());
 }
@@ -306,10 +308,11 @@ TEST_F(QuicConnectionHelperTest, TestRetransmission) {
       QuicTime::Delta::FromMilliseconds(500);
   QuicTime start = clock_.ApproximateNow();
 
-  EXPECT_CALL(*send_algorithm_, SentPacket(_, 1, _, false));
+  EXPECT_CALL(*send_algorithm_, SentPacket(_, 1, _, NOT_RETRANSMISSION));
+  EXPECT_CALL(*send_algorithm_, AbandoningPacket(1, _));
   // Send a packet.
   connection_->SendStreamData(1, kData, 0, false);
-  EXPECT_CALL(*send_algorithm_, SentPacket(_, 2, _, true));
+  EXPECT_CALL(*send_algorithm_, SentPacket(_, 2, _, IS_RETRANSMISSION));
   // Since no ack was received, the retransmission alarm will fire and
   // retransmit it.
   runner_->RunNextTask();
@@ -328,12 +331,13 @@ TEST_F(QuicConnectionHelperTest, InitialTimeout) {
   EXPECT_EQ(base::TimeDelta::FromMicroseconds(kDefaultTimeoutUs),
             runner_->GetPostedTasks().front().delay);
 
-  EXPECT_CALL(*send_algorithm_, SentPacket(_, 1, _, false));
+  EXPECT_CALL(*send_algorithm_, SentPacket(_, 1, _, NOT_RETRANSMISSION));
   // After we run the next task, we should close the connection.
   EXPECT_CALL(visitor_, ConnectionClose(QUIC_CONNECTION_TIMED_OUT, false));
 
   runner_->RunNextTask();
-  EXPECT_EQ(QuicTime::FromMicroseconds(kDefaultTimeoutUs),
+  EXPECT_EQ(QuicTime::Zero().Add(
+                QuicTime::Delta::FromMicroseconds(kDefaultTimeoutUs)),
             clock_.ApproximateNow());
   EXPECT_FALSE(connection_->connected());
   EXPECT_TRUE(AtEof());
@@ -368,12 +372,12 @@ TEST_F(QuicConnectionHelperTest, TimeoutAfterSend) {
   Initialize();
 
   EXPECT_TRUE(connection_->connected());
-  EXPECT_EQ(0u, clock_.ApproximateNow().ToMicroseconds());
+  EXPECT_EQ(0u, clock_.NowAsDeltaSinceUnixEpoch().ToMicroseconds());
 
   // When we send a packet, the timeout will change to 5000 + kDefaultTimeout.
   clock_.AdvanceTime(QuicTime::Delta::FromMicroseconds(5000));
-  EXPECT_EQ(5000u, clock_.ApproximateNow().ToMicroseconds());
-  EXPECT_CALL(*send_algorithm_, SentPacket(_, 1, _, false));
+  EXPECT_EQ(5000u, clock_.NowAsDeltaSinceUnixEpoch().ToMicroseconds());
+  EXPECT_CALL(*send_algorithm_, SentPacket(_, 1, _, NOT_RETRANSMISSION));
 
   // Send an ack so we don't set the retransmission alarm.
   connection_->SendAck();
@@ -382,15 +386,17 @@ TEST_F(QuicConnectionHelperTest, TimeoutAfterSend) {
   // network event at t=5000.  The alarm will reregister.
   runner_->RunNextTask();
 
-  EXPECT_EQ(QuicTime::FromMicroseconds(kDefaultTimeoutUs),
+  EXPECT_EQ(QuicTime::Zero().Add(
+                QuicTime::Delta::FromMicroseconds(kDefaultTimeoutUs)),
             clock_.ApproximateNow());
   EXPECT_TRUE(connection_->connected());
 
   // This time, we should time out.
   EXPECT_CALL(visitor_, ConnectionClose(QUIC_CONNECTION_TIMED_OUT, false));
-  EXPECT_CALL(*send_algorithm_, SentPacket(_, 2, _, false));
+  EXPECT_CALL(*send_algorithm_, SentPacket(_, 2, _, NOT_RETRANSMISSION));
   runner_->RunNextTask();
-  EXPECT_EQ(kDefaultTimeoutUs + 5000, clock_.ApproximateNow().ToMicroseconds());
+  EXPECT_EQ(kDefaultTimeoutUs + 5000,
+            clock_.NowAsDeltaSinceUnixEpoch().ToMicroseconds());
   EXPECT_FALSE(connection_->connected());
   EXPECT_TRUE(AtEof());
 }
@@ -400,18 +406,21 @@ TEST_F(QuicConnectionHelperTest, SendSchedulerDelayThenSend) {
   Initialize();
 
   // Test that if we send a packet with a delay, it ends up queued.
-  EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, false)).WillOnce(
-      testing::Return(QuicTime::Delta::FromMicroseconds(1)));
+  EXPECT_CALL(
+      *send_algorithm_, TimeUntilSend(_, NOT_RETRANSMISSION, _)).WillOnce(
+          testing::Return(QuicTime::Delta::FromMicroseconds(1)));
 
   QuicPacket* packet = ConstructRawDataPacket(1);
-  connection_->SendOrQueuePacket(1, packet, 0);
-  EXPECT_CALL(*send_algorithm_, SentPacket(_, 1, _, false));
+  connection_->SendOrQueuePacket(
+      ENCRYPTION_NONE, 1, packet, 0, HAS_RETRANSMITTABLE_DATA);
+  EXPECT_CALL(*send_algorithm_, SentPacket(_, 1, _, NOT_RETRANSMISSION));
   EXPECT_EQ(1u, connection_->NumQueuedPackets());
 
   // Advance the clock to fire the alarm, and configure the scheduler
   // to permit the packet to be sent.
-  EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, false)).WillOnce(
-      testing::Return(QuicTime::Delta::Zero()));
+  EXPECT_CALL(
+      *send_algorithm_, TimeUntilSend(_, NOT_RETRANSMISSION, _)).WillRepeatedly(
+          testing::Return(QuicTime::Delta::Zero()));
   EXPECT_CALL(visitor_, OnCanWrite()).WillOnce(testing::Return(true));
   runner_->RunNextTask();
   EXPECT_EQ(0u, connection_->NumQueuedPackets());

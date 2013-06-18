@@ -4,38 +4,31 @@
 
 #include "content/common/gpu/media/android_video_decode_accelerator.h"
 
-#include <jni.h>
-
-#include "base/android/jni_android.h"
-#include "base/android/scoped_java_ref.h"
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/message_loop.h"
-#include "content/common/android/surface_callback.h"
 #include "content/common/gpu/gpu_channel.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 #include "media/base/bitstream_buffer.h"
 #include "media/base/limits.h"
 #include "media/video/picture.h"
+#include "ui/gl/android/scoped_java_surface.h"
 #include "ui/gl/gl_bindings.h"
-
-using base::android::MethodID;
-using base::android::ScopedJavaLocalRef;
 
 namespace content {
 
 // Helper macros for dealing with failure.  If |result| evaluates false, emit
 // |log| to ERROR, register |error| with the decoder, and return.
-#define RETURN_ON_FAILURE(result, log, error)                      \
-  do {                                                             \
-    if (!(result)) {                                               \
-      DLOG(ERROR) << log;                                          \
-      MessageLoop::current()->PostTask(FROM_HERE, base::Bind(      \
-          &AndroidVideoDecodeAccelerator::NotifyError,             \
-          base::AsWeakPtr(this), error));                          \
-      state_ = ERROR;                                              \
-      return;                                                      \
-    }                                                              \
+#define RETURN_ON_FAILURE(result, log, error)                       \
+  do {                                                              \
+    if (!(result)) {                                                \
+      DLOG(ERROR) << log;                                           \
+      base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind( \
+          &AndroidVideoDecodeAccelerator::NotifyError,              \
+          base::AsWeakPtr(this), error));                           \
+      state_ = ERROR;                                               \
+      return;                                                       \
+    }                                                               \
   } while (0)
 
 // TODO(dwkang): We only need kMaxVideoFrames to pass media stack's prerolling
@@ -57,7 +50,7 @@ AndroidVideoDecodeAccelerator::AndroidVideoDecodeAccelerator(
     const base::Callback<bool(void)>& make_context_current)
     : client_(client),
       make_context_current_(make_context_current),
-      codec_(media::MediaCodecBridge::VIDEO_H264),
+      codec_(media::kCodecH264),
       state_(NO_ERROR),
       surface_texture_id_(0),
       picturebuffers_requested_(false),
@@ -80,7 +73,7 @@ bool AndroidVideoDecodeAccelerator::Initialize(
     return false;
 
   if (profile == media::VP8PROFILE_MAIN) {
-    codec_ = media::MediaCodecBridge::VIDEO_VP8;
+    codec_ = media::kCodecVP8;
   } else {
     // TODO(dwkang): enable H264 once b/8125974 is fixed.
     LOG(ERROR) << "Unsupported profile: " << profile;
@@ -92,7 +85,7 @@ bool AndroidVideoDecodeAccelerator::Initialize(
     return false;
   }
 
-  if (!gl_decoder_.get()) {
+  if (!gl_decoder_) {
     LOG(ERROR) << "Failed to get gles2 decoder instance.";
     return false;
   }
@@ -109,11 +102,11 @@ bool AndroidVideoDecodeAccelerator::Initialize(
   gl_decoder_->RestoreTextureUnitBindings(0);
   gl_decoder_->RestoreActiveTexture();
 
-  surface_texture_ = new SurfaceTextureBridge(surface_texture_id_);
+  surface_texture_ = new gfx::SurfaceTextureBridge(surface_texture_id_);
 
   ConfigureMediaCodec();
 
-  MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
+  base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
       &AndroidVideoDecodeAccelerator::NotifyInitializeDone,
       base::AsWeakPtr(this)));
   return true;
@@ -133,7 +126,7 @@ void AndroidVideoDecodeAccelerator::DoIOTask() {
     io_task_is_posted_ = true;
     // TODO(dwkang): PostDelayedTask() does not guarantee the task will awake
     //               at the exact time. Need a better way for polling.
-    MessageLoop::current()->PostDelayedTask(
+    base::MessageLoop::current()->PostDelayedTask(
         FROM_HERE,
         base::Bind(
             &AndroidVideoDecodeAccelerator::DoIOTask, base::AsWeakPtr(this)),
@@ -194,7 +187,7 @@ void AndroidVideoDecodeAccelerator::QueueInput() {
     // keep getting more bitstreams from the client, and throttle them by using
     // |bitstreams_notified_in_advance_|.
     // TODO(dwkang): check if there is a way to remove this workaround.
-    MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
+    base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
         &AndroidVideoDecodeAccelerator::NotifyEndOfBitstreamBuffer,
         base::AsWeakPtr(this), bitstream_buffer.id()));
     bitstreams_notified_in_advance_.push_back(bitstream_buffer.id());
@@ -230,7 +223,7 @@ void AndroidVideoDecodeAccelerator::DequeueOutput() {
         if (!picturebuffers_requested_) {
           picturebuffers_requested_ = true;
           size_ = gfx::Size(width, height);
-          MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
+          base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
               &AndroidVideoDecodeAccelerator::RequestPictureBuffers,
               base::AsWeakPtr(this)));
         } else {
@@ -255,7 +248,7 @@ void AndroidVideoDecodeAccelerator::DequeueOutput() {
   media_codec_->ReleaseOutputBuffer(buf_index, true);
 
   if (eos) {
-    MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
+    base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
         &AndroidVideoDecodeAccelerator::NotifyFlushDone,
         base::AsWeakPtr(this)));
     decoder_met_eos_ = true;
@@ -326,7 +319,7 @@ void AndroidVideoDecodeAccelerator::SendCurrentSurfaceToClient(
                          picture_buffer_texture_id, 0, size_.width(),
                          size_.height(), false, false, false);
 
-  MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
+  base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
       &AndroidVideoDecodeAccelerator::NotifyPictureReady,
       base::AsWeakPtr(this), media::Picture(picture_buffer_id, bitstream_id)));
 }
@@ -335,7 +328,7 @@ void AndroidVideoDecodeAccelerator::Decode(
     const media::BitstreamBuffer& bitstream_buffer) {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (bitstream_buffer.id() != -1 && bitstream_buffer.size() == 0) {
-    MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
+    base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
         &AndroidVideoDecodeAccelerator::NotifyEndOfBitstreamBuffer,
         base::AsWeakPtr(this), bitstream_buffer.id()));
     return;
@@ -353,6 +346,9 @@ void AndroidVideoDecodeAccelerator::AssignPictureBuffers(
   DCHECK(output_picture_buffers_.empty());
 
   for (size_t i = 0; i < buffers.size(); ++i) {
+    RETURN_ON_FAILURE(buffers[i].size() == size_,
+                      "Invalid picture buffer size was passed.",
+                      INVALID_ARGUMENT);
     output_picture_buffers_.insert(std::make_pair(buffers[i].id(), buffers[i]));
     free_picture_ids_.push(buffers[i].id());
   }
@@ -383,24 +379,14 @@ void AndroidVideoDecodeAccelerator::Flush() {
 void AndroidVideoDecodeAccelerator::ConfigureMediaCodec() {
   DCHECK(surface_texture_.get());
 
-  media_codec_.reset(new media::MediaCodecBridge(codec_));
+  media_codec_.reset(new media::VideoCodecBridge(codec_));
 
-  JNIEnv* env = base::android::AttachCurrentThread();
-  CHECK(env);
-  ScopedJavaLocalRef<jclass> cls(
-      base::android::GetClass(env, "android/view/Surface"));
-  jmethodID constructor = MethodID::Get<MethodID::TYPE_INSTANCE>(
-      env, cls.obj(), "<init>", "(Landroid/graphics/SurfaceTexture;)V");
-  ScopedJavaLocalRef<jobject> j_surface(
-      env, env->NewObject(
-          cls.obj(), constructor,
-          surface_texture_->j_surface_texture().obj()));
-
+  gfx::ScopedJavaSurface surface(surface_texture_.get());
   // VDA does not pass the container indicated resolution in the initialization
   // phase. Here, we set 720p by default.
   // TODO(dwkang): find out a way to remove the following hard-coded value.
-  media_codec_->StartVideo(codec_, gfx::Size(1280, 720), j_surface.obj());
-  content::ReleaseSurface(j_surface.obj());
+  media_codec_->Start(
+      codec_, gfx::Size(1280, 720), surface.j_surface().obj());
   media_codec_->GetOutputBuffers();
 }
 
@@ -413,7 +399,7 @@ void AndroidVideoDecodeAccelerator::Reset() {
     pending_bitstream_buffers_.pop();
 
     if (bitstream_buffer.id() != -1) {
-      MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
+      base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
           &AndroidVideoDecodeAccelerator::NotifyEndOfBitstreamBuffer,
           base::AsWeakPtr(this), bitstream_buffer.id()));
     }
@@ -432,7 +418,7 @@ void AndroidVideoDecodeAccelerator::Reset() {
   num_bytes_used_in_the_pending_buffer_ = 0;
   state_ = NO_ERROR;
 
-  MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
+  base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
       &AndroidVideoDecodeAccelerator::NotifyResetDone, base::AsWeakPtr(this)));
 }
 

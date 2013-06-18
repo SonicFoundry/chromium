@@ -7,47 +7,34 @@
 #include "base/android/jni_android.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/logging.h"
+#include "jni/OverScroller_jni.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebFloatSize.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebGestureCurveTarget.h"
-#include "third_party/WebKit/Source/Platform/chromium/public/WebPoint.h"
 #include "ui/gfx/screen.h"
 #include "ui/gfx/vector2d.h"
 
-using base::android::AttachCurrentThread;
-using base::android::CheckException;
-using base::android::GetApplicationContext;
-using base::android::GetClass;
-using base::android::MethodID;
-using base::android::ScopedJavaLocalRef;
-
 namespace webkit_glue {
+
+namespace {
+static const float kEpsilon = 1e-4;
+}
 
 FlingAnimatorImpl::FlingAnimatorImpl()
     : is_active_(false) {
   // hold the global reference of the Java objects.
-  JNIEnv* env = AttachCurrentThread();
-  DCHECK(env);
-  ScopedJavaLocalRef<jclass> cls(GetClass(env, "android/widget/OverScroller"));
-  jmethodID constructor = MethodID::Get<MethodID::TYPE_INSTANCE>(
-      env, cls.obj(), "<init>", "(Landroid/content/Context;)V");
-  ScopedJavaLocalRef<jobject> tmp(env, env->NewObject(cls.obj(), constructor,
-                                                      GetApplicationContext()));
-  DCHECK(tmp.obj());
-  java_scroller_.Reset(tmp);
-
-  fling_method_id_ = MethodID::Get<MethodID::TYPE_INSTANCE>(
-      env, cls.obj(), "fling", "(IIIIIIII)V");
-  abort_method_id_ = MethodID::Get<MethodID::TYPE_INSTANCE>(
-      env, cls.obj(), "abortAnimation", "()V");
-  compute_method_id_ = MethodID::Get<MethodID::TYPE_INSTANCE>(
-      env, cls.obj(), "computeScrollOffset", "()Z");
-  getX_method_id_ = MethodID::Get<MethodID::TYPE_INSTANCE>(
-      env, cls.obj(), "getCurrX", "()I");
-  getY_method_id_ = MethodID::Get<MethodID::TYPE_INSTANCE>(
-      env, cls.obj(), "getCurrY", "()I");
+  JNIEnv* env = base::android::AttachCurrentThread();
+  java_scroller_.Reset(JNI_OverScroller::Java_OverScroller_ConstructorAWOS_ACC(
+      env,
+      base::android::GetApplicationContext()));
 }
 
 FlingAnimatorImpl::~FlingAnimatorImpl()
 {
+}
+
+//static
+bool FlingAnimatorImpl::RegisterJni(JNIEnv* env) {
+  return JNI_OverScroller::RegisterNativesImpl(env);
 }
 
 void FlingAnimatorImpl::StartFling(const gfx::PointF& velocity)
@@ -61,14 +48,16 @@ void FlingAnimatorImpl::StartFling(const gfx::PointF& velocity)
     CancelFling();
 
   is_active_ = true;
+  last_time_ = 0;
+  last_velocity_ = velocity;
 
-  JNIEnv* env = AttachCurrentThread();
+  JNIEnv* env = base::android::AttachCurrentThread();
 
-  env->CallVoidMethod(java_scroller_.obj(), fling_method_id_, 0, 0,
-                      static_cast<int>(velocity.x()),
-                      static_cast<int>(velocity.y()),
-                      INT_MIN, INT_MAX, INT_MIN, INT_MAX);
-  CheckException(env);
+  JNI_OverScroller::Java_OverScroller_flingV_I_I_I_I_I_I_I_I(
+      env, java_scroller_.obj(), 0, 0,
+      static_cast<int>(velocity.x()),
+      static_cast<int>(velocity.y()),
+      INT_MIN, INT_MAX, INT_MIN, INT_MAX);
 }
 
 void FlingAnimatorImpl::CancelFling()
@@ -77,28 +66,35 @@ void FlingAnimatorImpl::CancelFling()
     return;
 
   is_active_ = false;
-  JNIEnv* env = AttachCurrentThread();
-  env->CallVoidMethod(java_scroller_.obj(), abort_method_id_);
-  CheckException(env);
+  JNIEnv* env = base::android::AttachCurrentThread();
+  JNI_OverScroller::Java_OverScroller_abortAnimation(env, java_scroller_.obj());
 }
 
 bool FlingAnimatorImpl::UpdatePosition()
 {
-  JNIEnv* env = AttachCurrentThread();
-  bool result = env->CallBooleanMethod(java_scroller_.obj(),
-                                       compute_method_id_);
-  CheckException(env);
+  JNIEnv* env = base::android::AttachCurrentThread();
+  bool result = JNI_OverScroller::Java_OverScroller_computeScrollOffset(
+      env,
+      java_scroller_.obj());
   return is_active_ = result;
 }
 
 gfx::Point FlingAnimatorImpl::GetCurrentPosition()
 {
-  JNIEnv* env = AttachCurrentThread();
+  JNIEnv* env = base::android::AttachCurrentThread();
   gfx::Point position(
-      env->CallIntMethod(java_scroller_.obj(), getX_method_id_),
-      env->CallIntMethod(java_scroller_.obj(), getY_method_id_));
-  CheckException(env);
+      JNI_OverScroller::Java_OverScroller_getCurrX(env, java_scroller_.obj()),
+      JNI_OverScroller::Java_OverScroller_getCurrY(env, java_scroller_.obj()));
   return position;
+}
+
+float FlingAnimatorImpl::GetCurrentVelocity()
+{
+  JNIEnv* env = base::android::AttachCurrentThread();
+  // TODO(jdduke): Add Java-side hooks for getCurrVelocityX/Y, and return
+  //               vector velocity.
+  return JNI_OverScroller::Java_OverScroller_getCurrVelocity(
+      env, java_scroller_.obj());
 }
 
 bool FlingAnimatorImpl::apply(double time,
@@ -111,7 +107,30 @@ bool FlingAnimatorImpl::apply(double time,
   last_position_ = current_position;
   float dpi_scale = gfx::Screen::GetNativeScreen()->GetPrimaryDisplay()
       .device_scale_factor();
-  WebKit::WebPoint scroll_amount(diff.x() / dpi_scale, diff.y() / dpi_scale);
+  WebKit::WebFloatSize scroll_amount(diff.x() / dpi_scale,
+                                     diff.y() / dpi_scale);
+
+  float delta_time = time - last_time_;
+  last_time_ = time;
+
+  // Currently, the OverScroller only provides the velocity magnitude; use the
+  // angle of the scroll delta to yield approximate x and y velocity components.
+  // TODO(jdduke): Remove this when we can properly poll OverScroller velocity.
+  gfx::PointF current_velocity = last_velocity_;
+  if (delta_time > kEpsilon) {
+    float diff_length = diff.Length();
+    if (diff_length > kEpsilon) {
+      float velocity = GetCurrentVelocity();
+      float scroll_to_velocity = velocity / diff_length;
+      current_velocity = gfx::PointF(diff.x() * scroll_to_velocity,
+                                     diff.y() * scroll_to_velocity);
+    }
+  }
+  last_velocity_ = current_velocity;
+  WebKit::WebFloatSize fling_velocity(current_velocity.x() / dpi_scale,
+                                      current_velocity.y() / dpi_scale);
+  target->notifyCurrentFlingVelocity(fling_velocity);
+
   // scrollBy() could delete this curve if the animation is over, so don't touch
   // any member variables after making that call.
   target->scrollBy(scroll_amount);

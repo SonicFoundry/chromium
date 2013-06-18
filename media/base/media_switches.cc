@@ -21,11 +21,6 @@ const char kAlsaInputDevice[] = "alsa-input-device";
 const char kUseCras[] = "use-cras";
 #endif
 
-#if defined(USE_PULSEAUDIO)
-// Use PulseAudio on platforms that support it.
-const char kUsePulseAudio[] = "use-pulseaudio";
-#endif
-
 #if defined(OS_WIN)
 // Use exclusive mode audio streaming for Windows Vista and higher.
 // Leads to lower latencies for audio streams which uses the
@@ -33,22 +28,10 @@ const char kUsePulseAudio[] = "use-pulseaudio";
 // See http://msdn.microsoft.com/en-us/library/windows/desktop/dd370844(v=vs.85).aspx
 // for details.
 const char kEnableExclusiveAudio[] = "enable-exclusive-audio";
+
+// Use Windows WaveOut/In audio API even if Core Audio is supported.
+const char kForceWaveAudio[] = "force-wave-audio";
 #endif
-
-// Disable automatic fallback from low latency to high latency path.
-const char kDisableAudioFallback[] = "disable-audio-fallback";
-
-// Disable AudioOutputResampler for automatic audio resampling and rebuffering.
-const char kDisableAudioOutputResampler[] = "disable-audio-output-resampler";
-
-// Controls renderer side mixing and low latency audio path for media elements.
-const char kDisableRendererSideMixing[] = "disable-renderer-side-mixing";
-
-// Enable browser-side audio mixer.
-const char kEnableAudioMixer[] = "enable-audio-mixer";
-
-// Enable live audio input with getUserMedia() and the Web Audio API.
-const char kEnableWebAudioInput[] = "enable-webaudio-input";
 
 // Set number of threads to use for video decoding.
 const char kVideoThreads[] = "video-threads";
@@ -61,6 +44,12 @@ const char kEnableOpusPlayback[] = "enable-opus-playback";
 
 // Enables VP9 playback in media elements.
 const char kEnableVp9Playback[] = "enable-vp9-playback";
+
+// Enables VP8 Alpha playback in media elements.
+const char kEnableVp8AlphaPlayback[] = "enable-vp8-alpha-playback";
+
+// Enable EAC3 playback in MSE.
+const char kEnableEac3Playback[] = "enable-eac3-playback";
 
 #if defined(OS_WIN)
 const char kWaveOutBuffers[] = "waveout-buffers";

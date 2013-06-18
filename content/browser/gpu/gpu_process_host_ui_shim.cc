@@ -118,8 +118,13 @@ GpuProcessHostUIShim* GpuProcessHostUIShim::Create(int host_id) {
 }
 
 // static
-void GpuProcessHostUIShim::Destroy(int host_id) {
+void GpuProcessHostUIShim::Destroy(int host_id, const std::string& message) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+
+  GpuDataManagerImpl::GetInstance()->AddLogMessage(
+      logging::LOG_ERROR, "GpuProcessHostUIShim",
+      message);
+
   delete FromID(host_id);
 }
 
@@ -180,10 +185,6 @@ void GpuProcessHostUIShim::SimulateHang() {
 GpuProcessHostUIShim::~GpuProcessHostUIShim() {
   DCHECK(CalledOnValidThread());
   g_hosts_by_id.Pointer()->Remove(host_id_);
-
-  GpuDataManagerImpl::GetInstance()->AddLogMessage(
-      logging::LOG_ERROR, "GpuProcessHostUIShim",
-      "GPU process crashed or exited.");
 }
 
 bool GpuProcessHostUIShim::OnControlMessageReceived(
@@ -208,6 +209,7 @@ bool GpuProcessHostUIShim::OnControlMessageReceived(
                         OnVideoMemoryUsageStatsReceived);
     IPC_MESSAGE_HANDLER(GpuHostMsg_UpdateVSyncParameters,
                         OnUpdateVSyncParameters)
+    IPC_MESSAGE_HANDLER(GpuHostMsg_FrameDrawn, OnFrameDrawn)
 
 #if defined(TOOLKIT_GTK) || defined(OS_WIN)
     IPC_MESSAGE_HANDLER(GpuHostMsg_ResizeView, OnResizeView)
@@ -338,6 +340,9 @@ void GpuProcessHostUIShim::OnAcceleratedSurfaceBuffersSwapped(
 
   // View must send ACK message after next composite.
   view->AcceleratedSurfaceBuffersSwapped(params, host_id_);
+}
+
+void GpuProcessHostUIShim::OnFrameDrawn(const cc::LatencyInfo& latency_info) {
 }
 
 void GpuProcessHostUIShim::OnAcceleratedSurfacePostSubBuffer(

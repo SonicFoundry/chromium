@@ -13,15 +13,21 @@
 #include "base/compiler_specific.h"
 #include "base/supports_user_data.h"
 #include "content/browser/webui/url_data_manager.h"
+#include "content/public/browser/url_data_source.h"
 #include "net/url_request/url_request_job_factory.h"
 
 class GURL;
+
+namespace appcache {
+class AppCacheService;
+}
 
 namespace base {
 class RefCountedMemory;
 }
 
 namespace content {
+class ChromeBlobStorageContext;
 class ResourceContext;
 class URLDataManagerBackend;
 class URLDataSourceImpl;
@@ -41,7 +47,9 @@ class URLDataManagerBackend : public base::SupportsUserData::Data {
   // be set for incognito profiles. Called on the UI thread.
   static net::URLRequestJobFactory::ProtocolHandler* CreateProtocolHandler(
       content::ResourceContext* resource_context,
-      bool is_incognito);
+      bool is_incognito,
+      appcache::AppCacheService* appcache_service,
+      ChromeBlobStorageContext* blob_storage_context);
 
   // Adds a DataSource to the collection of data sources.
   void AddDataSource(URLDataSourceImpl* source);
@@ -61,14 +69,15 @@ class URLDataManagerBackend : public base::SupportsUserData::Data {
 
   // Called by the job when it's starting up.
   // Returns false if |url| is not a URL managed by this object.
-  bool StartRequest(const GURL& url, URLRequestChromeJob* job);
+  bool StartRequest(const net::URLRequest* request, URLRequestChromeJob* job);
 
   // Helper function to call StartDataRequest on |source|'s delegate. This is
   // needed because while we want to call URLDataSourceDelegate's method, we
   // need to add a refcount on the source.
   static void CallStartRequest(scoped_refptr<URLDataSourceImpl> source,
                                const std::string& path,
-                               bool is_incognito,
+                               int render_process_id,
+                               int render_view_id,
                                int request_id);
 
   // Remove a request from the list of pending requests.

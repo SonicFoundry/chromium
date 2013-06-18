@@ -9,18 +9,43 @@
 #include "base/sequenced_task_runner.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/managed_mode/managed_mode_navigation_observer.h"
 #include "chrome/browser/managed_mode/managed_mode_site_list.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
+#include "chrome/browser/policy/managed_mode_policy_provider.h"
+#include "chrome/browser/policy/profile_policy_connector.h"
+#include "chrome/browser/policy/profile_policy_connector_factory.h"
 #include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_notification_types.h"
+#include "chrome/common/extensions/api/managed_mode_private/managed_mode_handler.h"
 #include "chrome/common/extensions/extension_set.h"
 #include "chrome/common/pref_names.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/browser_thread.h"
 #include "grit/generated_resources.h"
+#include "policy/policy_constants.h"
 #include "ui/base/l10n/l10n_util.h"
 
+using base::DictionaryValue;
+using base::Value;
 using content::BrowserThread;
+
+namespace {
+
+std::string CanonicalizeHostname(const std::string& hostname) {
+  std::string canonicalized;
+  url_canon::StdStringCanonOutput output(&canonicalized);
+  url_parse::Component in_comp(0, hostname.length());
+  url_parse::Component out_comp;
+
+  url_canon::CanonicalizeHost(hostname.c_str(), in_comp, &output, &out_comp);
+  output.Complete();
+  return canonicalized;
+}
+
+}  // namespace
 
 ManagedUserService::URLFilterContext::URLFilterContext()
     : ui_url_filter_(new ManagedModeURLFilter),
@@ -87,8 +112,8 @@ void ManagedUserService::URLFilterContext::SetManualURLs(
 
 ManagedUserService::ManagedUserService(Profile* profile)
     : profile_(profile),
-      is_elevated_(false) {
-}
+      startup_elevation_(false),
+      skip_dialog_for_testing_(false) {}
 
 ManagedUserService::~ManagedUserService() {
 }
@@ -97,43 +122,65 @@ bool ManagedUserService::ProfileIsManaged() const {
   return profile_->GetPrefs()->GetBoolean(prefs::kProfileIsManaged);
 }
 
-bool ManagedUserService::IsElevated() const {
+bool ManagedUserService::IsElevatedForWebContents(
+    const content::WebContents* web_contents) const {
+  const ManagedModeNavigationObserver* observer =
+      ManagedModeNavigationObserver::FromWebContents(web_contents);
+  return observer ? observer->is_elevated() : false;
+}
+
+bool ManagedUserService::IsPassphraseEmpty() const {
   PrefService* pref_service = profile_->GetPrefs();
-  // If there is no passphrase set, the profile is considered to be elevated.
-  if (pref_service->GetString(prefs::kManagedModeLocalPassphrase).empty())
-    return true;
-  return is_elevated_;
+  return pref_service->GetString(prefs::kManagedModeLocalPassphrase).empty();
+}
+
+bool ManagedUserService::CanSkipPassphraseDialog(
+    const content::WebContents* web_contents) const {
+#if defined(OS_CHROMEOS)
+  NOTREACHED();
+#endif
+  return skip_dialog_for_testing_ ||
+         IsElevatedForWebContents(web_contents) ||
+         IsPassphraseEmpty();
 }
 
 void ManagedUserService::RequestAuthorization(
     content::WebContents* web_contents,
     const PassphraseCheckedCallback& callback) {
-  PrefService* pref_service = profile_->GetPrefs();
+#if defined(OS_CHROMEOS)
+  NOTREACHED();
+#endif
 
-  // If there is no passphrase set, we do not need to ask for authentication.
-  if (pref_service->GetString(prefs::kManagedModeLocalPassphrase).empty()) {
+  if (skip_dialog_for_testing_ || CanSkipPassphraseDialog(web_contents)) {
     callback.Run(true);
     return;
   }
+
   // Is deleted automatically when the dialog is closed.
   new ManagedUserPassphraseDialog(web_contents, callback);
 }
 
 // static
-void ManagedUserService::RegisterUserPrefs(PrefRegistrySyncable* registry) {
-  registry->RegisterDictionaryPref(prefs::kManagedModeManualHosts,
-                                   PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterDictionaryPref(prefs::kManagedModeManualURLs,
-                                   PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterIntegerPref(prefs::kDefaultManagedModeFilteringBehavior,
-                                ManagedModeURLFilter::BLOCK,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterStringPref(prefs::kManagedModeLocalPassphrase,
-                               "",
-                               PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterStringPref(prefs::kManagedModeLocalSalt,
-                               "",
-                               PrefRegistrySyncable::UNSYNCABLE_PREF);
+void ManagedUserService::RegisterUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterDictionaryPref(
+      prefs::kManagedModeManualHosts,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterDictionaryPref(
+      prefs::kManagedModeManualURLs,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterIntegerPref(
+      prefs::kDefaultManagedModeFilteringBehavior,
+      ManagedModeURLFilter::ALLOW,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterStringPref(
+      prefs::kManagedModeLocalPassphrase,
+      std::string(),
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterStringPref(
+      prefs::kManagedModeLocalSalt,
+      std::string(),
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 scoped_refptr<const ManagedModeURLFilter>
@@ -177,7 +224,9 @@ std::string ManagedUserService::GetDebugPolicyProviderName() const {
 bool ManagedUserService::UserMayLoad(const extensions::Extension* extension,
                                      string16* error) const {
   string16 tmp_error;
-  if (ExtensionManagementPolicyImpl(&tmp_error))
+  // |extension| can be NULL in unit tests.
+  if (ExtensionManagementPolicyImpl(extension ? extension->id() : std::string(),
+                                    &tmp_error))
     return true;
 
   // If the extension is already loaded, we allow it, otherwise we'd unload
@@ -192,7 +241,7 @@ bool ManagedUserService::UserMayLoad(const extensions::Extension* extension,
 
   if (extension) {
     bool was_installed_by_default = extension->was_installed_by_default();
-#ifdef OS_CHROMEOS
+#if defined(OS_CHROMEOS)
     // On Chrome OS all external sources are controlled by us so it means that
     // they are "default". Method was_installed_by_default returns false because
     // extensions creation flags are ignored in case of default extensions with
@@ -216,7 +265,9 @@ bool ManagedUserService::UserMayLoad(const extensions::Extension* extension,
 bool ManagedUserService::UserMayModifySettings(
     const extensions::Extension* extension,
     string16* error) const {
-  return ExtensionManagementPolicyImpl(error);
+  // |extension| can be NULL in unit tests.
+  return ExtensionManagementPolicyImpl(
+      extension ? extension->id() : std::string(), error);
 }
 
 void ManagedUserService::Observe(int type,
@@ -226,17 +277,34 @@ void ManagedUserService::Observe(int type,
     case chrome::NOTIFICATION_EXTENSION_LOADED: {
       const extensions::Extension* extension =
           content::Details<extensions::Extension>(details).ptr();
-      if (!extension->GetContentPackSiteList().empty())
+      if (!extensions::ManagedModeInfo::GetContentPackSiteList(
+              extension).empty()) {
         UpdateSiteLists();
-
+      }
       break;
     }
     case chrome::NOTIFICATION_EXTENSION_UNLOADED: {
       const extensions::UnloadedExtensionInfo* extension_info =
           content::Details<extensions::UnloadedExtensionInfo>(details).ptr();
-      if (!extension_info->extension->GetContentPackSiteList().empty())
+      if (!extensions::ManagedModeInfo::GetContentPackSiteList(
+              extension_info->extension).empty()) {
         UpdateSiteLists();
-
+      }
+      break;
+    }
+    case chrome::NOTIFICATION_EXTENSION_INSTALLED: {
+      // Remove the temporary elevation.
+      const extensions::Extension* extension =
+          content::Details<const extensions::InstalledExtensionInfo>(details)->
+              extension;
+      RemoveElevationForExtension(extension->id());
+      break;
+    }
+    case chrome::NOTIFICATION_EXTENSION_UNINSTALLED: {
+      // Remove the temporary elevation.
+      const extensions::Extension* extension =
+          content::Details<extensions::Extension>(details).ptr();
+      RemoveElevationForExtension(extension->id());
       break;
     }
     default:
@@ -244,11 +312,13 @@ void ManagedUserService::Observe(int type,
   }
 }
 
-bool ManagedUserService::ExtensionManagementPolicyImpl(string16* error) const {
+bool ManagedUserService::ExtensionManagementPolicyImpl(
+    const std::string& extension_id,
+    string16* error) const {
   if (!ProfileIsManaged())
     return true;
 
-  if (is_elevated_)
+  if (elevated_for_extensions_.count(extension_id))
     return true;
 
   if (error)
@@ -271,7 +341,8 @@ ScopedVector<ManagedModeSiteList> ManagedUserService::GetActiveSiteLists() {
     if (!extension_service->IsExtensionEnabled(extension->id()))
       continue;
 
-    ExtensionResource site_list = extension->GetContentPackSiteList();
+    extensions::ExtensionResource site_list =
+        extensions::ManagedModeInfo::GetContentPackSiteList(extension);
     if (!site_list.empty())
       site_lists.push_back(new ManagedModeSiteList(extension->id(), site_list));
   }
@@ -307,18 +378,24 @@ ManagedUserService::ManualBehavior ManagedUserService::GetManualBehaviorForHost(
 void ManagedUserService::SetManualBehaviorForHosts(
     const std::vector<std::string>& hostnames,
     ManualBehavior behavior) {
-  DictionaryPrefUpdate update(profile_->GetPrefs(),
-                              prefs::kManagedModeManualHosts);
-  DictionaryValue* dict = update.Get();
+  policy::ProfilePolicyConnector* connector =
+      policy::ProfilePolicyConnectorFactory::GetForProfile(profile_);
+  policy::ManagedModePolicyProvider* policy_provider =
+      connector->managed_mode_policy_provider();
+  scoped_ptr<DictionaryValue> dict = policy_provider->GetPolicyDictionary(
+      policy::key::kContentPackManualBehaviorHosts);
   for (std::vector<std::string>::const_iterator it = hostnames.begin();
        it != hostnames.end(); ++it) {
+    // The hostname should already be canonicalized, i.e. canonicalizing it
+    // shouldn't change it.
+    DCHECK_EQ(CanonicalizeHostname(*it), *it);
     if (behavior == MANUAL_NONE)
       dict->RemoveWithoutPathExpansion(*it, NULL);
     else
       dict->SetBooleanWithoutPathExpansion(*it, behavior == MANUAL_ALLOW);
   }
-
-  UpdateManualHosts();
+  policy_provider->SetPolicy(policy::key::kContentPackManualBehaviorHosts,
+                             dict.PassAs<Value>());
 }
 
 ManagedUserService::ManualBehavior ManagedUserService::GetManualBehaviorForURL(
@@ -335,10 +412,12 @@ ManagedUserService::ManualBehavior ManagedUserService::GetManualBehaviorForURL(
 
 void ManagedUserService::SetManualBehaviorForURLs(const std::vector<GURL>& urls,
                                                   ManualBehavior behavior) {
-  DictionaryPrefUpdate update(profile_->GetPrefs(),
-                              prefs::kManagedModeManualURLs);
-  DictionaryValue* dict = update.Get();
-
+  policy::ProfilePolicyConnector* connector =
+      policy::ProfilePolicyConnectorFactory::GetForProfile(profile_);
+  policy::ManagedModePolicyProvider* policy_provider =
+      connector->managed_mode_policy_provider();
+  scoped_ptr<DictionaryValue> dict = policy_provider->GetPolicyDictionary(
+      policy::key::kContentPackManualBehaviorURLs);
   for (std::vector<GURL>::const_iterator it = urls.begin(); it != urls.end();
        ++it) {
     GURL url = ManagedModeURLFilter::Normalize(*it);
@@ -349,12 +428,43 @@ void ManagedUserService::SetManualBehaviorForURLs(const std::vector<GURL>& urls,
                                            behavior == MANUAL_ALLOW);
     }
   }
-
-  UpdateManualURLs();
+  policy_provider->SetPolicy(policy::key::kContentPackManualBehaviorURLs,
+                             dict.PassAs<Value>());
 }
 
-void ManagedUserService::SetElevated(bool is_elevated) {
-  is_elevated_ = is_elevated;
+void ManagedUserService::GetManualExceptionsForHost(const std::string& host,
+                                                    std::vector<GURL>* urls) {
+  const DictionaryValue* dict =
+      profile_->GetPrefs()->GetDictionary(prefs::kManagedModeManualURLs);
+  for (DictionaryValue::Iterator it(*dict); !it.IsAtEnd(); it.Advance()) {
+    GURL url(it.key());
+    if (url.host() == host)
+      urls->push_back(url);
+  }
+}
+
+void ManagedUserService::AddElevationForExtension(
+    const std::string& extension_id) {
+#if defined(OS_CHROMEOS)
+  NOTREACHED();
+#else
+  elevated_for_extensions_.insert(extension_id);
+#endif
+}
+
+void ManagedUserService::RemoveElevationForExtension(
+    const std::string& extension_id) {
+#if defined(OS_CHROMEOS)
+  NOTREACHED();
+#else
+  elevated_for_extensions_.erase(extension_id);
+#endif
+}
+
+void ManagedUserService::InitForTesting() {
+  DCHECK(!profile_->GetPrefs()->GetBoolean(prefs::kProfileIsManaged));
+  profile_->GetPrefs()->SetBoolean(prefs::kProfileIsManaged, true);
+  Init();
 }
 
 void ManagedUserService::Init() {
@@ -372,12 +482,34 @@ void ManagedUserService::Init() {
                  content::Source<Profile>(profile_));
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
                  content::Source<Profile>(profile_));
+#if !defined(OS_CHROMEOS)
+  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_INSTALLED,
+                 content::Source<Profile>(profile_));
+  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNINSTALLED,
+                 content::Source<Profile>(profile_));
+#endif
+
   pref_change_registrar_.Init(profile_->GetPrefs());
   pref_change_registrar_.Add(
       prefs::kDefaultManagedModeFilteringBehavior,
       base::Bind(
           &ManagedUserService::OnDefaultFilteringBehaviorChanged,
           base::Unretained(this)));
+  pref_change_registrar_.Add(
+      prefs::kManagedModeManualHosts,
+      base::Bind(&ManagedUserService::UpdateManualHosts,
+                 base::Unretained(this)));
+  pref_change_registrar_.Add(
+      prefs::kManagedModeManualURLs,
+      base::Bind(&ManagedUserService::UpdateManualURLs,
+                 base::Unretained(this)));
+
+  policy::ProfilePolicyConnector* connector =
+      policy::ProfilePolicyConnectorFactory::GetForProfile(profile_);
+  policy::ManagedModePolicyProvider* policy_provider =
+      connector->managed_mode_policy_provider();
+  if (policy_provider)
+    policy_provider->InitDefaults();
 
   // Initialize the filter.
   OnDefaultFilteringBehaviorChanged();

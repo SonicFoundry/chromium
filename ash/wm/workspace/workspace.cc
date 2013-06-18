@@ -73,19 +73,19 @@ bool Workspace::ShouldMoveToPending() const {
   if (!is_maximized_)
     return false;
 
-  bool has_visible_non_maximized_window = false;
   for (size_t i = 0; i < window_->children().size(); ++i) {
     aura::Window* child(window_->children()[i]);
-    if (!GetTrackedByWorkspace(child) || !child->TargetVisibility() ||
-        wm::IsWindowMinimized(child))
+    if (!child->TargetVisibility() || wm::IsWindowMinimized(child))
       continue;
+
+    // If we have a maximized window don't move to pending.
     if (WorkspaceManager::IsMaximized(child))
       return false;
 
     if (GetTrackedByWorkspace(child) && !GetPersistsAcrossAllWorkspaces(child))
-      has_visible_non_maximized_window = true;
+      return false;
   }
-  return !has_visible_non_maximized_window;
+  return true;
 }
 
 int Workspace::GetNumMaximizedWindows() const {

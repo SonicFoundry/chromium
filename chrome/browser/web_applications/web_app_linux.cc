@@ -18,16 +18,8 @@ bool CreatePlatformShortcuts(
     const ShellIntegration::ShortcutInfo& shortcut_info,
     const ShellIntegration::ShortcutLocations& creation_locations) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::FILE));
-
-  scoped_ptr<base::Environment> env(base::Environment::Create());
-
-  std::string shortcut_template;
-  if (!ShellIntegrationLinux::GetDesktopShortcutTemplate(env.get(),
-                                                         &shortcut_template)) {
-    return false;
-  }
   return ShellIntegrationLinux::CreateDesktopShortcut(
-      shortcut_info, creation_locations, shortcut_template);
+      shortcut_info, creation_locations);
 }
 
 void DeletePlatformShortcuts(
@@ -40,7 +32,24 @@ void DeletePlatformShortcuts(
 void UpdatePlatformShortcuts(
     const base::FilePath& web_app_path,
     const ShellIntegration::ShortcutInfo& shortcut_info) {
-  // TODO(benwells): Implement this.
+  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::FILE));
+
+  scoped_ptr<base::Environment> env(base::Environment::Create());
+
+  // Find out whether shortcuts are already installed.
+  ShellIntegration::ShortcutLocations creation_locations =
+      ShellIntegrationLinux::GetExistingShortcutLocations(
+          env.get(), shortcut_info.profile_path, shortcut_info.extension_id);
+  // Always create a hidden shortcut in applications if a visible one is not
+  // being created. This allows the operating system to identify the app, but
+  // not show it in the menu.
+  creation_locations.hidden = true;
+
+  // Always create the shortcut in the Chrome Apps subdir (even if it is
+  // currently in a different location).
+  creation_locations.applications_menu_subdir = GetAppShortcutsSubdirName();
+
+  CreatePlatformShortcuts(web_app_path, shortcut_info, creation_locations);
 }
 
 }  // namespace internals

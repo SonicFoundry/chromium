@@ -24,19 +24,19 @@
 #include "base/values.h"
 #include "chrome/browser/io_thread.h"
 #include "chrome/browser/net/preconnect.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/address_list.h"
 #include "net/base/completion_callback.h"
 #include "net/base/host_port_pair.h"
-#include "net/base/host_resolver.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_log.h"
-#include "net/base/single_request_host_resolver.h"
+#include "net/dns/host_resolver.h"
+#include "net/dns/single_request_host_resolver.h"
 #include "net/url_request/url_request_context_getter.h"
 
 using base::TimeDelta;
@@ -155,11 +155,11 @@ Predictor* Predictor::CreatePredictor(bool preconnect_enabled,
   return new Predictor(preconnect_enabled);
 }
 
-void Predictor::RegisterUserPrefs(PrefRegistrySyncable* registry) {
+void Predictor::RegisterUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterListPref(prefs::kDnsPrefetchingStartupList,
-                             PrefRegistrySyncable::UNSYNCABLE_PREF);
+                             user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
   registry->RegisterListPref(prefs::kDnsPrefetchingHostReferralList,
-                             PrefRegistrySyncable::UNSYNCABLE_PREF);
+                             user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 // --------------------- Start UI methods. ------------------------------------

@@ -42,7 +42,7 @@ class DisplayErrorDialogTest : public test::AshTestBase {
 
   DisplayErrorObserver* observer() { return observer_.get(); }
 
-  const string16& GetMessageContents(const DisplayErrorDialog* dialog) {
+  const base::string16& GetMessageContents(const DisplayErrorDialog* dialog) {
     const views::Label* label = static_cast<const views::Label*>(
         static_cast<const views::View*>(dialog)->child_at(0));
     return label->text();
@@ -90,7 +90,7 @@ TEST_F(DisplayErrorDialogTest, CallWithDifferentState) {
 
   observer()->OnDisplayModeChangeFailed(chromeos::STATE_DUAL_EXTENDED);
   EXPECT_EQ(dialog, observer()->dialog());
-  EXPECT_EQ(l10n_util::GetStringUTF16(IDS_ASH_DISPLAY_FAILURE_ON_EXTENDED),
+  EXPECT_EQ(l10n_util::GetStringUTF16(IDS_ASH_DISPLAY_FAILURE_ON_NON_MIRRORING),
             GetMessageContents(dialog));
 }
 

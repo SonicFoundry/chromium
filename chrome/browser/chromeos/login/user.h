@@ -24,6 +24,28 @@ extern const char kRetailModeUserEMail[];
 
 extern const int kDefaultImagesCount;
 
+// User context data that is being exchanged between part of ChromeOS
+// authentication mechanism. Includes credentials:
+// |username|, |password|, |auth_code| and |username_hash| which is returned
+// back once user homedir is mounted. |username_hash| is used to identify
+// user homedir mount point.
+struct UserContext {
+  UserContext();
+  UserContext(const std::string& username,
+              const std::string& password,
+              const std::string& auth_code);
+  UserContext(const std::string& username,
+              const std::string& password,
+              const std::string& auth_code,
+              const std::string& username_hash);
+  virtual ~UserContext();
+  bool operator==(const UserContext& context) const;
+  std::string username;
+  std::string password;
+  std::string auth_code;
+  std::string username_hash;
+};
+
 // A class representing information about a previously logged in user.
 // Each user has a canonical email (username), returned by |email()| and
 // may have a different displayed email (in the raw form as entered by user),
@@ -45,7 +67,9 @@ class User {
     // enabled through policy.
     USER_TYPE_PUBLIC_ACCOUNT,
     // Locally managed user, logs in only with local authentication.
-    USER_TYPE_LOCALLY_MANAGED
+    USER_TYPE_LOCALLY_MANAGED,
+    // Kiosk app robot, logs in without authentication.
+    USER_TYPE_KIOSK_APP
   } UserType;
 
   // User OAuth token status according to the last check.
@@ -55,7 +79,7 @@ class User {
      OAUTH_TOKEN_STATUS_UNKNOWN  = 0,
      OAUTH2_TOKEN_STATUS_INVALID = 3,
      OAUTH2_TOKEN_STATUS_VALID   = 4,
-   } OAuthTokenStatus;
+  } OAuthTokenStatus;
 
   // Returned as |image_index| when user-selected file or photo is used as
   // user image.
@@ -131,6 +155,14 @@ class User {
   // which to unlock the session).
   virtual bool can_lock() const;
 
+  virtual std::string username_hash() const;
+
+  // True if current user is logged in.
+  virtual bool is_logged_in() const;
+
+  // True if current user is active within the current session.
+  virtual bool is_active() const;
+
  protected:
   friend class UserManagerImpl;
   friend class UserImageManagerImpl;
@@ -140,6 +172,7 @@ class User {
   // Do not allow anyone else to create new User instances.
   static User* CreateRegularUser(const std::string& email);
   static User* CreateGuestUser();
+  static User* CreateKioskAppUser(const std::string& kiosk_app_username);
   static User* CreateLocallyManagedUser(const std::string& username);
   static User* CreateRetailModeUser();
   static User* CreatePublicAccountUser(const std::string& email);
@@ -171,6 +204,18 @@ class User {
 
   const UserImage& user_image() const { return user_image_; }
 
+  void set_username_hash(const std::string& username_hash) {
+    username_hash_ = username_hash;
+  }
+
+  void set_is_logged_in(bool is_logged_in) {
+    is_logged_in_ = is_logged_in;
+  }
+
+  void set_is_active(bool is_active) {
+    is_active_ = is_active;
+  }
+
  private:
   std::string email_;
   string16 display_name_;
@@ -178,6 +223,9 @@ class User {
   std::string display_email_;
   UserImage user_image_;
   OAuthTokenStatus oauth_token_status_;
+
+  // Used to identify homedir mount point.
+  std::string username_hash_;
 
   // Either index of a default image for the user, |kExternalImageIndex| or
   // |kProfileImageIndex|.
@@ -188,6 +236,12 @@ class User {
 
   // True if current user image is being loaded from file.
   bool image_is_loading_;
+
+  // True if user is currently logged in in current session.
+  bool is_logged_in_;
+
+  // True if user is currently logged in and active in current session.
+  bool is_active_;
 
   DISALLOW_COPY_AND_ASSIGN(User);
 };

@@ -53,7 +53,7 @@ INSTRUMENTATION_TESTS = dict((suite.name, suite) for suite in [
            constants.CHROMIUM_TEST_SHELL_HOST_DRIVEN_DIR),
     I_TEST('AndroidWebView',
            'AndroidWebView.apk',
-           'org.chromium.android_webview',
+           'org.chromium.android_webview.shell',
            'AndroidWebViewTest',
            'webview:android_webview/test/data/device_files',
            None),
@@ -134,8 +134,11 @@ def RunTestSuites(options, suites):
   if options.asan:
     args.append('--tool=asan')
   for suite in suites:
-    buildbot_report.PrintNamedStep(suite)
-    RunCmd(['build/android/run_tests.py', '-s', suite] + args)
+    buildbot_report.PrintNamedStep(suite.name)
+    cmd = ['build/android/run_tests.py', '-s', suite.name] + args
+    if suite.is_suite_exe:
+      cmd.append('--exe')
+    RunCmd(cmd)
 
 def RunBrowserTestSuite(options):
   """Manages an invocation of run_browser_tests.py.
@@ -143,7 +146,7 @@ def RunBrowserTestSuite(options):
   Args:
     options: options object.
   """
-  args = ['--verbose']
+  args = ['--verbose', '--num_retries=1']
   if options.target == 'Release':
     args.append('--release')
   if options.asan:
@@ -185,8 +188,8 @@ def RunInstrumentationSuite(options, test):
   buildbot_report.PrintNamedStep('%s_instrumentation_tests' % test.name.lower())
 
   InstallApk(options, test)
-  args = ['--test-apk', test.test_apk, '--test_data', test.test_data, '-vvv',
-          '-I']
+  args = ['--test-apk', test.test_apk, '--test_data', test.test_data,
+          '--verbose', '-I']
   if options.target == 'Release':
     args.append('--release')
   if options.asan:
@@ -233,11 +236,18 @@ def RunWebkitLayoutTests(options):
       cmd_args.extend(['--%s' % flag.replace('_', '-'),
                        options.factory_properties.get(flag)])
 
+  for f in options.factory_properties.get('additional_expectations', []):
+    cmd_args.extend(
+        ['--additional-expectations=%s' % os.path.join(CHROME_SRC, *f)])
+
+  # TODO(dpranke): Remove this block after
+  # https://codereview.chromium.org/12927002/ lands.
   for f in options.factory_properties.get('additional_expectations_files', []):
     cmd_args.extend(
         ['--additional-expectations=%s' % os.path.join(CHROME_SRC, *f)])
 
-  RunCmd(['webkit/tools/layout_tests/run_webkit_tests.py'] + cmd_args)
+  RunCmd(['webkit/tools/layout_tests/run_webkit_tests.py'] + cmd_args,
+         flunk_on_failure=False)
 
 
 def MainTestWrapper(options):
@@ -259,7 +269,12 @@ def MainTestWrapper(options):
 
   # Device check and alert emails
   buildbot_report.PrintNamedStep('device_status_check')
-  RunCmd(['build/android/device_status_check.py'], flunk_on_failure=False)
+  RunCmd(['build/android/device_status_check.py'])
+
+  # Provision devices
+  buildbot_report.PrintNamedStep('provision_devices')
+  target = options.factory_properties.get('target', 'Debug')
+  RunCmd(['build/android/provision_devices.py', '-t', target])
 
   if options.install:
     test_obj = INSTRUMENTATION_TESTS[options.install]
@@ -269,18 +284,20 @@ def MainTestWrapper(options):
     RunChromeDriverTests()
   if 'unit' in options.test_filter:
     RunTestSuites(options, gtest_config.STABLE_TEST_SUITES)
+    RunBrowserTestSuite(options)
   if 'ui' in options.test_filter:
     for test in INSTRUMENTATION_TESTS.itervalues():
       RunInstrumentationSuite(options, test)
   if 'webkit' in options.test_filter:
-    RunTestSuites(options, ['webkit_unit_tests', 'TestWebKitAPI'])
+    RunTestSuites(options, [
+        gtest_config.Apk('webkit_unit_tests'),
+    ])
     RunWebkitLint(options.target)
   if 'webkit_layout' in options.test_filter:
     RunWebkitLayoutTests(options)
 
   if options.experimental:
     RunTestSuites(options, gtest_config.EXPERIMENTAL_TEST_SUITES)
-    RunBrowserTestSuite(options)
 
   # Print logcat, kill logcat monitor
   buildbot_report.PrintNamedStep('logcat_dump')
@@ -321,6 +338,9 @@ def main(argv):
                     help='Reboot devices before running tests')
   parser.add_option('--upload-to-flakiness-server', action='store_true',
                     help='Upload the results to the flakiness dashboard.')
+  parser.add_option(
+      '--auto-reconnect', action='store_true',
+      help='Push script to device which restarts adbd on disconnections.')
   options, args = parser.parse_args(argv[1:])
 
   def ParserError(msg):

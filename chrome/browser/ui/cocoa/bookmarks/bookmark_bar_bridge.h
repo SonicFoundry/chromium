@@ -13,14 +13,16 @@
 
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/prefs/pref_change_registrar.h"
 #include "chrome/browser/bookmarks/bookmark_model_observer.h"
 
-class Browser;
+class Profile;
 @class BookmarkBarController;
 
 class BookmarkBarBridge : public BookmarkModelObserver {
  public:
-  BookmarkBarBridge(BookmarkBarController* controller,
+  BookmarkBarBridge(Profile* profile,
+                    BookmarkBarController* controller,
                     BookmarkModel* model);
   virtual ~BookmarkBarBridge();
 
@@ -39,6 +41,7 @@ class BookmarkBarBridge : public BookmarkModelObserver {
                                    const BookmarkNode* parent,
                                    int old_index,
                                    const BookmarkNode* node) OVERRIDE;
+  virtual void BookmarkAllNodesRemoved(BookmarkModel* model) OVERRIDE;
   virtual void BookmarkNodeChanged(BookmarkModel* model,
                                    const BookmarkNode* node) OVERRIDE;
   virtual void BookmarkNodeFaviconChanged(BookmarkModel* model,
@@ -52,6 +55,16 @@ class BookmarkBarBridge : public BookmarkModelObserver {
   BookmarkBarController* controller_;  // weak; owns me
   BookmarkModel* model_;  // weak; it is owned by a Profile.
   bool batch_mode_;
+
+  // Needed to react to kShowAppsShortcutInBookmarkBar changes.
+  PrefChangeRegistrar profile_pref_registrar_;
+
+  // Updates the visibility of the apps shortcut based on the pref value.
+  void OnAppsPageShortcutVisibilityPrefChanged();
+
+  // Updates the visibility of the apps shortcut once we know if the app
+  // launcher is enabled.
+  void OnAppLauncherEnabledCompleted(bool app_launcher_enabled);
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkBarBridge);
 };

@@ -36,10 +36,6 @@ namespace base {
 class FilePath;
 }
 
-namespace content {
-class BrowserContext;
-}
-
 namespace subtle {
 class PrefMemberBase;
 class ScopedUserPrefUpdateBase;
@@ -57,7 +53,7 @@ class BASE_PREFS_EXPORT PrefService : public base::NonThreadSafe {
   enum PrefInitializationStatus {
     INITIALIZATION_STATUS_WAITING,
     INITIALIZATION_STATUS_SUCCESS,
-    INITIALIZATION_STATUS_CREATED_NEW_PROFILE,
+    INITIALIZATION_STATUS_CREATED_NEW_PREF_STORE,
     INITIALIZATION_STATUS_ERROR
   };
 
@@ -354,11 +350,5 @@ class BASE_PREFS_EXPORT PrefService : public base::NonThreadSafe {
 
   DISALLOW_COPY_AND_ASSIGN(PrefService);
 };
-
-// Retrieves a PrefService for the given context.
-//
-// TODO(joi): This doesn't really belong here, since it references a
-// content type; probably best to get rid of it completely.
-PrefService* PrefServiceFromBrowserContext(content::BrowserContext* context);
 
 #endif  // BASE_PREFS_PREF_SERVICE_H_

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+'use strict';
+
 /**
  * @fileoverview This implements a combobutton control.
  */
@@ -40,6 +42,7 @@ cr.define('cr.ui', function() {
       if (item.bold) {
         menuitem.style.fontWeight = 'bold';
       }
+      return menuitem;
     },
 
     /**

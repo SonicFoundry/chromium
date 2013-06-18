@@ -10,9 +10,9 @@
 #include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/string_piece.h"
-#include "content/public/browser/notification_registrar.h"
+#include "base/strings/string_piece.h"
 #include "content/public/browser/notification_observer.h"
+#include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "ipc/ipc_channel.h"
 #include "ui/gfx/native_widget_types.h"
@@ -123,6 +123,7 @@ class Shell : public WebContentsDelegate,
   virtual bool CanOverscrollContent() const OVERRIDE;
   virtual void WebContentsCreated(WebContents* source_contents,
                                   int64 source_frame_id,
+                                  const string16& frame_name,
                                   const GURL& target_url,
                                   WebContents* new_contents) OVERRIDE;
   virtual void DidNavigateMainFramePostCommit(

@@ -14,25 +14,29 @@
 
 #include "base/basictypes.h"
 #include "base/memory/ref_counted.h"
-#include "base/prefs/public/pref_change_registrar.h"
+#include "base/prefs/pref_change_registrar.h"
+#include "base/threading/platform_thread.h"
 #include "base/tuple.h"
 #include "chrome/browser/content_settings/content_settings_observer.h"
 #include "chrome/common/content_settings.h"
 #include "chrome/common/content_settings_pattern.h"
 #include "chrome/common/content_settings_types.h"
 
-namespace base {
-class Value;
-}  // namespace base
-
-namespace content_settings {
-class ProviderInterface;
-}  // namespace content_settings
-
 class ExtensionService;
 class GURL;
 class PrefService;
+
+namespace base {
+class Value;
+}
+
+namespace content_settings {
+class ProviderInterface;
+}
+
+namespace user_prefs {
 class PrefRegistrySyncable;
+}
 
 class HostContentSettingsMap
     : public content_settings::Observer,
@@ -56,7 +60,7 @@ class HostContentSettingsMap
   void RegisterExtensionService(ExtensionService* extension_service);
 #endif
 
-  static void RegisterUserPrefs(PrefRegistrySyncable* registry);
+  static void RegisterUserPrefs(user_prefs::PrefRegistrySyncable* registry);
 
   // Returns the default setting for a particular content type. If |provider_id|
   // is not NULL, the id of the provider which provided the default setting is
@@ -236,7 +240,13 @@ class HostContentSettingsMap
   void UsedContentSettingsProviders() const;
 
 #ifndef NDEBUG
-  mutable bool used_content_settings_providers_;
+  // This starts as the thread ID of the thread that constructs this
+  // object, and remains until used by a different thread, at which
+  // point it is set to base::kInvalidThreadId. This allows us to
+  // DCHECK on unsafe usage of content_settings_providers_ (they
+  // should be set up on a single thread, after which they are
+  // immutable).
+  mutable base::PlatformThreadId used_from_thread_id_;
 #endif
 
   // Weak; owned by the Profile.

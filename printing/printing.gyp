@@ -113,12 +113,6 @@
             '../build/linux/system.gyp:gtkprint',
           ],
         }],
-        ['OS=="mac" and use_skia==0', {
-          'sources/': [
-            ['exclude', 'pdf_metafile_skia\\.(cc|h)$'],
-            ['exclude', 'metafile_skia_wrapper\\.(cc|h)$'],
-          ],
-        }],
         # Mac-Aura does not support printing.
         ['OS=="mac" and use_aura==1',{
           'sources!': [
@@ -168,10 +162,21 @@
           'dependencies': [
             'cups',
           ],
+          'variables': {
+            'cups_version': '<!(cups-config --api-version)',
+          },
           'conditions': [
             ['OS!="mac"', {
               'dependencies': [
                 '../build/linux/system.gyp:libgcrypt',
+              ],
+            }],
+            ['cups_version=="1.6"', {
+              'cflags': [
+                # CUPS 1.6 deprecated the PPD APIs, but we will stay with this
+                # API for now as supported Linux and Mac OS'es are still using
+                # older versions of CUPS. More info: crbug.com/226176
+                '-Wno-deprecated-declarations',
               ],
             }],
           ],

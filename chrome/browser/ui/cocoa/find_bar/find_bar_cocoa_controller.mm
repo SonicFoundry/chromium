@@ -7,9 +7,12 @@
 #include "base/auto_reset.h"
 #include "base/mac/bundle_locations.h"
 #include "base/mac/mac_util.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
+#include "grit/theme_resources.h"
 #include "grit/ui_resources.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/find_bar/find_bar_bridge.h"
 #import "chrome/browser/ui/cocoa/find_bar/find_bar_cocoa_controller.h"
@@ -24,6 +27,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
 #import "third_party/GTM/AppKit/GTMNSAnimation+Duration.h"
+#include "ui/base/clipboard/clipboard.h"
 #import "ui/base/cocoa/find_pasteboard.h"
 #import "ui/base/cocoa/focus_tracker.h"
 
@@ -33,6 +37,36 @@ const float kFindBarOpenDuration = 0.2;
 const float kFindBarCloseDuration = 0.15;
 const float kFindBarMoveDuration = 0.15;
 const float kRightEdgeOffset = 25;
+
+@interface FindTextFieldEditor : NSTextView {
+ @private
+  ui::SourceTag sourceTag_;
+}
+- (id)initWithSourceTag:(ui::SourceTag)sourceTag;
+
+- (void)copy:(id)sender;
+- (void)cut:(id)sender;
+@end
+
+@implementation FindTextFieldEditor
+
+- (id)initWithSourceTag:(ui::SourceTag)sourceTag {
+  if (self = [super init]) {
+    sourceTag_ = sourceTag;
+  }
+  return self;
+}
+
+- (void)copy:(id)sender {
+  [super copy:sender];
+  ui::Clipboard::WriteSourceTag([NSPasteboard generalPasteboard], sourceTag_);
+}
+
+- (void)cut:(id)sender {
+  [super cut:sender];
+  ui::Clipboard::WriteSourceTag([NSPasteboard generalPasteboard], sourceTag_);
+}
+@end
 
 @interface FindBarCocoaController (PrivateMethods) <NSAnimationDelegate>
 // Returns the appropriate frame for a hidden find bar.
@@ -69,7 +103,7 @@ const float kRightEdgeOffset = 25;
 
 @implementation FindBarCocoaController
 
-- (id)init {
+- (id)initWithBrowser:(Browser*)browser {
   if ((self = [super initWithNibName:@"FindBar"
                               bundle:base::mac::FrameworkBundle()])) {
     [[NSNotificationCenter defaultCenter]
@@ -77,6 +111,7 @@ const float kRightEdgeOffset = 25;
            selector:@selector(findPboardUpdated:)
                name:kFindPasteboardChangedNotification
              object:[FindPasteboard sharedInstance]];
+    browser_ = browser;
   }
   return self;
 }
@@ -94,19 +129,14 @@ const float kRightEdgeOffset = 25;
   findBarBridge_ = findBarBridge;
 }
 
-- (void)setBrowserWindowController:(BrowserWindowController*)controller {
-  DCHECK(!browserWindowController_); // should only be called once.
-  browserWindowController_ = controller;
-}
-
 - (void)awakeFromNib {
-  [[closeButton_ cell] setImageID:IDR_CLOSE_BAR
+  [[closeButton_ cell] setImageID:IDR_CLOSE_1
                    forButtonState:image_button_cell::kDefaultState];
-  [[closeButton_ cell] setImageID:IDR_CLOSE_BAR_H
+  [[closeButton_ cell] setImageID:IDR_CLOSE_1_H
                    forButtonState:image_button_cell::kHoverState];
-  [[closeButton_ cell] setImageID:IDR_CLOSE_BAR_P
+  [[closeButton_ cell] setImageID:IDR_CLOSE_1_P
                    forButtonState:image_button_cell::kPressedState];
-  [[closeButton_ cell] setImageID:IDR_CLOSE_BAR
+  [[closeButton_ cell] setImageID:IDR_CLOSE_1
                    forButtonState:image_button_cell::kDisabledState];
 
   [findBarView_ setFrame:[self hiddenFindBarFrame]];
@@ -175,6 +205,11 @@ const float kRightEdgeOffset = 25;
   }
 }
 
+- (BOOL)isOffTheRecordProfile {
+  return browser_ && browser_->profile() &&
+         browser_->profile()->IsOffTheRecord();
+}
+
 // NSControl delegate method.
 - (void)controlTextDidChange:(NSNotification*)aNotification {
   if (!findBarBridge_)
@@ -187,9 +222,10 @@ const float kRightEdgeOffset = 25;
   FindTabHelper* findTabHelper = FindTabHelper::FromWebContents(webContents);
 
   NSString* findText = [findText_ stringValue];
-  suppressPboardUpdateActions_ = YES;
-  [[FindPasteboard sharedInstance] setFindText:findText];
-  suppressPboardUpdateActions_ = NO;
+  if (![self isOffTheRecordProfile]) {
+    base::AutoReset<BOOL> suppressReset(&suppressPboardUpdateActions_, YES);
+    [[FindPasteboard sharedInstance] setFindText:findText];
+  }
 
   if ([findText length] > 0) {
     findTabHelper->
@@ -271,8 +307,13 @@ const float kRightEdgeOffset = 25;
 
   // The browser window might have changed while the FindBar was hidden.
   // Update its position now.
-  if (browserWindowController_)
-    [browserWindowController_ layoutSubviews];
+  if (browser_) {
+    BrowserWindowController* browserWindowController =
+        [BrowserWindowController browserWindowControllerForWindow:
+            browser_->window()->GetNativeWindow()];
+    if (browserWindowController)
+      [browserWindowController layoutSubviews];
+  }
 
   // Move to the correct horizontal position first, to prevent the FindBar
   // from jumping around when switching tabs.
@@ -327,10 +368,12 @@ const float kRightEdgeOffset = 25;
 - (void)setFindText:(NSString*)findText {
   [findText_ setStringValue:findText];
 
-  // Make sure the text in the find bar always ends up in the find pasteboard
-  // (and, via notifications, in the other find bars too).
-  base::AutoReset<BOOL> suppressReset(&suppressPboardUpdateActions_, YES);
-  [[FindPasteboard sharedInstance] setFindText:findText];
+  if (![self isOffTheRecordProfile]) {
+    // Make sure the text in the find bar always ends up in the find pasteboard
+    // (and, via notifications, in the other find bars too).
+    base::AutoReset<BOOL> suppressReset(&suppressPboardUpdateActions_, YES);
+    [[FindPasteboard sharedInstance] setFindText:findText];
+  }
 }
 
 - (NSString*)matchCountText {
@@ -439,6 +482,27 @@ const float kRightEdgeOffset = 25;
 
 - (int)findBarWidth {
   return NSWidth([[self view] frame]);
+}
+
+- (id)customFieldEditorForObject:(id)obj {
+  if (obj == findText_) {
+    // Lazily construct a field editor. The Cocoa UI code always runs on the
+    // same thread, so there is no race condition here.
+    if (!customTextFieldEditor_) {
+      Profile* profile = browser_ ? browser_->profile() : NULL;
+      ui::SourceTag tag =
+          content::BrowserContext::GetMarkerForOffTheRecordContext(profile);
+      customTextFieldEditor_.reset(
+          [[FindTextFieldEditor alloc] initWithSourceTag:tag]);
+    }
+
+    // This needs to be called every time, otherwise notifications
+    // aren't sent correctly.
+    DCHECK(customTextFieldEditor_.get());
+    [customTextFieldEditor_.get() setFieldEditor:YES];
+    return customTextFieldEditor_.get();
+  }
+  return nil;
 }
 @end
 
@@ -571,17 +635,13 @@ const float kRightEdgeOffset = 25;
 }
 
 - (void)clearFindResultsForCurrentBrowser {
-  if (!findBarBridge_)
-    return;
-  content::WebContents* activeWebContents =
-      findBarBridge_->GetFindBarController()->web_contents();
-  if (!activeWebContents)
-    return;
-  Browser* browser = chrome::FindBrowserWithWebContents(activeWebContents);
-  if (!browser)
+  if (!browser_)
     return;
 
-  TabStripModel* tabStripModel = browser->tab_strip_model();
+  content::WebContents* activeWebContents =
+      findBarBridge_->GetFindBarController()->web_contents();
+
+  TabStripModel* tabStripModel = browser_->tab_strip_model();
   for (int i = 0; i < tabStripModel->count(); ++i) {
     content::WebContents* webContents = tabStripModel->GetWebContentsAt(i);
     if (suppressPboardUpdateActions_ && activeWebContents == webContents)
@@ -592,5 +652,4 @@ const float kRightEdgeOffset = 25;
     findBarBridge_->ClearResults(findTabHelper->find_result());
   }
 }
-
 @end

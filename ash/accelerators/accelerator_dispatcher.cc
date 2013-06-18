@@ -48,7 +48,7 @@ bool IsPossibleAcceleratorNotForMenu(const ui::KeyEvent& key_event) {
   // repost the event. That allows for the shortcut execution after
   // the context menu has exited.
   if (key_event.type() == ui::ET_KEY_PRESSED &&
-      key_event.flags() & (ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN)) {
+      (key_event.flags() & (ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN))) {
     const ui::KeyboardCode key_code = key_event.key_code();
     if ((key_code >= ui::VKEY_A && key_code <= ui::VKEY_Z) ||
         (key_code >= ui::VKEY_0 && key_code <= ui::VKEY_9) ||
@@ -62,7 +62,8 @@ bool IsPossibleAcceleratorNotForMenu(const ui::KeyEvent& key_event) {
 }  // namespace
 
 AcceleratorDispatcher::AcceleratorDispatcher(
-    MessageLoop::Dispatcher* nested_dispatcher, aura::Window* associated_window)
+    base::MessageLoop::Dispatcher* nested_dispatcher,
+    aura::Window* associated_window)
     : nested_dispatcher_(nested_dispatcher),
       associated_window_(associated_window) {
   DCHECK(nested_dispatcher_);

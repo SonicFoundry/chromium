@@ -43,7 +43,7 @@
 #include "chrome/browser/ui/panels/panel.h"
 #include "chrome/browser/ui/panels/panel_manager.h"
 #include "chrome/browser/ui/tab_contents/tab_contents_iterator.h"
-#include "chrome/browser/view_type_utils.h"
+#include "chrome/common/chrome_process_type.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension.h"
@@ -58,9 +58,11 @@
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/process_type.h"
+#include "extensions/browser/view_type_utils.h"
 #include "extensions/common/constants.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
+#include "net/proxy/proxy_resolver_v8.h"
 #include "third_party/sqlite/sqlite3.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -182,7 +184,8 @@ bool IsContentsBackgroundPrinted(WebContents* web_contents) {
 ////////////////////////////////////////////////////////////////////////////////
 TaskManagerRendererResource::TaskManagerRendererResource(
     base::ProcessHandle process, content::RenderViewHost* render_view_host)
-    : process_(process),
+    : content::RenderViewHostObserver(render_view_host),
+      process_(process),
       render_view_host_(render_view_host),
       pending_stats_update_(false),
       fps_(0.0f),
@@ -289,6 +292,13 @@ void TaskManagerRendererResource::Inspect() const {
 
 bool TaskManagerRendererResource::SupportNetworkUsage() const {
   return true;
+}
+
+void TaskManagerRendererResource::RenderViewHostDestroyed(
+    content::RenderViewHost* render_view_host) {
+  // We should never get here.  We should get deleted first.
+  // Use this CHECK to help diagnose http://crbug.com/165138.
+  CHECK(false);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -739,7 +749,7 @@ void TaskManagerPanelResourceProvider::Observe(int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
   WebContents* web_contents = content::Source<WebContents>(source).ptr();
-  if (chrome::GetViewType(web_contents) != chrome::VIEW_TYPE_PANEL)
+  if (extensions::GetViewType(web_contents) != extensions::VIEW_TYPE_PANEL)
     return;
 
   switch (type) {
@@ -1037,11 +1047,11 @@ void TaskManagerBackgroundContentsResourceProvider::Observe(
 gfx::ImageSkia* TaskManagerChildProcessResource::default_icon_ = NULL;
 
 TaskManagerChildProcessResource::TaskManagerChildProcessResource(
-    content::ProcessType type,
+    int process_type,
     const string16& name,
     base::ProcessHandle handle,
     int unique_process_id)
-    : type_(type),
+    : process_type_(process_type),
       name_(name),
       handle_(handle),
       unique_process_id_(unique_process_id),
@@ -1086,24 +1096,24 @@ int TaskManagerChildProcessResource::GetUniqueChildProcessId() const {
 TaskManager::Resource::Type TaskManagerChildProcessResource::GetType() const {
   // Translate types to TaskManager::ResourceType, since ChildProcessData's type
   // is not available for all TaskManager resources.
-  switch (type_) {
+  switch (process_type_) {
     case content::PROCESS_TYPE_PLUGIN:
     case content::PROCESS_TYPE_PPAPI_PLUGIN:
     case content::PROCESS_TYPE_PPAPI_BROKER:
       return TaskManager::Resource::PLUGIN;
-    case content::PROCESS_TYPE_NACL_LOADER:
-    case content::PROCESS_TYPE_NACL_BROKER:
-      return TaskManager::Resource::NACL;
     case content::PROCESS_TYPE_UTILITY:
       return TaskManager::Resource::UTILITY;
-    case content::PROCESS_TYPE_PROFILE_IMPORT:
-      return TaskManager::Resource::PROFILE_IMPORT;
     case content::PROCESS_TYPE_ZYGOTE:
       return TaskManager::Resource::ZYGOTE;
     case content::PROCESS_TYPE_SANDBOX_HELPER:
       return TaskManager::Resource::SANDBOX_HELPER;
     case content::PROCESS_TYPE_GPU:
       return TaskManager::Resource::GPU;
+    case PROCESS_TYPE_PROFILE_IMPORT:
+      return TaskManager::Resource::PROFILE_IMPORT;
+    case PROCESS_TYPE_NACL_LOADER:
+    case PROCESS_TYPE_NACL_BROKER:
+      return TaskManager::Resource::NACL;
     default:
       return TaskManager::Resource::UNKNOWN;
   }
@@ -1120,7 +1130,7 @@ void TaskManagerChildProcessResource::SetSupportNetworkUsage() {
 string16 TaskManagerChildProcessResource::GetLocalizedTitle() const {
   string16 title = name_;
   if (title.empty()) {
-    switch (type_) {
+    switch (process_type_) {
       case content::PROCESS_TYPE_PLUGIN:
       case content::PROCESS_TYPE_PPAPI_PLUGIN:
       case content::PROCESS_TYPE_PPAPI_BROKER:
@@ -1138,30 +1148,23 @@ string16 TaskManagerChildProcessResource::GetLocalizedTitle() const {
   // or Arabic word for "plugin".
   base::i18n::AdjustStringForLocaleDirection(&title);
 
-  switch (type_) {
+  switch (process_type_) {
     case content::PROCESS_TYPE_UTILITY:
       return l10n_util::GetStringUTF16(IDS_TASK_MANAGER_UTILITY_PREFIX);
-
-    case content::PROCESS_TYPE_PROFILE_IMPORT:
-      return l10n_util::GetStringUTF16(IDS_TASK_MANAGER_UTILITY_PREFIX);
-
     case content::PROCESS_TYPE_GPU:
       return l10n_util::GetStringUTF16(IDS_TASK_MANAGER_GPU_PREFIX);
-
-    case content::PROCESS_TYPE_NACL_BROKER:
-      return l10n_util::GetStringUTF16(IDS_TASK_MANAGER_NACL_BROKER_PREFIX);
-
     case content::PROCESS_TYPE_PLUGIN:
     case content::PROCESS_TYPE_PPAPI_PLUGIN:
       return l10n_util::GetStringFUTF16(IDS_TASK_MANAGER_PLUGIN_PREFIX, title);
-
     case content::PROCESS_TYPE_PPAPI_BROKER:
       return l10n_util::GetStringFUTF16(IDS_TASK_MANAGER_PLUGIN_BROKER_PREFIX,
                                         title);
-
-    case content::PROCESS_TYPE_NACL_LOADER:
+    case PROCESS_TYPE_PROFILE_IMPORT:
+      return l10n_util::GetStringUTF16(IDS_TASK_MANAGER_UTILITY_PREFIX);
+    case PROCESS_TYPE_NACL_BROKER:
+      return l10n_util::GetStringUTF16(IDS_TASK_MANAGER_NACL_BROKER_PREFIX);
+    case PROCESS_TYPE_NACL_LOADER:
       return l10n_util::GetStringFUTF16(IDS_TASK_MANAGER_NACL_PREFIX, title);
-
     // These types don't need display names or get them from elsewhere.
     case content::PROCESS_TYPE_BROWSER:
     case content::PROCESS_TYPE_RENDERER:
@@ -1174,7 +1177,6 @@ string16 TaskManagerChildProcessResource::GetLocalizedTitle() const {
     case content::PROCESS_TYPE_WORKER:
       NOTREACHED() << "Workers are not handled by this provider.";
       break;
-
     case content::PROCESS_TYPE_UNKNOWN:
       NOTREACHED() << "Need localized name for child process type.";
   }
@@ -1239,7 +1241,7 @@ void TaskManagerChildProcessResourceProvider::BrowserChildProcessHostConnected(
   DCHECK(updating_);
 
   // Workers are handled by TaskManagerWorkerResourceProvider.
-  if (data.type == content::PROCESS_TYPE_WORKER)
+  if (data.process_type == content::PROCESS_TYPE_WORKER)
     return;
   if (resources_.count(data.handle)) {
     // The case may happen that we have added a child_process_info as part of
@@ -1255,7 +1257,7 @@ void TaskManagerChildProcessResourceProvider::
 BrowserChildProcessHostDisconnected(const content::ChildProcessData& data) {
   DCHECK(updating_);
 
-  if (data.type == content::PROCESS_TYPE_WORKER)
+  if (data.process_type == content::PROCESS_TYPE_WORKER)
     return;
   ChildProcessMap::iterator iter = resources_.find(data.handle);
   if (iter == resources_.end()) {
@@ -1284,7 +1286,7 @@ void TaskManagerChildProcessResourceProvider::AddToTaskManager(
     const content::ChildProcessData& child_process_data) {
   TaskManagerChildProcessResource* resource =
       new TaskManagerChildProcessResource(
-          child_process_data.type,
+          child_process_data.process_type,
           child_process_data.name,
           child_process_data.handle,
           child_process_data.id);
@@ -1300,7 +1302,7 @@ void TaskManagerChildProcessResourceProvider::RetrieveChildProcessData() {
     // Only add processes which are already started, since we need their handle.
     if (iter.GetData().handle == base::kNullProcessHandle)
       continue;
-    if (iter.GetData().type == content::PROCESS_TYPE_WORKER)
+    if (iter.GetData().process_type == content::PROCESS_TYPE_WORKER)
       continue;
     child_processes.push_back(iter.GetData());
   }
@@ -1407,8 +1409,8 @@ const Extension* TaskManagerExtensionProcessResource::GetExtension() const {
 bool TaskManagerExtensionProcessResource::IsBackground() const {
   WebContents* web_contents =
       WebContents::FromRenderViewHost(render_view_host_);
-  chrome::ViewType view_type = chrome::GetViewType(web_contents);
-  return view_type == chrome::VIEW_TYPE_EXTENSION_BACKGROUND_PAGE;
+  extensions::ViewType view_type = extensions::GetViewType(web_contents);
+  return view_type == extensions::VIEW_TYPE_EXTENSION_BACKGROUND_PAGE;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1543,17 +1545,17 @@ bool TaskManagerExtensionProcessResourceProvider::
   // TaskManagerExtensionProcessResource constructor).
   if (web_contents->GetRenderProcessHost()->IsGuest())
     return false;
-  chrome::ViewType view_type = chrome::GetViewType(web_contents);
+  extensions::ViewType view_type = extensions::GetViewType(web_contents);
   // Don't add WebContents (those are handled by
   // TaskManagerTabContentsResourceProvider) or background contents (handled
   // by TaskManagerBackgroundResourceProvider).
 #if defined(USE_ASH)
-  return (view_type != chrome::VIEW_TYPE_TAB_CONTENTS &&
-          view_type != chrome::VIEW_TYPE_BACKGROUND_CONTENTS);
+  return (view_type != extensions::VIEW_TYPE_TAB_CONTENTS &&
+          view_type != extensions::VIEW_TYPE_BACKGROUND_CONTENTS);
 #else
-  return (view_type != chrome::VIEW_TYPE_TAB_CONTENTS &&
-          view_type != chrome::VIEW_TYPE_BACKGROUND_CONTENTS &&
-          view_type != chrome::VIEW_TYPE_PANEL);
+  return (view_type != extensions::VIEW_TYPE_TAB_CONTENTS &&
+          view_type != extensions::VIEW_TYPE_BACKGROUND_CONTENTS &&
+          view_type != extensions::VIEW_TYPE_PANEL);
 #endif  // USE_ASH
 }
 
@@ -1687,15 +1689,11 @@ bool TaskManagerBrowserProcessResource::ReportsV8MemoryStats() const {
 }
 
 size_t TaskManagerBrowserProcessResource::GetV8MemoryAllocated() const {
-  v8::HeapStatistics stats;
-  v8::V8::GetHeapStatistics(&stats);
-  return stats.total_heap_size();
+  return net::ProxyResolverV8::GetTotalHeapSize();
 }
 
 size_t TaskManagerBrowserProcessResource::GetV8MemoryUsed() const {
-  v8::HeapStatistics stats;
-  v8::V8::GetHeapStatistics(&stats);
-  return stats.used_heap_size();
+  return net::ProxyResolverV8::GetUsedHeapSize();
 }
 
 ////////////////////////////////////////////////////////////////////////////////

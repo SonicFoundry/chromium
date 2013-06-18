@@ -24,7 +24,7 @@ namespace media {
 
 ACTION_P3(CheckCountAndPostQuitTask, count, limit, loop) {
   if (++*count >= limit) {
-    loop->PostTask(FROM_HERE, MessageLoop::QuitClosure());
+    loop->PostTask(FROM_HERE, base::MessageLoop::QuitClosure());
   }
 }
 
@@ -34,7 +34,7 @@ class MockAudioInputCallback : public AudioInputStream::AudioInputCallback {
                             const uint8* src, uint32 size,
                             uint32 hardware_delay_bytes, double volume));
   MOCK_METHOD1(OnClose, void(AudioInputStream* stream));
-  MOCK_METHOD2(OnError, void(AudioInputStream* stream, int code));
+  MOCK_METHOD1(OnError, void(AudioInputStream* stream));
 };
 
 // This audio sink implementation should be used for manual tests only since
@@ -85,7 +85,7 @@ class WriteToFileAudioSink : public AudioInputStream::AudioInputCallback {
   }
 
   virtual void OnClose(AudioInputStream* stream) OVERRIDE {}
-  virtual void OnError(AudioInputStream* stream, int code) OVERRIDE {}
+  virtual void OnError(AudioInputStream* stream) OVERRIDE {}
 
  private:
   media::SeekableBuffer buffer_;
@@ -217,7 +217,7 @@ TEST_F(MacAudioInputTest, AUAudioInputStreamVerifyMonoRecording) {
     return;
 
   int count = 0;
-  MessageLoopForUI loop;
+  base::MessageLoopForUI loop;
 
   // Create an audio input stream which records in mono.
   AudioInputStream* ais = CreateAudioInputStream(CHANNEL_LAYOUT_MONO);
@@ -252,7 +252,7 @@ TEST_F(MacAudioInputTest, AUAudioInputStreamVerifyStereoRecording) {
     return;
 
   int count = 0;
-  MessageLoopForUI loop;
+  base::MessageLoopForUI loop;
 
   // Create an audio input stream which records in stereo.
   AudioInputStream* ais = CreateAudioInputStream(CHANNEL_LAYOUT_STEREO);

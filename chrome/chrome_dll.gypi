@@ -88,6 +88,13 @@
                 '<(SHARED_INTERMEDIATE_DIR)/ash/ash_resources/ash_wallpaper_resources.rc',
               ],
             }],
+            ['OS=="win" and target_arch=="ia32"', {
+              # Add a dependency to custom import library for user32 delay
+              # imports only in x86 builds.
+              'dependencies': [
+                'chrome_user32_delay_imports',
+              ],
+            },],
             ['OS=="win"', {
               'product_name': 'chrome',
               'dependencies': [
@@ -112,19 +119,21 @@
                 'app/chrome_main.cc',
                 'app/chrome_main_delegate.cc',
                 'app/chrome_main_delegate.h',
+                'app/delay_load_hook_win.cc',
+                'app/delay_load_hook_win.h',
 
                 '<(SHARED_INTERMEDIATE_DIR)/chrome_version/chrome_dll_version.rc',
                 '../base/win/dllmain.cc',
 
-                '../webkit/glue/resources/aliasb.cur',
-                '../webkit/glue/resources/cell.cur',
-                '../webkit/glue/resources/col_resize.cur',
-                '../webkit/glue/resources/copy.cur',
-                '../webkit/glue/resources/none.cur',
-                '../webkit/glue/resources/row_resize.cur',
-                '../webkit/glue/resources/vertical_text.cur',
-                '../webkit/glue/resources/zoom_in.cur',
-                '../webkit/glue/resources/zoom_out.cur',
+                '../ui/resources/cursors/aliasb.cur',
+                '../ui/resources/cursors/cell.cur',
+                '../ui/resources/cursors/col_resize.cur',
+                '../ui/resources/cursors/copy.cur',
+                '../ui/resources/cursors/none.cur',
+                '../ui/resources/cursors/row_resize.cur',
+                '../ui/resources/cursors/vertical_text.cur',
+                '../ui/resources/cursors/zoom_in.cur',
+                '../ui/resources/cursors/zoom_out.cur',
 
                 # TODO:  It would be nice to have these pulled in
                 # automatically from direct_dependent_settings in
@@ -137,8 +146,8 @@
                 '<(SHARED_INTERMEDIATE_DIR)/chrome/extensions_api_resources.rc',
                 '<(SHARED_INTERMEDIATE_DIR)/content/content_resources.rc',
                 '<(SHARED_INTERMEDIATE_DIR)/net/net_resources.rc',
+                '<(SHARED_INTERMEDIATE_DIR)/ui/ui_resources/ui_unscaled_resources.rc',
                 '<(SHARED_INTERMEDIATE_DIR)/webkit/webkit_chromium_resources.rc',
-                '<(SHARED_INTERMEDIATE_DIR)/webkit/webkit_unscaled_resources.rc',
               ],
               'include_dirs': [
                 '<(DEPTH)/third_party/wtl/include',
@@ -168,6 +177,36 @@
                     ['incremental_chrome_dll==1', {
                       'OutputFile': '$(OutDir)\\initial\\chrome.dll',
                       'UseLibraryDependencyInputs': "true",
+                    }],
+                    ['target_arch=="ia32"', {
+                      # Link against the XP-constrained user32 import library
+                      # instead of the platform-SDK provided one to avoid
+                      # inadvertently taking dependencies on post-XP user32
+                      # exports.
+                      'AdditionalDependencies!': [
+                        'user32.lib',
+                      ],
+                      'IgnoreDefaultLibraryNames': [
+                        'user32.lib',
+                      ],
+                      # Remove user32 delay load for chrome.dll.
+                      'DelayLoadDLLs!': [
+                        'user32.dll',
+                      ],
+                      'AdditionalDependencies': [
+                        'user32.winxp.lib',
+                      ],
+                      'DelayLoadDLLs': [
+                        'user32-delay.dll',
+                      ],
+                      'AdditionalLibraryDirectories': [
+                        '<(DEPTH)/build/win/importlibs/x86',
+                      ],
+                      'ForceSymbolReferences': [
+                        # Force the inclusion of the delay load hook in this
+                        # binary.
+                        '_ChromeDelayLoadHook@8',
+                      ],
                     }],
                   ],
                   'DelayLoadDLLs': [

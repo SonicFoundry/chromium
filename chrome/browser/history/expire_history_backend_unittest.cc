@@ -60,7 +60,7 @@ class ExpireHistoryTest : public testing::Test,
       : bookmark_model_(NULL),
         ui_thread_(BrowserThread::UI, &message_loop_),
         db_thread_(BrowserThread::DB, &message_loop_),
-        ALLOW_THIS_IN_INITIALIZER_LIST(expirer_(this, &bookmark_model_)),
+        expirer_(this, &bookmark_model_),
         now_(Time::Now()) {
   }
 
@@ -411,9 +411,12 @@ TEST_F(ExpireHistoryTest, DeleteFaviconsIfPossible) {
 
   // The favicon should be deletable with no users.
   std::set<FaviconID> favicon_set;
+  std::set<GURL> expired_favicons;
   favicon_set.insert(icon_id);
-  expirer_.DeleteFaviconsIfPossible(favicon_set);
+  expirer_.DeleteFaviconsIfPossible(favicon_set, &expired_favicons);
   EXPECT_FALSE(HasFavicon(icon_id));
+  EXPECT_EQ(1U, expired_favicons.size());
+  EXPECT_EQ(1U, expired_favicons.count(favicon_url));
 
   // Add back the favicon.
   icon_id = thumb_db_->AddFavicon(favicon_url, TOUCH_ICON,
@@ -430,8 +433,10 @@ TEST_F(ExpireHistoryTest, DeleteFaviconsIfPossible) {
   // Favicon should not be deletable.
   favicon_set.clear();
   favicon_set.insert(icon_id);
-  expirer_.DeleteFaviconsIfPossible(favicon_set);
+  expired_favicons.clear();
+  expirer_.DeleteFaviconsIfPossible(favicon_set, &expired_favicons);
   EXPECT_TRUE(HasFavicon(icon_id));
+  EXPECT_TRUE(expired_favicons.empty());
 }
 
 // static

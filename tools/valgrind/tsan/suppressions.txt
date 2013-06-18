@@ -98,7 +98,12 @@
   ThreadSanitizer:Race
   fun:__strncasecmp_l_ssse3
   fun:base::strncasecmp
-  fun:StartsWithASCII
+}
+{
+  False positive on strcasecmp OOB read
+  ThreadSanitizer:Race
+  fun:__strcasecmp_l_ssse3
+  fun:base::strcasecmp
 }
 
 {
@@ -705,8 +710,8 @@
    fun:timeout_correct
    fun:event_base_loop
    fun:base::MessagePumpLibevent::Run
-   fun:MessageLoop::RunInternal
-   fun:MessageLoop::RunHandler
+   fun:base::MessageLoop::RunInternal
+   fun:base::MessageLoop::RunHandler
 }
 {
   bug_104776_maybe_benign
@@ -931,16 +936,23 @@
    fun:_vsnprintf_helper
 }
 {
-   bug_137973_a
-   ThreadSanitizer:Race
-   fun:media::Pipeline::OnVideoTimeUpdate
-   fun:base::internal::RunnableAdapter::Run
+  bug_137973_a
+  ThreadSanitizer:Race
+  fun:media::Pipeline::OnVideoTimeUpdate
+  fun:base::internal::RunnableAdapter::Run
 }
 {
   bug_137973_b
   ThreadSanitizer:Race
   fun:media::Pipeline::SetState
   fun:media::Pipeline::StopTask
+  fun:base::internal::RunnableAdapter::Run
+}
+{
+  bug_137973_c
+  ThreadSanitizer:Race
+  fun:media::Pipeline::SetState
+  fun:media::Pipeline::SeekTask
   fun:base::internal::RunnableAdapter::Run
 }
 {
@@ -1053,4 +1065,55 @@
    fun:base::internal::scoped_ptr_impl::get
    ...
    fun:base::debug::TraceSamplingThread::ThreadMain
+}
+{
+   bug_222601a
+   ThreadSanitizer:Race
+   fun:XFixesFindDisplay
+   fun:XFixesQueryExtension
+   fun:media::::ScreenCapturerLinux::Init
+}
+{
+   bug_222601b
+   ThreadSanitizer:Race
+   fun:XextFindDisplay
+   ...
+   fun:XShmQueryVersion
+   fun:media::XServerPixelBuffer::InitShm
+   fun:media::XServerPixelBuffer::Init
+   fun:media::::ScreenCapturerLinux::Init
+}
+{
+   bug_222601c
+   ThreadSanitizer:Race
+   fun:XextAddDisplay
+   ...
+   fun:media::XServerPixelBuffer::InitShm
+   fun:media::XServerPixelBuffer::Init
+   fun:media::::ScreenCapturerLinux::Init
+}
+{
+   bug_222684a
+   ThreadSanitizer:Race
+   ...
+   fun:WebCore::shouldTreatAsUniqueOrigin
+   fun:WebCore::SecurityOrigin::create
+   fun:WebCore::SecurityOrigin::createFromString
+   fun:WebKit::WebSecurityOrigin::createFromString
+}
+{
+   bug_222684b
+   ThreadSanitizer:Race
+   ...
+   fun:WebCore::SecurityOrigin::SecurityOrigin
+   fun:WebCore::SecurityOrigin::create
+   fun:WebCore::SecurityOrigin::createFromString
+   fun:WebKit::WebSecurityOrigin::createFromString
+}
+{
+  bug_225123
+  ThreadSanitizer:Race
+  fun:setlocale
+  ...
+  fun:gfx::GtkInitFromCommandLine
 }

@@ -8,6 +8,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "chrome/browser/ui/panels/native_panel.h"
 #include "ui/base/animation/animation_delegate.h"
+#include "ui/views/focus/widget_focus_manager.h"
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/views/widget/widget_observer.h"
 
@@ -27,6 +28,7 @@ class WebView;
 class PanelView : public NativePanel,
                   public views::WidgetObserver,
                   public views::WidgetDelegateView,
+                  public views::WidgetFocusChangeListener,
 #if defined(OS_WIN)
                   public ui::HWNDMessageFilter,
 #endif
@@ -77,6 +79,8 @@ class PanelView : public NativePanel,
       const gfx::Size& window_size) const OVERRIDE;
   virtual int TitleOnlyHeight() const OVERRIDE;
   virtual void MinimizePanelBySystem() OVERRIDE;
+  virtual bool IsPanelMinimizedBySystem() const OVERRIDE;
+  virtual void ShowShadow(bool show) OVERRIDE;
   virtual NativePanelTesting* CreateNativePanelTesting() OVERRIDE;
 
   // Overridden from views::View:
@@ -104,6 +108,11 @@ class PanelView : public NativePanel,
   bool force_to_paint_as_inactive() const {
     return force_to_paint_as_inactive_;
   }
+
+  // PanelStackView might want to update the stored bounds directly since it
+  // has already taken care of updating the window bounds directly.
+  void set_cached_bounds_directly(const gfx::Rect& bounds) { bounds_ = bounds; }
+
  private:
   enum MouseDraggingState {
     NO_DRAGGING,
@@ -140,6 +149,10 @@ class PanelView : public NativePanel,
                                          bool active) OVERRIDE;
   virtual void OnWidgetBoundsChanged(views::Widget* widget,
                                      const gfx::Rect& new_bounds) OVERRIDE;
+
+  // Overridden from views::WidgetFocusChangeListener:
+  virtual void OnNativeFocusChange(gfx::NativeView focused_before,
+                                   gfx::NativeView focused_now) OVERRIDE;
 
   // Overridden from ui::HWNDMessageFilter:
 #if defined(OS_WIN)

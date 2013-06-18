@@ -10,15 +10,18 @@
 #include "base/json/json_writer.h"  // for debug output only.
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversion_utils.h"
-#include "chrome/browser/chromeos/cros/certificate_pattern.h"
+#include "chrome/browser/chromeos/cros/certificate_pattern_matcher.h"
 #include "chrome/browser/chromeos/cros/cros_library.h"
 #include "chrome/browser/chromeos/cros/native_network_constants.h"
 #include "chrome/browser/chromeos/cros/native_network_parser.h"
 #include "chrome/browser/chromeos/cros/network_library_impl_cros.h"
 #include "chrome/browser/chromeos/cros/network_library_impl_stub.h"
 #include "chrome/common/net/x509_certificate_model.h"
+#include "chromeos/network/certificate_pattern.h"
 #include "chromeos/network/cros_network_functions.h"
+#include "chromeos/network/network_state_handler.h"
 #include "content/public/browser/browser_thread.h"
+#include "grit/ash_strings.h"
 #include "grit/generated_resources.h"
 #include "net/base/url_util.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -91,12 +94,6 @@ namespace {
 // retries count once cellular device with SIM card is initialized.
 // If cellular device doesn't have SIM card, then retries are never used.
 const int kDefaultSimUnlockRetriesCount = 999;
-
-// Redirect extension url for POST-ing url parameters to mobile account status
-// sites.
-const char kRedirectExtensionPage[] =
-    "chrome-extension://iadeocfgjdjdmpenejdbfeaocpbikmab/redirect.html?"
-    "autoPost=1";
 
 ////////////////////////////////////////////////////////////////////////////////
 // Misc.
@@ -450,6 +447,13 @@ void Network::AttemptConnection(const base::Closure& closure) {
   closure.Run();
 }
 
+void Network::set_connecting() {
+  state_ = STATE_CONNECT_REQUESTED;
+  // Set the connecting network in NetworkStateHandler for the status area UI.
+  if (NetworkStateHandler::IsInitialized())
+    NetworkStateHandler::Get()->SetConnectingNetwork(service_path());
+}
+
 void Network::SetProfilePath(const std::string& profile_path) {
   VLOG(1) << "Setting profile for: " << name_ << " to: " << profile_path;
   SetOrClearStringProperty(
@@ -576,7 +580,7 @@ VirtualNetwork::VirtualNetwork(const std::string& service_path)
       // Assume PSK and user passphrase are not available initially
       psk_passphrase_required_(true),
       user_passphrase_required_(true),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_pointer_factory_(this)) {
+      weak_pointer_factory_(this) {
 }
 
 VirtualNetwork::~VirtualNetwork() {}
@@ -707,7 +711,7 @@ void VirtualNetwork::SetL2TPIPsecPSKCredentials(
     SetStringProperty(flimflam::kL2tpIpsecPasswordProperty,
                       user_passphrase, &user_passphrase_);
   }
-  SetStringProperty(flimflam::kL2tpIpsecGroupNameProperty,
+  SetStringProperty(shill::kL2tpIpsecTunnelGroupProperty,
                     group_name, &group_name_);
 }
 
@@ -723,7 +727,7 @@ void VirtualNetwork::SetL2TPIPsecCertCredentials(
     SetStringProperty(flimflam::kL2tpIpsecPasswordProperty,
                       user_passphrase, &user_passphrase_);
   }
-  SetStringProperty(flimflam::kL2tpIpsecGroupNameProperty,
+  SetStringProperty(shill::kL2tpIpsecTunnelGroupProperty,
                     group_name, &group_name_);
 }
 
@@ -775,7 +779,7 @@ void VirtualNetwork::MatchCertificatePattern(bool allow_enroll,
   }
 
   scoped_refptr<net::X509Certificate> matching_cert =
-      client_cert_pattern().GetMatch();
+      GetCertificateMatch(client_cert_pattern());
   if (matching_cert.get()) {
     std::string client_cert_id =
         x509_certificate_model::GetPkcs11Id(matching_cert->os_cert_handle());
@@ -856,6 +860,7 @@ void CellularApn::Set(const DictionaryValue& dict) {
 CellularNetwork::CellularNetwork(const std::string& service_path)
     : WirelessNetwork(service_path, TYPE_CELLULAR),
       activate_over_non_cellular_network_(false),
+      out_of_credits_(false),
       activation_state_(ACTIVATION_STATE_UNKNOWN),
       network_technology_(NETWORK_TECHNOLOGY_UNKNOWN),
       roaming_state_(ROAMING_STATE_UNKNOWN),
@@ -905,20 +910,6 @@ bool CellularNetwork::SupportsActivation() const {
 bool CellularNetwork::NeedsActivation() const {
   return (activation_state() == ACTIVATION_STATE_NOT_ACTIVATED ||
           activation_state() == ACTIVATION_STATE_PARTIALLY_ACTIVATED);
-}
-
-GURL CellularNetwork::GetAccountInfoUrl() const {
-  if (!post_data_.length())
-    return GURL(payment_url());
-
-  GURL base_url(kRedirectExtensionPage);
-  GURL temp_url = net::AppendQueryParameter(base_url,
-                                            "post_data",
-                                            post_data_);
-  GURL redir_url = net::AppendQueryParameter(temp_url,
-                                             "formUrl",
-                                             payment_url());
-  return redir_url;
 }
 
 std::string CellularNetwork::GetNetworkTechnologyString() const {
@@ -1021,7 +1012,7 @@ WifiNetwork::WifiNetwork(const std::string& service_path)
       eap_phase_2_auth_(EAP_PHASE_2_AUTH_AUTO),
       eap_use_system_cas_(true),
       eap_save_credentials_(false),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_pointer_factory_(this)) {
+      weak_pointer_factory_(this) {
 }
 
 WifiNetwork::~WifiNetwork() {}
@@ -1310,7 +1301,7 @@ void WifiNetwork::MatchCertificatePattern(bool allow_enroll,
   }
 
   scoped_refptr<net::X509Certificate> matching_cert =
-      client_cert_pattern().GetMatch();
+      GetCertificateMatch(client_cert_pattern());
   if (matching_cert.get()) {
     SetEAPClientCertPkcs11Id(
         x509_certificate_model::GetPkcs11Id(matching_cert->os_cert_handle()));

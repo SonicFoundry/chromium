@@ -6,6 +6,7 @@
 #define WEBKIT_FILEAPI_FILE_SYSTEM_TYPES_H_
 
 #include "third_party/WebKit/Source/Platform/chromium/public/WebFileSystem.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebFileSystemType.h"
 
 namespace fileapi {
 
@@ -24,18 +25,21 @@ enum FileSystemType {
   // They are sandboxed filesystems; all the files in the filesystems are
   // placed under the profile directory with path obfuscation and quota
   // enforcement.
-  kFileSystemTypeTemporary = WebKit::WebFileSystem::TypeTemporary,
-  kFileSystemTypePersistent = WebKit::WebFileSystem::TypePersistent,
+  kFileSystemTypeTemporary = WebKit::WebFileSystemTypeTemporary,
+  kFileSystemTypePersistent = WebKit::WebFileSystemTypePersistent,
 
   // Indicates non-sandboxed isolated filesystem.
-  kFileSystemTypeIsolated = WebKit::WebFileSystem::TypeIsolated,
+  kFileSystemTypeIsolated = WebKit::WebFileSystemTypeIsolated,
 
   // Indicates non-sandboxed filesystem where files are placed outside the
   // profile directory (thus called 'external' filesystem).
   // This filesystem is used only by Chrome OS as of writing.
-  kFileSystemTypeExternal = WebKit::WebFileSystem::TypeExternal,
+  kFileSystemTypeExternal = WebKit::WebFileSystemTypeExternal,
 
   // ------------------------------------------------------------------------
+  // Marks the beginning of internal type enum. (This is not the actual fs type)
+  kFileSystemInternalTypeEnumStart = 99,
+
   // Private FileSystem types, that should not appear in filesystem: URL as
   // WebKit has no idea how to handle those types.
   //
@@ -46,7 +50,7 @@ enum FileSystemType {
   // See the comments for IsolatedContext and/or FileSystemURL for more details.
 
   // Should be used only for testing.
-  kFileSystemTypeTest = 100,
+  kFileSystemTypeTest,
 
   // Indicates a local filesystem where we can access files using native
   // local path.
@@ -75,6 +79,17 @@ enum FileSystemType {
   // Indicates a Syncable sandboxed filesystem which can be backed by a
   // cloud storage service.
   kFileSystemTypeSyncable,
+
+  // Indicates an external filesystem accessible by file paths from platform
+  // Apps. As of writing, on non Chrome OS platform, this is merely a
+  // kFileSystemTypeNativeLocal. On Chrome OS, the path is parsed by
+  // the handlers of kFileSystemTypeExternal.
+  kFileSystemTypeNativeForPlatformApp,
+
+  // --------------------------------------------------------------------
+  // Marks the end of internal type enum. (This is not the actual fs type)
+  // New internal filesystem types must be added above this line.
+  kFileSystemInternalTypeEnumEnd,
 };
 
 }  // namespace fileapi

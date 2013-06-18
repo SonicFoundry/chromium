@@ -14,11 +14,10 @@
 #include "base/prefs/pref_service.h"
 #include "base/stl_util.h"
 #include "base/string16.h"
-#include "base/string_piece.h"
 #include "base/string_util.h"
+#include "base/strings/string_piece.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/browser/google/google_util.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/prepopulated_engines.h"
 #include "chrome/browser/search_engines/search_engine_type.h"
@@ -27,6 +26,7 @@
 #include "chrome/browser/search_engines/template_url_service.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/browser_thread.h"
 #include "googleurl/src/gurl.h"
 #include "grit/generated_resources.h"
@@ -1089,19 +1089,22 @@ const LogoURLs google_logos = {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-void RegisterUserPrefs(PrefRegistrySyncable* registry) {
-  registry->RegisterIntegerPref(prefs::kCountryIDAtInstall,
-                                kCountryIDUnknown,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
+void RegisterUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterIntegerPref(
+      prefs::kCountryIDAtInstall,
+      kCountryIDUnknown,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
   registry->RegisterListPref(prefs::kSearchProviderOverrides,
-                             PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterIntegerPref(prefs::kSearchProviderOverridesVersion,
-                                -1,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
+                             user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterIntegerPref(
+      prefs::kSearchProviderOverridesVersion,
+      -1,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
   // Obsolete pref, for migration.
-  registry->RegisterIntegerPref(prefs::kGeoIDAtInstall,
-                                -1,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterIntegerPref(
+      prefs::kGeoIDAtInstall,
+      -1,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 int GetDataVersion(PrefService* prefs) {

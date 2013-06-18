@@ -57,9 +57,6 @@ SpellCheckProvider::SpellCheckProvider(
 }
 
 SpellCheckProvider::~SpellCheckProvider() {
-#if defined(OS_MACOSX)
-  Send(new SpellCheckHostMsg_DocumentClosed(routing_id(), routing_id()));
-#endif
 }
 
 void SpellCheckProvider::RequestTextChecking(
@@ -93,7 +90,6 @@ void SpellCheckProvider::RequestTextChecking(
   Send(new SpellCheckHostMsg_CallSpellingService(
       routing_id(),
       text_check_completions_.Add(completion),
-      0,
       string16(text)));
 #endif  // !OS_MACOSX
 }
@@ -159,22 +155,23 @@ void SpellCheckProvider::checkTextOfParagraph(
     const WebKit::WebString& text,
     WebKit::WebTextCheckingTypeMask mask,
     WebKit::WebVector<WebKit::WebTextCheckingResult>* results) {
-  UMA_HISTOGRAM_COUNTS("SpellCheck.api.paragraph", text.length());
-#if !defined(OS_MACOSX)
-  // Since Mac has its own spell checker, this method will not be used on Mac.
-
   if (!results)
     return;
 
   if (!(mask & WebKit::WebTextCheckingTypeSpelling))
     return;
 
+  // TODO(groby): As far as I can tell, this method is never invoked.
+  // UMA results seem to support that. Investigate, clean up if true.
+  NOTREACHED();
   spellcheck_->SpellCheckParagraph(string16(text), results);
-#endif
+  UMA_HISTOGRAM_COUNTS("SpellCheck.api.paragraph", text.length());
 }
 
 void SpellCheckProvider::requestCheckingOfText(
     const WebString& text,
+    const WebVector<uint32>& markers,
+    const WebVector<unsigned>& marker_offsets,
     WebTextCheckingCompletion* completion) {
   RequestTextChecking(text, completion);
   UMA_HISTOGRAM_COUNTS("SpellCheck.api.async", text.length());
@@ -211,7 +208,6 @@ void SpellCheckProvider::updateSpellingUIWithMisspelledWord(
 #if !defined(OS_MACOSX)
 void SpellCheckProvider::OnRespondSpellingService(
     int identifier,
-    int offset,
     bool succeeded,
     const string16& line,
     const std::vector<SpellCheckResult>& results) {
@@ -223,7 +219,7 @@ void SpellCheckProvider::OnRespondSpellingService(
 
   // If |succeeded| is false, we use local spellcheck as a fallback.
   if (!succeeded) {
-    spellcheck_->RequestTextChecking(line, offset, completion);
+    spellcheck_->RequestTextChecking(line, completion);
     return;
   }
 
@@ -231,7 +227,7 @@ void SpellCheckProvider::OnRespondSpellingService(
   // visualize the differences between ours and the on-line spellchecker.
   WebKit::WebVector<WebKit::WebTextCheckingResult> textcheck_results;
   spellcheck_->CreateTextCheckingResults(SpellCheck::USE_NATIVE_CHECKER,
-                                         offset,
+                                         0,
                                          line,
                                          results,
                                          &textcheck_results);
@@ -306,6 +302,8 @@ void SpellCheckProvider::EnableSpellcheck(bool enable) {
 
   WebFrame* frame = render_view()->GetWebView()->focusedFrame();
   frame->enableContinuousSpellChecking(enable);
+  if (!enable)
+    frame->removeSpellingMarkers();
 }
 
 bool SpellCheckProvider::SatisfyRequestFromCache(
@@ -313,14 +311,17 @@ bool SpellCheckProvider::SatisfyRequestFromCache(
     WebTextCheckingCompletion* completion) {
   size_t last_length = last_request_.length();
 
-  // Cancel this spellcheck request if the cached text is a substring of the
-  // given text and the given text is the middle of a possible word.
+  // Send back the |last_results_| if the |last_request_| is a substring of
+  // |text| and |text| does not have more words to check. Provider cannot cancel
+  // the spellcheck request here, because WebKit might have discarded the
+  // previous spellcheck results and erased the spelling markers in response to
+  // the user editing the text.
   string16 request(text);
   size_t text_length = request.length();
   if (text_length >= last_length &&
       !request.compare(0, last_length, last_request_)) {
     if (text_length == last_length || !HasWordCharacters(text, last_length)) {
-      completion->didCancelCheckingText();
+      completion->didFinishCheckingText(last_results_);
       return true;
     }
     int code = 0;

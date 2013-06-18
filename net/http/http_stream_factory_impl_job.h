@@ -10,7 +10,7 @@
 #include "base/memory/weak_ptr.h"
 #include "net/base/completion_callback.h"
 #include "net/base/net_log.h"
-#include "net/base/ssl_config_service.h"
+#include "net/base/request_priority.h"
 #include "net/http/http_auth.h"
 #include "net/http/http_auth_controller.h"
 #include "net/http/http_pipelined_host.h"
@@ -20,6 +20,7 @@
 #include "net/quic/quic_stream_factory.h"
 #include "net/socket/client_socket_handle.h"
 #include "net/socket/ssl_client_socket.h"
+#include "net/ssl/ssl_config_service.h"
 
 namespace net {
 
@@ -37,6 +38,7 @@ class HttpStreamFactoryImpl::Job {
   Job(HttpStreamFactoryImpl* stream_factory,
       HttpNetworkSession* session,
       const HttpRequestInfo& request_info,
+      RequestPriority priority,
       const SSLConfig& server_ssl_config,
       const SSLConfig& proxy_ssl_config,
       NetLog* net_log);
@@ -225,6 +227,7 @@ class HttpStreamFactoryImpl::Job {
   Request* request_;
 
   const HttpRequestInfo request_info_;
+  RequestPriority priority_;
   ProxyInfo proxy_info_;
   SSLConfig server_ssl_config_;
   SSLConfig proxy_ssl_config_;

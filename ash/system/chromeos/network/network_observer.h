@@ -12,20 +12,14 @@
 namespace ash {
 
 struct NetworkIconInfo;
-
-class NetworkTrayDelegate {
- public:
-  virtual ~NetworkTrayDelegate() {}
-
-  // Notifies that the |index|-th link on the notification is clicked.
-  virtual void NotificationLinkClicked(size_t index) = 0;
-};
+class NetworkTrayDelegate;
 
 class NetworkObserver {
  public:
   enum MessageType {
     // Priority order, highest to lowest.
     ERROR_CONNECT_FAILED,
+    ERROR_OUT_OF_CREDITS,
     MESSAGE_DATA_PROMO,
   };
 
@@ -51,9 +45,9 @@ class NetworkObserver {
   virtual void SetNetworkMessage(NetworkTrayDelegate* delegate,
                                  MessageType message_type,
                                  NetworkType network_type,
-                                 const string16& title,
-                                 const string16& message,
-                                 const std::vector<string16>& links) = 0;
+                                 const base::string16& title,
+                                 const base::string16& message,
+                                 const std::vector<base::string16>& links) = 0;
   // Clears the message notification for |message_type|.
   virtual void ClearNetworkMessage(MessageType message_type) = 0;
 

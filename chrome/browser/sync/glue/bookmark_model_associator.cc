@@ -191,14 +191,16 @@ const BookmarkNode* BookmarkNodeIdIndex::Find(int64 id) const {
 
 BookmarkModelAssociator::BookmarkModelAssociator(
     BookmarkModel* bookmark_model,
+    Profile* profile,
     syncer::UserShare* user_share,
     DataTypeErrorHandler* unrecoverable_error_handler,
     bool expect_mobile_bookmarks_folder)
     : bookmark_model_(bookmark_model),
+      profile_(profile),
       user_share_(user_share),
       unrecoverable_error_handler_(unrecoverable_error_handler),
       expect_mobile_bookmarks_folder_(expect_mobile_bookmarks_folder),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+      weak_factory_(this) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(bookmark_model_);
   DCHECK(user_share_);
@@ -501,6 +503,7 @@ syncer::SyncError BookmarkModelAssociator::BuildAssociations(
           BookmarkChangeProcessor::CreateOrUpdateBookmarkNode(
               &sync_child_node,
               bookmark_model_,
+              profile_,
               this);
       if (new_child_node != child_node) {
         local_merge_result->set_num_items_added(
@@ -706,7 +709,8 @@ void BookmarkModelAssociator::CheckModelSyncState() const {
     if (base::StringToInt64(version_str, &native_version) &&
         native_version != trans.GetModelVersion(syncer::BOOKMARKS)) {
       UMA_HISTOGRAM_ENUMERATION("Sync.LocalModelOutOfSync",
-                                syncer::BOOKMARKS, syncer::MODEL_TYPE_COUNT);
+                                ModelTypeToHistogramInt(syncer::BOOKMARKS),
+                                syncer::MODEL_TYPE_COUNT);
       // Clear version on bookmark model so that we only report error once.
       bookmark_model_->DeleteNodeMetaInfo(bookmark_model_->root_node(),
                                           kBookmarkTransactionVersionKey);

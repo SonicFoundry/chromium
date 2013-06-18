@@ -118,6 +118,19 @@ name=http://crbug.com/107567 intentional mismatch in _DebugHeapDelete, no frame
 *!std::numpunct<*>::_Tidy
 *!std::numpunct<*>::~numpunct<*>
 
+# TODO(rbultje): Investigate if code fix is required instead. 
+WARNING
+name=http://crbug.com/223255 - prefetches in vp8
+instruction=prefetch*
+ffmpegsumo.dll!ff_prefetch_mmxext
+ffmpegsumo.dll!vp8_decode_mb_row_no_filter
+
+WARNING
+name=http://crbug.com/233500 - prefetches in v8::internal::OS::MemCopy
+instruction=prefetch*
+...
+v8.dll!v8::internal::OS::MemCopy
+
 ############################
 # Intentional errors in Chromium tests (ToolsSanityTests)
 LEAK
@@ -228,7 +241,7 @@ name=CrashingChildProcess deliberate crash
 
 UNADDRESSABLE ACCESS
 name=::Crasher::Run deliberate crash
-*!`anonymous namespace'::Crasher::Run
+*!base::`anonymous namespace'::Crasher::Run
 
 ############################
 # Benign issues in Chromium
@@ -420,3 +433,21 @@ USER32.dll!LoadBitmapW
 media.dll!media::*::ScreenCapturerWin::CaptureCursor
 media.dll!media::*::ScreenCapturerWin::CaptureFrame
 media.dll!media::ScreenCaptureDevice::Core::DoCapture
+
+WARNING
+name=http://crbug.com/222628
+...
+v8.dll!v8::internal::CopyBytes<unsigned char>
+v8.dll!v8::internal::Code::CopyFrom
+v8.dll!v8::internal::Heap::CreateCode
+v8.dll!v8::internal::Factory::NewCode
+v8.dll!v8::internal::CodeGenerator::MakeCodeEpilogue
+v8.dll!v8::internal::FullCodeGenerator::MakeCode
+v8.dll!v8::internal::GenerateCode
+
+GDI USAGE ERROR
+name=http://crbug.com/234484
+# "DC created by one thread and used by another"
+...
+*!chrome::`anonymous namespace'::SetOverlayIcon
+

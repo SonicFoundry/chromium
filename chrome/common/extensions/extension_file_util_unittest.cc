@@ -11,15 +11,10 @@
 #include "base/stringprintf.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/extensions/api/extension_action/browser_action_handler.h"
-#include "chrome/common/extensions/api/extension_action/page_action_handler.h"
-#include "chrome/common/extensions/api/i18n/default_locale_handler.h"
-#include "chrome/common/extensions/api/icons/icons_handler.h"
-#include "chrome/common/extensions/background_info.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_manifest_constants.h"
 #include "chrome/common/extensions/manifest.h"
-#include "chrome/common/extensions/manifest_handler.h"
+#include "extensions/common/constants.h"
 #include "grit/generated_resources.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -31,25 +26,8 @@ using extensions::Manifest;
 namespace keys = extension_manifest_keys;
 
 class ExtensionFileUtilTest : public testing::Test {
- protected:
-  virtual void SetUp() OVERRIDE {
-    testing::Test::SetUp();
-    (new extensions::BackgroundManifestHandler)->Register();
-    (new extensions::BrowserActionHandler)->Register();
-    (new extensions::DefaultLocaleHandler)->Register();
-    (new extensions::IconsHandler)->Register();
-    (new extensions::PageActionHandler)->Register();
-  }
-
-  virtual void TearDown() OVERRIDE {
-    extensions::ManifestHandler::ClearRegistryForTesting();
-  }
 };
 
-#if defined(OS_WIN)
-// http://crbug.com/106381
-#define InstallUninstallGarbageCollect DISABLED_InstallUninstallGarbageCollect
-#endif
 TEST_F(ExtensionFileUtilTest, InstallUninstallGarbageCollect) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
@@ -156,11 +134,6 @@ TEST_F(ExtensionFileUtilTest, LoadExtensionWithoutLocalesFolder) {
   EXPECT_TRUE(error.empty());
 }
 
-#if defined(OS_WIN)
-// http://crbug.com/106381
-#define CheckIllegalFilenamesNoUnderscores \
-    DISABLED_CheckIllegalFilenamesNoUnderscores
-#endif
 TEST_F(ExtensionFileUtilTest, CheckIllegalFilenamesNoUnderscores) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
@@ -176,33 +149,28 @@ TEST_F(ExtensionFileUtilTest, CheckIllegalFilenamesNoUnderscores) {
                                                             &error));
 }
 
-#if defined(OS_WIN)
-// http://crbug.com/106381
-#define CheckIllegalFilenamesOnlyReserved \
-    DISABLED_CheckIllegalFilenamesOnlyReserved
-#endif
 TEST_F(ExtensionFileUtilTest, CheckIllegalFilenamesOnlyReserved) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  base::FilePath src_path = temp.path().Append(Extension::kLocaleFolder);
-  ASSERT_TRUE(file_util::CreateDirectory(src_path));
+  const base::FilePath::CharType* folders[] =
+      { extensions::kLocaleFolder, extensions::kPlatformSpecificFolder };
+
+  for (size_t i = 0; i < arraysize(folders); i++) {
+    base::FilePath src_path = temp.path().Append(folders[i]);
+    ASSERT_TRUE(file_util::CreateDirectory(src_path));
+  }
 
   std::string error;
   EXPECT_TRUE(extension_file_util::CheckForIllegalFilenames(temp.path(),
                                                             &error));
 }
 
-#if defined(OS_WIN)
-// http://crbug.com/106381
-#define CheckIllegalFilenamesReservedAndIllegal \
-    DISABLED_CheckIllegalFilenamesReservedAndIllegal
-#endif
 TEST_F(ExtensionFileUtilTest, CheckIllegalFilenamesReservedAndIllegal) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  base::FilePath src_path = temp.path().Append(Extension::kLocaleFolder);
+  base::FilePath src_path = temp.path().Append(extensions::kLocaleFolder);
   ASSERT_TRUE(file_util::CreateDirectory(src_path));
 
   src_path = temp.path().AppendASCII("_some_dir");
@@ -315,8 +283,9 @@ TEST_F(ExtensionFileUtilTest, ExtensionResourceURLToFilePath) {
   // Setup filesystem for testing.
   base::FilePath root_path;
   ASSERT_TRUE(file_util::CreateNewTempDirectory(
-        FILE_PATH_LITERAL(""), &root_path));
-  ASSERT_TRUE(file_util::AbsolutePath(&root_path));
+      base::FilePath::StringType(), &root_path));
+  root_path = base::MakeAbsoluteFilePath(root_path);
+  ASSERT_FALSE(root_path.empty());
 
   base::FilePath api_path = root_path.Append(FILE_PATH_LITERAL("apiname"));
   ASSERT_TRUE(file_util::CreateDirectory(api_path));
@@ -407,10 +376,6 @@ static scoped_refptr<Extension> LoadExtensionManifest(
       error);
 }
 
-#if defined(OS_WIN)
-// http://crbug.com/108279
-#define ValidateThemeUTF8 DISABLED_ValidateThemeUTF8
-#endif
 TEST_F(ExtensionFileUtilTest, ValidateThemeUTF8) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
@@ -438,13 +403,7 @@ TEST_F(ExtensionFileUtilTest, ValidateThemeUTF8) {
   EXPECT_EQ(0U, warnings.size());
 }
 
-#if defined(OS_WIN)
-// This test hangs on Windows sometimes. http://crbug.com/110279
-#define MAYBE_BackgroundScriptsMustExist DISABLED_BackgroundScriptsMustExist
-#else
-#define MAYBE_BackgroundScriptsMustExist BackgroundScriptsMustExist
-#endif
-TEST_F(ExtensionFileUtilTest, MAYBE_BackgroundScriptsMustExist) {
+TEST_F(ExtensionFileUtilTest, BackgroundScriptsMustExist) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
@@ -589,8 +548,8 @@ TEST_F(ExtensionFileUtilTest, CheckZeroLengthImageFile) {
   std::string error;
   scoped_refptr<Extension> extension(extension_file_util::LoadExtension(
       ext_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
-  ASSERT_TRUE(extension == NULL);
-  ASSERT_STREQ("Could not load extension icon 'icon.png'.",
+  EXPECT_TRUE(extension == NULL);
+  EXPECT_STREQ("Could not load extension icon 'icon.png'.",
       error.c_str());
 
   // Try to install an extension with a zero-length browser action icon file.
@@ -601,8 +560,8 @@ TEST_F(ExtensionFileUtilTest, CheckZeroLengthImageFile) {
 
   scoped_refptr<Extension> extension2(extension_file_util::LoadExtension(
       ext_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
-  ASSERT_TRUE(extension2 == NULL);
-  ASSERT_STREQ("Could not load icon 'icon.png' for browser action.",
+  EXPECT_TRUE(extension2 == NULL);
+  EXPECT_STREQ("Could not load icon 'icon.png' for browser action.",
       error.c_str());
 
   // Try to install an extension with a zero-length page action icon file.
@@ -613,8 +572,8 @@ TEST_F(ExtensionFileUtilTest, CheckZeroLengthImageFile) {
 
   scoped_refptr<Extension> extension3(extension_file_util::LoadExtension(
       ext_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
-  ASSERT_TRUE(extension3 == NULL);
-  ASSERT_STREQ("Could not load icon 'icon.png' for page action.",
+  EXPECT_TRUE(extension3 == NULL);
+  EXPECT_STREQ("Could not load icon 'icon.png' for page action.",
       error.c_str());
 }
 

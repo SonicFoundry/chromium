@@ -41,7 +41,7 @@ MATCHER_P(DelayGreaterThan, value, "") {
 // Used to terminate a loop from a different thread than the loop belongs to.
 // |loop| should be a MessageLoopProxy.
 ACTION_P(QuitLoop, loop) {
-  loop->PostTask(FROM_HERE, MessageLoop::QuitClosure());
+  loop->PostTask(FROM_HERE, base::MessageLoop::QuitClosure());
 }
 
 class MockUnifiedSourceCallback
@@ -52,7 +52,7 @@ class MockUnifiedSourceCallback
   MOCK_METHOD3(OnMoreIOData, int(AudioBus* source,
                                  AudioBus* dest,
                                  AudioBuffersState buffers_state));
-  MOCK_METHOD2(OnError, void(AudioOutputStream* stream, int code));
+  MOCK_METHOD1(OnError, void(AudioOutputStream* stream));
 };
 
 // AudioOutputStream::AudioSourceCallback implementation which enables audio
@@ -109,13 +109,13 @@ class UnifiedSourceCallback : public AudioOutputStream::AudioSourceCallback {
     return source->frames();
   };
 
-  virtual void OnError(AudioOutputStream* stream, int code) {
+  virtual void OnError(AudioOutputStream* stream) {
     NOTREACHED();
   }
 
  private:
   base::Time previous_call_time_;
-  scoped_array<int> delta_times_;
+  scoped_ptr<int[]> delta_times_;
   FILE* text_file_;
   size_t elements_to_write_;
 };
@@ -123,33 +123,9 @@ class UnifiedSourceCallback : public AudioOutputStream::AudioSourceCallback {
 // Convenience method which ensures that we fulfill all required conditions
 // to run unified audio tests on Windows.
 static bool CanRunUnifiedAudioTests(AudioManager* audio_man) {
-  const CommandLine* cmd_line = CommandLine::ForCurrentProcess();
-  if (!cmd_line->HasSwitch(switches::kEnableWebAudioInput)) {
-    DVLOG(1) << "--enable-webaudio-input must be defined to run this test.";
-    return false;
-  }
-
-  if (!CoreAudioUtil::IsSupported()) {
-    LOG(WARNING) << "This tests requires Windows Vista or higher.";
-    return false;
-  }
-
-  if (!audio_man->HasAudioOutputDevices()) {
-    LOG(WARNING) << "No output devices detected.";
-    return false;
-  }
-
-  if (!audio_man->HasAudioInputDevices()) {
-    LOG(WARNING) << "No input devices detected.";
-    return false;
-  }
-
-  if (!WASAPIUnifiedStream::HasUnifiedDefaultIO()) {
-    LOG(WARNING) << "Audio IO is not supported.";
-    return false;
-  }
-
-  return true;
+  // TODO(crogers, henrika): figure out why enabling this test causes
+  // other tests to hang.
+  return false;
 }
 
 // Convenience class which simplifies creation of a unified AudioOutputStream
@@ -222,7 +198,7 @@ TEST(WASAPIUnifiedStreamTest, OpenStartAndClose) {
   WASAPIUnifiedStream* wus = ausw.Create();
 
   EXPECT_TRUE(wus->Open());
-  EXPECT_CALL(source, OnError(wus, _))
+  EXPECT_CALL(source, OnError(wus))
       .Times(0);
   EXPECT_CALL(source, OnMoreIOData(NotNull(), NotNull(), _))
       .Times(Between(0, 1))
@@ -237,7 +213,7 @@ TEST(WASAPIUnifiedStreamTest, StartLoopbackAudio) {
   if (!CanRunUnifiedAudioTests(audio_manager.get()))
     return;
 
-  MessageLoopForUI loop;
+  base::MessageLoopForUI loop;
   MockUnifiedSourceCallback source;
   AudioUnifiedStreamWrapper ausw(audio_manager.get());
   WASAPIUnifiedStream* wus = ausw.Create();
@@ -248,7 +224,7 @@ TEST(WASAPIUnifiedStreamTest, StartLoopbackAudio) {
   AudioBuffersState min_total_audio_delay(0, 2 * ausw.bytes_per_buffer());
 
   EXPECT_TRUE(wus->Open());
-  EXPECT_CALL(source, OnError(wus, _))
+  EXPECT_CALL(source, OnError(wus))
       .Times(0);
   EXPECT_CALL(source, OnMoreIOData(
       NotNull(), NotNull(), DelayGreaterThan(min_total_audio_delay)))
@@ -258,7 +234,7 @@ TEST(WASAPIUnifiedStreamTest, StartLoopbackAudio) {
           QuitLoop(loop.message_loop_proxy()),
           Return(ausw.frames_per_buffer())));
   wus->Start(&source);
-  loop.PostDelayedTask(FROM_HERE, MessageLoop::QuitClosure(),
+  loop.PostDelayedTask(FROM_HERE, base::MessageLoop::QuitClosure(),
                        TestTimeouts::action_timeout());
   loop.Run();
   wus->Stop();
@@ -273,13 +249,13 @@ TEST(WASAPIUnifiedStreamTest, DISABLED_RealTimePlayThrough) {
   if (!CanRunUnifiedAudioTests(audio_manager.get()))
     return;
 
-  MessageLoopForUI loop;
+  base::MessageLoopForUI loop;
   UnifiedSourceCallback source;
   WASAPIUnifiedStream* wus = CreateDefaultUnifiedStream(audio_manager.get());
 
   EXPECT_TRUE(wus->Open());
   wus->Start(&source);
-  loop.PostDelayedTask(FROM_HERE, MessageLoop::QuitClosure(),
+  loop.PostDelayedTask(FROM_HERE, base::MessageLoop::QuitClosure(),
                        base::TimeDelta::FromMilliseconds(10000));
   loop.Run();
   wus->Close();

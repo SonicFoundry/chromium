@@ -9,6 +9,9 @@
 
 #include "chrome/renderer/extensions/chrome_v8_context_set.h"
 
+namespace base {
+class DictionaryValue;
+}
 
 namespace content {
 class RenderView;
@@ -30,7 +33,8 @@ class Dispatcher;
 class MiscellaneousBindings {
  public:
   // Creates an instance of the extension.
-  static ChromeV8Extension* Get(Dispatcher* dispatcher);
+  static ChromeV8Extension* Get(Dispatcher* dispatcher,
+                                v8::Handle<v8::Context> context);
 
   // Dispatches the Port.onConnect content script messaging event to some
   // contexts in |contexts|. If |restrict_to_render_view| is specified, only
@@ -39,9 +43,10 @@ class MiscellaneousBindings {
       const ChromeV8ContextSet::ContextSet& contexts,
       int target_port_id,
       const std::string& channel_name,
-      const std::string& tab_json,
+      const base::DictionaryValue& source_tab,
       const std::string& source_extension_id,
       const std::string& target_extension_id,
+      const GURL& source_url,
       content::RenderView* restrict_to_render_view);
 
   // Delivers a message sent using content script messaging to some of the
@@ -58,7 +63,7 @@ class MiscellaneousBindings {
   static void DispatchOnDisconnect(
       const ChromeV8ContextSet::ContextSet& context_set,
       int port_id,
-      bool connection_error,
+      const std::string& error_message,
       content::RenderView* restrict_to_render_view);
 };
 

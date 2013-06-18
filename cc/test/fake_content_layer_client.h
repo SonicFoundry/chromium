@@ -5,31 +5,44 @@
 #ifndef CC_TEST_FAKE_CONTENT_LAYER_CLIENT_H_
 #define CC_TEST_FAKE_CONTENT_LAYER_CLIENT_H_
 
+#include <utility>
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "cc/content_layer_client.h"
+#include "cc/layers/content_layer_client.h"
+#include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/core/SkPaint.h"
 #include "ui/gfx/rect.h"
 
 namespace cc {
 
 class FakeContentLayerClient : public cc::ContentLayerClient {
-public:
-    FakeContentLayerClient();
-    virtual ~FakeContentLayerClient();
+ public:
+  FakeContentLayerClient();
+  virtual ~FakeContentLayerClient();
 
-    virtual void paintContents(SkCanvas*, const gfx::Rect& rect,
-        gfx::RectF& opaque_rect) OVERRIDE;
+  virtual void PaintContents(SkCanvas* canvas,
+                             gfx::Rect rect,
+                             gfx::RectF* opaque_rect) OVERRIDE;
+  virtual void DidChangeLayerCanUseLCDText() OVERRIDE {}
 
-    void setPaintAllOpaque(bool opaque) { paint_all_opaque_ = opaque; }
+  void set_paint_all_opaque(bool opaque) { paint_all_opaque_ = opaque; }
 
-    void addDrawRect(const gfx::Rect& rect) { draw_rects_.push_back(rect); }
+  void add_draw_rect(const gfx::RectF& rect, const SkPaint& paint) {
+    draw_rects_.push_back(std::make_pair(rect, paint));
+  }
 
-private:
-    typedef std::vector<gfx::Rect> RectVector;
+  void add_draw_bitmap(const SkBitmap& bitmap, gfx::Point point) {
+    draw_bitmaps_.push_back(std::make_pair(bitmap, point));
+  }
 
-    bool paint_all_opaque_;
-    RectVector draw_rects_;
+ private:
+  typedef std::vector<std::pair<gfx::RectF, SkPaint> > RectPaintVector;
+  typedef std::vector<std::pair<SkBitmap, gfx::Point> > BitmapVector;
+
+  bool paint_all_opaque_;
+  RectPaintVector draw_rects_;
+  BitmapVector draw_bitmaps_;
 };
 
 }  // namespace cc

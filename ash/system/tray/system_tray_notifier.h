@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "ash/ash_export.h"
-#include "ash/system/audio/audio_observer.h"
 #include "ash/system/bluetooth/bluetooth_observer.h"
 #include "ash/system/brightness/brightness_observer.h"
 #include "ash/system/chromeos/enterprise/enterprise_domain_observer.h"
@@ -27,11 +26,12 @@
 #include "ash/system/user/update_observer.h"
 #include "ash/system/user/user_observer.h"
 #include "base/observer_list.h"
-#include "base/time.h"
 
 #if defined(OS_CHROMEOS)
+#include "ash/system/chromeos/audio/audio_observer.h"
 #include "ash/system/chromeos/network/network_observer.h"
 #include "ash/system/chromeos/network/sms_observer.h"
+#include "ash/system/chromeos/screen_capture/screen_capture_observer.h"
 #endif
 
 namespace ash {
@@ -43,9 +43,6 @@ public:
 
   void AddAccessibilityObserver(AccessibilityObserver* observer);
   void RemoveAccessibilityObserver(AccessibilityObserver* observer);
-
-  void AddAudioObserver(AudioObserver* observer);
-  void RemoveAudioObserver(AudioObserver* observer);
 
   void AddBluetoothObserver(BluetoothObserver* observer);
   void RemoveBluetoothObserver(BluetoothObserver* observer);
@@ -84,6 +81,9 @@ public:
   void RemoveUserObserver(UserObserver* observer);
 
 #if defined(OS_CHROMEOS)
+  void AddAudioObserver(AudioObserver* observer);
+  void RemoveAudioObserver(AudioObserver* observer);
+
   void AddNetworkObserver(NetworkObserver* observer);
   void RemoveNetworkObserver(NetworkObserver* observer);
 
@@ -95,19 +95,21 @@ public:
 
   void AddEnterpriseDomainObserver(EnterpriseDomainObserver* observer);
   void RemoveEnterpriseDomainObserver(EnterpriseDomainObserver* observer);
+
+  void AddScreenCaptureObserver(ScreenCaptureObserver* observer);
+  void RemoveScreenCaptureObserver(ScreenCaptureObserver* observer);
 #endif
 
   void NotifyAccessibilityModeChanged(
       AccessibilityNotificationVisibility notify);
-  void NotifyVolumeChanged(float level);
-  void NotifyMuteToggled();
   void NotifyRefreshBluetooth();
   void NotifyBluetoothDiscoveringChanged();
   void NotifyBrightnessChanged(double level, bool user_initialted);
   void NotifyCapsLockChanged(bool enabled, bool search_mapped_to_caps_lock);
   void NotifyRefreshClock();
   void NotifyDateFormatChanged();
-  void NotifyRefreshDrive(DriveOperationStatusList& list);
+  void NotifySystemClockTimeUpdated();
+  void NotifyDriveJobUpdated(const DriveOperationStatus& status);
   void NotifyRefreshIME(bool show_message);
   void NotifyShowLoginButtonChanged(bool show_login_button);
   void NotifyLocaleChanged(LocaleObserver::Delegate* delegate,
@@ -115,28 +117,32 @@ public:
                            const std::string& from_locale,
                            const std::string& to_locale);
   void NotifyPowerStatusChanged(const PowerSupplyStatus& power_status);
-  void NotifySessionStartTimeChanged(const base::Time& session_start_time);
-  void NotifySessionLengthLimitChanged(const base::TimeDelta& limit);
+  void NotifySessionStartTimeChanged();
+  void NotifySessionLengthLimitChanged();
   void NotifyUpdateRecommended(UpdateObserver::UpdateSeverity severity);
   void NotifyUserUpdate();
 #if defined(OS_CHROMEOS)
+  void NotifyVolumeChanged(float level);
+  void NotifyMuteToggled();
   void NotifyRefreshNetwork(const NetworkIconInfo &info);
   void NotifySetNetworkMessage(NetworkTrayDelegate* delegate,
                                NetworkObserver::MessageType message_type,
                                NetworkObserver::NetworkType network_type,
-                               const string16& title,
-                               const string16& message,
-                               const std::vector<string16>& links);
+                               const base::string16& title,
+                               const base::string16& message,
+                               const std::vector<base::string16>& links);
   void NotifyClearNetworkMessage(NetworkObserver::MessageType message_type);
   void NotifyVpnRefreshNetwork(const NetworkIconInfo &info);
   void NotifyWillToggleWifi();
   void NotifyAddSmsMessage(const base::DictionaryValue& message);
   void NotifyEnterpriseDomainChanged();
+  void NotifyScreenCaptureStart(const base::Closure& stop_callback,
+                                const base::string16& sharing_app_name);
+  void NotifyScreenCaptureStop();
 #endif
 
  private:
   ObserverList<AccessibilityObserver> accessibility_observers_;
-  ObserverList<AudioObserver> audio_observers_;
   ObserverList<BluetoothObserver> bluetooth_observers_;
   ObserverList<BrightnessObserver> brightness_observers_;
   ObserverList<CapsLockObserver> caps_lock_observers_;
@@ -150,10 +156,12 @@ public:
   ObserverList<UpdateObserver> update_observers_;
   ObserverList<UserObserver> user_observers_;
 #if defined(OS_CHROMEOS)
+  ObserverList<AudioObserver> audio_observers_;
   ObserverList<NetworkObserver> network_observers_;
   ObserverList<NetworkObserver> vpn_observers_;
   ObserverList<SmsObserver> sms_observers_;
   ObserverList<EnterpriseDomainObserver> enterprise_domain_observers_;
+  ObserverList<ScreenCaptureObserver> screen_capture_observers_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(SystemTrayNotifier);

@@ -24,7 +24,7 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/pref_names.h"
-#include "content/public/browser/notification_service.h"
+#include "content/public/browser/devtools_manager.h"
 #include "content/public/test/test_utils.h"
 
 using extensions::Extension;
@@ -124,7 +124,40 @@ IN_PROC_BROWSER_TEST_F(ExtensionActionContextMenuTest, BrowserAction) {
   [wc destroyBrowser];
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionActionContextMenuTest, RunInspectPopup) {
+namespace {
+
+class DevToolsAttachedObserver {
+ public:
+  DevToolsAttachedObserver(const base::Closure& callback)
+      : callback_(callback),
+        devtools_callback_(base::Bind(
+            &DevToolsAttachedObserver::OnDevToolsStateChanged,
+            base::Unretained(this))) {
+    content::DevToolsManager::GetInstance()->AddAgentStateCallback(
+        devtools_callback_);
+  }
+
+  ~DevToolsAttachedObserver() {
+    content::DevToolsManager::GetInstance()->RemoveAgentStateCallback(
+        devtools_callback_);
+  }
+
+  void OnDevToolsStateChanged(content::DevToolsAgentHost*, bool attached) {
+    if (attached)
+      callback_.Run();
+  }
+
+ private:
+  base::Closure callback_;
+  base::Callback<void(content::DevToolsAgentHost*, bool)> devtools_callback_;
+
+  DISALLOW_COPY_AND_ASSIGN(DevToolsAttachedObserver);
+};
+
+}  // namespace
+
+IN_PROC_BROWSER_TEST_F(
+    ExtensionActionContextMenuTest, DISABLED_RunInspectPopup) {
   SetupPageAction();
   scoped_nsobject<ExtensionActionContextMenu> menu;
   menu.reset([[ExtensionActionContextMenu alloc] initWithExtension:extension_
@@ -141,17 +174,13 @@ IN_PROC_BROWSER_TEST_F(ExtensionActionContextMenuTest, RunInspectPopup) {
   service->SetBoolean(prefs::kExtensionsUIDeveloperMode, true);
   EXPECT_FALSE([inspectItem isHidden]);
 
-  content::WindowedNotificationObserver devtools_attached_observer(
-    content::NOTIFICATION_DEVTOOLS_AGENT_ATTACHED,
-    content::NotificationService::AllSources());
+  scoped_refptr<content::MessageLoopRunner> loop_runner(
+      new content::MessageLoopRunner);
+  DevToolsAttachedObserver observer(loop_runner->QuitClosure());
   [NSApp sendAction:[inspectItem action]
                  to:[inspectItem target]
                from:inspectItem];
-  devtools_attached_observer.Wait();
-
-  // Hide the popup to prevent racy crashes at test cleanup.
-  BrowserActionTestUtil test_util(browser());
-  test_util.HidePopup();
+  loop_runner->Run();
 
   service->SetBoolean(prefs::kExtensionsUIDeveloperMode, original);
 }

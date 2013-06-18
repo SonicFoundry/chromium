@@ -4,13 +4,16 @@
 
 #include "chrome/browser/ui/webui/signin/profile_signin_confirmation_dialog.h"
 
+#include "base/basictypes.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
+#include "base/values.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/sync/profile_signin_confirmation_helper.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/webui/constrained_web_dialog_ui.h"
 #include "chrome/common/url_constants.h"
@@ -105,11 +108,16 @@ void ProfileSigninConfirmationDialog::ShowDialog(
     const base::Closure& cancel_signin,
     const base::Closure& signin_with_new_profile,
     const base::Closure& continue_signin) {
-  new ProfileSigninConfirmationDialog(profile,
-                                      username,
-                                      cancel_signin,
-                                      signin_with_new_profile,
-                                      continue_signin);
+  ProfileSigninConfirmationDialog *dialog =
+    new ProfileSigninConfirmationDialog(profile,
+                                        username,
+                                        cancel_signin,
+                                        signin_with_new_profile,
+                                        continue_signin);
+  ui::CheckShouldPromptForNewProfile(
+      profile,
+      base::Bind(&ProfileSigninConfirmationDialog::Show,
+                 dialog->weak_pointer_factory_.GetWeakPtr()));
 }
 
 ProfileSigninConfirmationDialog::ProfileSigninConfirmationDialog(
@@ -119,10 +127,26 @@ ProfileSigninConfirmationDialog::ProfileSigninConfirmationDialog(
     const base::Closure& signin_with_new_profile,
     const base::Closure& continue_signin)
   : username_(username),
+    prompt_for_new_profile_(true),
     cancel_signin_(cancel_signin),
     signin_with_new_profile_(signin_with_new_profile),
-    continue_signin_(continue_signin) {
-  Browser* browser = FindBrowserWithProfile(profile,
+    continue_signin_(continue_signin),
+    profile_(profile),
+    weak_pointer_factory_(this) {
+}
+
+ProfileSigninConfirmationDialog::~ProfileSigninConfirmationDialog() {
+}
+
+void ProfileSigninConfirmationDialog::Close() const {
+  closed_by_handler_ = true;
+  delegate_->OnDialogCloseFromWebUI();
+}
+
+void ProfileSigninConfirmationDialog::Show(bool prompt) {
+  prompt_for_new_profile_ = prompt;
+
+  Browser* browser = FindBrowserWithProfile(profile_,
                                             chrome::GetActiveDesktop());
   if (!browser) {
     DLOG(WARNING) << "No browser found to display the confirmation dialog";
@@ -138,15 +162,7 @@ ProfileSigninConfirmationDialog::ProfileSigninConfirmationDialog(
     return;
   }
 
-  delegate_ = CreateConstrainedWebDialog(profile, this, NULL, web_contents);
-}
-
-ProfileSigninConfirmationDialog::~ProfileSigninConfirmationDialog() {
-}
-
-void ProfileSigninConfirmationDialog::Close() const {
-  closed_by_handler_ = true;
-  delegate_->OnDialogCloseFromWebUI();
+  delegate_ = CreateConstrainedWebDialog(profile_, this, NULL, web_contents);
 }
 
 ui::ModalType ProfileSigninConfirmationDialog::GetDialogModalType() const {
@@ -173,14 +189,24 @@ void ProfileSigninConfirmationDialog::GetWebUIMessageHandlers(
 
 void ProfileSigninConfirmationDialog::GetDialogSize(gfx::Size* size) const {
   const int kMinimumDialogWidth = 480;
-  const int kMinimumDialogHeight = 300;
-  size->SetSize(kMinimumDialogWidth, kMinimumDialogHeight);
+#if defined(OS_WIN)
+  const int kMinimumDialogHeight = 180;
+#else
+  const int kMinimumDialogHeight = 210;
+#endif
+  const int kProfileCreationMessageHeight = prompt_for_new_profile_ ? 50 : 0;
+  size->SetSize(kMinimumDialogWidth,
+                kMinimumDialogHeight + kProfileCreationMessageHeight);
 }
 
 std::string ProfileSigninConfirmationDialog::GetDialogArgs() const {
   std::string data;
-  DictionaryValue dict;
+  base::DictionaryValue dict;
   dict.SetString("username", username_);
+  dict.SetBoolean("promptForNewProfile", prompt_for_new_profile_);
+#if defined(OS_WIN)
+  dict.SetBoolean("hideTitle", true);
+#endif
   base::JSONWriter::Write(&dict, &data);
   return data;
 }

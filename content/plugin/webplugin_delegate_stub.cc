@@ -21,6 +21,7 @@
 #include "skia/ext/platform_device.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebBindings.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebCursorInfo.h"
+#include "webkit/plugins/npapi/plugin_instance.h"
 #include "webkit/plugins/npapi/webplugin_delegate_impl.h"
 #include "webkit/glue/webcursor.h"
 
@@ -37,7 +38,7 @@ static void DestroyWebPluginAndDelegate(
     WebPlugin* webplugin) {
   // The plugin may not expect us to try to release the scriptable object
   // after calling NPP_Destroy on the instance, so delete the stub now.
-  if (scriptable_object.get())
+  if (scriptable_object)
     scriptable_object->DeleteSoon();
   // WebPlugin must outlive WebPluginDelegate.
   if (delegate)
@@ -64,9 +65,12 @@ WebPluginDelegateStub::~WebPluginDelegateStub() {
   if (channel_->in_send()) {
     // The delegate or an npobject is in the callstack, so don't delete it
     // right away.
-    MessageLoop::current()->PostNonNestableTask(FROM_HERE,
-        base::Bind(&DestroyWebPluginAndDelegate, plugin_scriptable_object_,
-                   delegate_, webplugin_));
+    base::MessageLoop::current()->PostNonNestableTask(
+        FROM_HERE,
+        base::Bind(&DestroyWebPluginAndDelegate,
+                   plugin_scriptable_object_,
+                   delegate_,
+                   webplugin_));
   } else {
     // Safe to delete right away.
     DestroyWebPluginAndDelegate(
@@ -130,10 +134,6 @@ bool WebPluginDelegateStub::OnMessageReceived(const IPC::Message& msg) {
                         OnHandleURLRequestReply)
     IPC_MESSAGE_HANDLER(PluginMsg_HTTPRangeRequestReply,
                         OnHTTPRangeRequestReply)
-#if defined(OS_MACOSX)
-    IPC_MESSAGE_HANDLER(PluginMsg_SetFakeAcceleratedSurfaceWindowHandle,
-                        OnSetFakeAcceleratedSurfaceWindowHandle)
-#endif
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
 
@@ -149,10 +149,12 @@ bool WebPluginDelegateStub::Send(IPC::Message* msg) {
 }
 
 void WebPluginDelegateStub::OnInit(const PluginMsg_Init_Params& params,
+                                   bool* transparent,
                                    bool* result) {
   page_url_ = params.page_url;
   GetContentClient()->SetActiveURL(page_url_);
 
+  *transparent = false;
   *result = false;
   if (params.arg_names.size() != params.arg_values.size()) {
     NOTREACHED();
@@ -176,6 +178,7 @@ void WebPluginDelegateStub::OnInit(const PluginMsg_Init_Params& params,
                                     arg_values,
                                     webplugin_,
                                     params.load_manually);
+    *transparent = delegate_->instance()->transparent();
   }
 }
 
@@ -392,12 +395,5 @@ void WebPluginDelegateStub::OnHTTPRangeRequestReply(
       delegate_->CreateSeekableResourceClient(resource_id, range_request_id);
   webplugin_->OnResourceCreated(resource_id, resource_client);
 }
-
-#if defined(OS_MACOSX)
-void WebPluginDelegateStub::OnSetFakeAcceleratedSurfaceWindowHandle(
-    gfx::PluginWindowHandle window) {
-  delegate_->set_windowed_handle(window);
-}
-#endif
 
 }  // namespace content

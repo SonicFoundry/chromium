@@ -26,9 +26,7 @@ class GpuVideoDecodeAccelerator
   // Each of the arguments to the constructor must outlive this object.
   // |stub->decoder()| will be made current around any operation that touches
   // the underlying VDA so that it can make GL calls safely.
-  GpuVideoDecodeAccelerator(IPC::Sender* sender,
-                            int32 host_route_id,
-                            GpuCommandBufferStub* stub);
+  GpuVideoDecodeAccelerator(int32 host_route_id, GpuCommandBufferStub* stub);
   virtual ~GpuVideoDecodeAccelerator();
 
   // IPC::Listener implementation.
@@ -47,7 +45,7 @@ class GpuVideoDecodeAccelerator
   virtual void NotifyResetDone() OVERRIDE;
 
   // GpuCommandBufferStub::DestructionObserver implementation.
-  virtual void OnWillDestroyStub(GpuCommandBufferStub* stub) OVERRIDE;
+  virtual void OnWillDestroyStub() OVERRIDE;
 
   // Function to delegate sending to actual sender.
   virtual bool Send(IPC::Message* message) OVERRIDE;
@@ -72,9 +70,6 @@ class GpuVideoDecodeAccelerator
   void OnReset();
   void OnDestroy();
 
-  // Pointer to the IPC message sender.
-  IPC::Sender* sender_;
-
   // Message to Send() when initialization is done.  Is only non-NULL during
   // initialization and is owned by the IPC channel underlying the
   // GpuCommandBufferStub.
@@ -84,7 +79,7 @@ class GpuVideoDecodeAccelerator
   int32 host_route_id_;
 
   // Unowned pointer to the underlying GpuCommandBufferStub.
-  base::WeakPtr<GpuCommandBufferStub> stub_;
+  GpuCommandBufferStub* stub_;
 
   // The underlying VideoDecodeAccelerator.
   scoped_ptr<media::VideoDecodeAccelerator> video_decode_accelerator_;

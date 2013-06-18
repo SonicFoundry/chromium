@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Custom bindings for the fileBrowserPrivate API.
+// Custom binding for the fileBrowserPrivate API.
+
+var binding = require('binding').Binding.create('fileBrowserPrivate');
 
 var fileBrowserPrivateNatives = requireNative('file_browser_private');
 var GetLocalFileSystem = fileBrowserPrivateNatives.GetLocalFileSystem;
@@ -10,9 +12,7 @@ var GetLocalFileSystem = fileBrowserPrivateNatives.GetLocalFileSystem;
 var fileBrowserNatives = requireNative('file_browser_handler');
 var GetExternalFileEntry = fileBrowserNatives.GetExternalFileEntry;
 
-var chromeHidden = requireNative('chrome_hidden').GetChromeHidden();
-
-chromeHidden.registerCustomHook('fileBrowserPrivate', function(bindingsAPI) {
+binding.registerCustomHook(function(bindingsAPI) {
   var apiFunctions = bindingsAPI.apiFunctions;
 
   apiFunctions.setCustomCallback('requestLocalFileSystem',
@@ -27,11 +27,10 @@ chromeHidden.registerCustomHook('fileBrowserPrivate', function(bindingsAPI) {
 
   apiFunctions.setCustomCallback('searchDrive',
                                  function(name, request, response) {
-    if (response && !response.error && response.results) {
-      for (var i = 0; i < response.results.length; i++) {
-        response.results[i].entry =
-            GetExternalFileEntry(response.results[i].entry);
-      }
+    if (response && !response.error && response.entries) {
+      response.entries = response.entries.map(function(entry) {
+        return GetExternalFileEntry(entry);
+      });
     }
 
     // So |request.callback| doesn't break if response is not defined.
@@ -39,7 +38,7 @@ chromeHidden.registerCustomHook('fileBrowserPrivate', function(bindingsAPI) {
       response = {};
 
     if (request.callback)
-      request.callback(response.results, response.nextFeed);
+      request.callback(response.entries, response.nextFeed);
     request.callback = null;
   });
 
@@ -61,3 +60,5 @@ chromeHidden.registerCustomHook('fileBrowserPrivate', function(bindingsAPI) {
     request.callback = null;
   });
 });
+
+exports.binding = binding.generate();

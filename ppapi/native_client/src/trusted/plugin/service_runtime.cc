@@ -107,7 +107,7 @@ void PluginReverseInterface::Log(nacl::string message) {
   plugin::WeakRefCallOnMainThread(
       anchor_,
       0,  /* delay in ms */
-      ALLOW_THIS_IN_INITIALIZER_LIST(this),
+      this,
       &plugin::PluginReverseInterface::Log_MainThreadContinuation,
       continuation);
 }
@@ -119,7 +119,7 @@ void PluginReverseInterface::DoPostMessage(nacl::string message) {
   plugin::WeakRefCallOnMainThread(
       anchor_,
       0,  /* delay in ms */
-      ALLOW_THIS_IN_INITIALIZER_LIST(this),
+      this,
       &plugin::PluginReverseInterface::PostMessage_MainThreadContinuation,
       continuation);
 }
@@ -259,9 +259,9 @@ void PluginReverseInterface::OpenManifestEntry_MainThreadContinuation(
   NaClLog(4, "Entered OpenManifestEntry_MainThreadContinuation\n");
 
   std::string mapped_url;
-  std::string cache_identity;
-  if (!manifest_->ResolveKey(p->url, &mapped_url, &cache_identity,
-                             p->error_info, &p->pnacl_translate)) {
+  PnaclOptions pnacl_options;
+  if (!manifest_->ResolveKey(p->url, &mapped_url,
+                             &pnacl_options, p->error_info)) {
     NaClLog(4, "OpenManifestEntry_MainThreadContinuation: ResolveKey failed\n");
     // Failed, and error_info has the details on what happened.  Wake
     // up requesting thread -- we are done.
@@ -274,18 +274,18 @@ void PluginReverseInterface::OpenManifestEntry_MainThreadContinuation(
   NaClLog(4,
           "OpenManifestEntry_MainThreadContinuation: "
           "ResolveKey: %s -> %s (pnacl_translate(%d))\n",
-          p->url.c_str(), mapped_url.c_str(), p->pnacl_translate);
+          p->url.c_str(), mapped_url.c_str(), pnacl_options.translate());
 
   open_cont = new OpenManifestEntryResource(*p);  // copy ctor!
   CHECK(open_cont != NULL);
   open_cont->url = mapped_url;
-  if (!open_cont->pnacl_translate) {
+  if (!pnacl_options.translate()) {
     pp::CompletionCallback stream_cc = WeakRefNewCallback(
         anchor_,
         this,
         &PluginReverseInterface::StreamAsFile_MainThreadContinuation,
         open_cont);
-    //
+    // Normal files.
     if (!PnaclUrls::IsPnaclComponent(mapped_url)) {
       if (!plugin_->StreamAsFile(mapped_url,
                                  stream_cc.pp_completion_callback())) {
@@ -303,6 +303,8 @@ void PluginReverseInterface::OpenManifestEntry_MainThreadContinuation(
       NaClLog(4,
               "OpenManifestEntry_MainThreadContinuation: StreamAsFile okay\n");
     } else {
+      // Special PNaCl support files, that are installed on the
+      // user machine.
       int32_t fd = PnaclResources::GetPnaclFD(
           plugin_,
           PnaclUrls::PnaclComponentURLToFilename(mapped_url).c_str());
@@ -325,6 +327,7 @@ void PluginReverseInterface::OpenManifestEntry_MainThreadContinuation(
               "OpenManifestEntry_MainThreadContinuation: GetPnaclFd okay\n");
     }
   } else {
+    // Requires PNaCl translation.
     NaClLog(4,
             "OpenManifestEntry_MainThreadContinuation: "
             "pulling down and translating.\n");
@@ -339,7 +342,7 @@ void PluginReverseInterface::OpenManifestEntry_MainThreadContinuation(
       pnacl_coordinator_.reset(
           PnaclCoordinator::BitcodeToNative(plugin_,
                                             mapped_url,
-                                            cache_identity,
+                                            pnacl_options,
                                             translate_callback));
     } else {
       nacl::MutexLocker take(&mu_);
@@ -570,7 +573,7 @@ int64_t PluginReverseInterface::RequestQuotaForWrite(
   plugin::WeakRefCallOnMainThread(
       anchor_,
       0,  /* delay in ms */
-      ALLOW_THIS_IN_INITIALIZER_LIST(this),
+      this,
       &plugin::PluginReverseInterface::QuotaRequest_MainThreadContinuation,
       continuation);
   // Wait for the main thread to request quota and signal completion.
@@ -711,6 +714,7 @@ bool ServiceRuntime::Start(nacl::DescWrapper* nacl_desc,
                            bool uses_irt,
                            bool uses_ppapi,
                            bool enable_ppapi_dev,
+                           bool enable_dyncode_syscalls,
                            pp::CompletionCallback crash_cb) {
   NaClLog(4, "ServiceRuntime::Start (nacl_desc=%p)\n",
           reinterpret_cast<void*>(nacl_desc));
@@ -727,7 +731,8 @@ bool ServiceRuntime::Start(nacl::DescWrapper* nacl_desc,
                                        url.c_str(),
                                        uses_irt,
                                        uses_ppapi,
-                                       enable_ppapi_dev);
+                                       enable_ppapi_dev,
+                                       enable_dyncode_syscalls);
   if (!started) {
     NaClLog(LOG_ERROR, "ServiceRuntime::Start (start failed)\n");
     error_info->SetReport(ERROR_SEL_LDR_LAUNCH,
@@ -843,7 +848,7 @@ nacl::string ServiceRuntime::GetCrashLogOutput() {
   if (NULL != subprocess_.get()) {
     return subprocess_->GetCrashLogOutput();
   } else {
-    return "";
+    return std::string();
   }
 }
 

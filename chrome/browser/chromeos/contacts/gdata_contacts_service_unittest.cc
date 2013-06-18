@@ -36,9 +36,6 @@ namespace {
 
 const char kTestGDataAuthToken[] = "testtoken";
 
-// Base URL where feeds are located on the test server.
-const char kFeedBaseUrl[] = "gdata/contacts";
-
 // Filename of JSON feed containing contact groups.
 const char kGroupsFeedFilename[] = "/groups.json";
 
@@ -87,7 +84,10 @@ class GDataContactsServiceTest : public testing::Test {
         content::BrowserThread::GetMessageLoopProxyForThread(
             content::BrowserThread::IO));
 
-    test_server_.reset(new google_apis::test_server::HttpServer());
+    test_server_.reset(
+        new google_apis::test_server::HttpServer(
+            content::BrowserThread::GetMessageLoopProxyForThread(
+                content::BrowserThread::IO)));
     ASSERT_TRUE(test_server_->InitializeAndWaitUntilReady());
     test_server_->RegisterRequestHandler(
         base::Bind(&GDataContactsServiceTest::HandleDownloadRequest,
@@ -108,7 +108,7 @@ class GDataContactsServiceTest : public testing::Test {
   }
 
   virtual void TearDown() OVERRIDE {
-    test_server_->ShutdownAndWaitUntilComplete();
+    EXPECT_TRUE(test_server_->ShutdownAndWaitUntilComplete());
     test_server_.reset();
     request_context_getter_ = NULL;
     service_.reset();
@@ -171,7 +171,7 @@ class GDataContactsServiceTest : public testing::Test {
     scoped_ptr<google_apis::test_server::HttpResponse> result =
         google_apis::test_util::CreateHttpResponseFromFile(
             google_apis::test_util::GetTestFilePath(
-                std::string(kFeedBaseUrl) + request.relative_url));
+                std::string("chromeos/gdata/contacts") + request.relative_url));
     return result.Pass();
   }
 

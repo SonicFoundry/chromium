@@ -19,6 +19,7 @@
 #include "chrome/browser/extensions/management_policy.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/extensions/api/managed_mode_private/managed_mode_handler.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_file_util.h"
 #include "chrome/common/extensions/extension_l10n_util.h"
@@ -55,7 +56,8 @@ ManifestReloadReason ShouldReloadExtensionManifest(const ExtensionInfo& info) {
     return UNPACKED_DIR;
 
   // Reload the manifest if it needs to be relocalized.
-  if (extension_l10n_util::ShouldRelocalizeManifest(info))
+  if (extension_l10n_util::ShouldRelocalizeManifest(
+          info.extension_manifest.get()))
     return NEEDS_RELOCALIZATION;
 
   return NOT_NEEDED;
@@ -91,7 +93,7 @@ InstalledLoader::~InstalledLoader() {
 void InstalledLoader::Load(const ExtensionInfo& info, bool write_to_prefs) {
   std::string error;
   scoped_refptr<const Extension> extension(NULL);
-  if (info.extension_manifest.get()) {
+  if (info.extension_manifest) {
     extension = Extension::Create(
         info.extension_path,
         info.extension_location,
@@ -204,7 +206,7 @@ void InstalledLoader::LoadAllExtensions() {
               GetCreationFlags(info),
               &error));
 
-      if (!extension.get()) {
+      if (!extension) {
         extension_service_->
             ReportExtensionLoadError(info->extension_path, error, false);
         continue;
@@ -218,6 +220,8 @@ void InstalledLoader::LoadAllExtensions() {
   }
 
   for (size_t i = 0; i < extensions_info->size(); ++i) {
+    if (extensions_info->at(i)->extension_location == Manifest::COMMAND_LINE)
+      continue;
     Load(*extensions_info->at(i), should_write_prefs);
   }
 
@@ -332,7 +336,7 @@ void InstalledLoader::LoadAllExtensions() {
     if (extension_action_manager->GetBrowserAction(**ex))
       ++browser_action_count;
 
-    if ((*ex)->is_content_pack())
+    if (extensions::ManagedModeInfo::IsContentPack(*ex))
       ++content_pack_count;
 
     extension_service_->RecordPermissionMessagesHistogram(

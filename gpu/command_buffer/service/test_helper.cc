@@ -7,11 +7,15 @@
 #include <algorithm>
 #include <string>
 
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_tokenizer.h"
 #include "gpu/command_buffer/common/types.h"
+#include "gpu/command_buffer/service/buffer_manager.h"
+#include "gpu/command_buffer/service/error_state_mock.h"
 #include "gpu/command_buffer/service/gl_utils.h"
+#include "gpu/command_buffer/service/gpu_switches.h"
 #include "gpu/command_buffer/service/program_manager.h"
+#include "gpu/command_buffer/service/texture_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gl/gl_mock.h"
 
@@ -269,24 +273,26 @@ void TestHelper::SetupContextGroupInitExpectations(
 
 void TestHelper::SetupFeatureInfoInitExpectations(
       ::gfx::MockGLInterface* gl, const char* extensions) {
-  SetupFeatureInfoInitExpectationsWithVendor(gl, extensions, "", "");
+  SetupFeatureInfoInitExpectationsWithGLVersion(gl, extensions, "");
 }
 
-void TestHelper::SetupFeatureInfoInitExpectationsWithVendor(
+void TestHelper::SetupFeatureInfoInitExpectationsWithGLVersion(
      ::gfx::MockGLInterface* gl,
      const char* extensions,
-     const char* vendor,
-     const char* renderer) {
+     const char* version) {
   InSequence sequence;
 
   EXPECT_CALL(*gl, GetString(GL_EXTENSIONS))
       .WillOnce(Return(reinterpret_cast<const uint8*>(extensions)))
       .RetiresOnSaturation();
   EXPECT_CALL(*gl, GetString(GL_VENDOR))
-      .WillOnce(Return(reinterpret_cast<const uint8*>(vendor)))
+      .WillOnce(Return(reinterpret_cast<const uint8*>("")))
       .RetiresOnSaturation();
   EXPECT_CALL(*gl, GetString(GL_RENDERER))
-      .WillOnce(Return(reinterpret_cast<const uint8*>(renderer)))
+      .WillOnce(Return(reinterpret_cast<const uint8*>("")))
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl, GetString(GL_VERSION))
+      .WillOnce(Return(reinterpret_cast<const uint8*>(version)))
       .RetiresOnSaturation();
 }
 
@@ -489,6 +495,62 @@ void TestHelper::SetupShader(
 
   SetupProgramSuccessExpectations(
       gl, attribs, num_attribs, uniforms, num_uniforms, service_id);
+}
+
+void TestHelper::DoBufferData(
+    ::gfx::MockGLInterface* gl, MockErrorState* error_state,
+    BufferManager* manager, Buffer* buffer, GLsizeiptr size, GLenum usage,
+    const GLvoid* data, GLenum error) {
+  EXPECT_CALL(*error_state, CopyRealGLErrorsToWrapper(_, _, _))
+      .Times(1)
+      .RetiresOnSaturation();
+  if (manager->IsUsageClientSideArray(usage)) {
+    EXPECT_CALL(*gl, BufferData(
+        buffer->target(), 0, _, usage))
+        .Times(1)
+        .RetiresOnSaturation();
+  } else {
+    EXPECT_CALL(*gl, BufferData(
+        buffer->target(), size, _, usage))
+        .Times(1)
+        .RetiresOnSaturation();
+  }
+  EXPECT_CALL(*error_state, PeekGLError(_, _, _))
+      .WillOnce(Return(error))
+      .RetiresOnSaturation();
+  manager->DoBufferData(error_state, buffer, size, usage, data);
+}
+
+void TestHelper::SetTexParameterWithExpectations(
+    ::gfx::MockGLInterface* gl, MockErrorState* error_state,
+    TextureManager* manager, Texture* texture,
+    GLenum pname, GLint value, GLenum error) {
+  if (error == GL_NO_ERROR) {
+    if (pname != GL_TEXTURE_POOL_CHROMIUM) {
+      EXPECT_CALL(*gl, TexParameteri(texture->target(), pname, value))
+          .Times(1)
+          .RetiresOnSaturation();
+    }
+  } else if (error == GL_INVALID_ENUM) {
+    EXPECT_CALL(*error_state, SetGLErrorInvalidEnum(_, _, _, value, _))
+        .Times(1)
+        .RetiresOnSaturation();
+  } else {
+    EXPECT_CALL(*error_state, SetGLErrorInvalidParam(_, _, error, _, _, _))
+        .Times(1)
+        .RetiresOnSaturation();
+  }
+  manager->SetParameter("", error_state, texture, pname, value);
+}
+
+ScopedGLImplementationSetter::ScopedGLImplementationSetter(
+    gfx::GLImplementation implementation)
+    : old_implementation_(gfx::GetGLImplementation()) {
+  gfx::SetGLImplementation(implementation);
+}
+
+ScopedGLImplementationSetter::~ScopedGLImplementationSetter() {
+  gfx::SetGLImplementation(old_implementation_);
 }
 
 }  // namespace gles2

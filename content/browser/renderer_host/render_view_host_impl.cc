@@ -13,7 +13,7 @@
 #include "base/command_line.h"
 #include "base/i18n/rtl.h"
 #include "base/json/json_reader.h"
-#include "base/json/json_writer.h"
+#include "base/lazy_instance.h"
 #include "base/message_loop.h"
 #include "base/metrics/histogram.h"
 #include "base/stl_util.h"
@@ -21,7 +21,6 @@
 #include "base/time.h"
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
-#include "content/browser/accessibility/browser_accessibility_state_impl.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/cross_site_request_manager.h"
 #include "content/browser/dom_storage/session_storage_namespace_impl.h"
@@ -31,10 +30,10 @@
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_delegate.h"
 #include "content/common/accessibility_messages.h"
-#include "content/common/browser_plugin_messages.h"
-#include "content/common/content_constants_internal.h"
+#include "content/common/browser_plugin/browser_plugin_messages.h"
 #include "content/common/desktop_notification_messages.h"
 #include "content/common/drag_messages.h"
+#include "content/common/input_messages.h"
 #include "content/common/inter_process_time_ticks_converter.h"
 #include "content/common/speech_recognition_messages.h"
 #include "content/common/swapped_out_messages.h"
@@ -77,7 +76,7 @@
 #elif defined(OS_MACOSX)
 #include "content/browser/renderer_host/popup_menu_helper_mac.h"
 #elif defined(OS_ANDROID)
-#include "content/browser/android/media_player_manager_android.h"
+#include "content/browser/android/media_player_manager_impl.h"
 #endif
 
 using base::TimeDelta;
@@ -109,6 +108,9 @@ base::i18n::TextDirection WebTextDirectionToChromeTextDirection(
       return base::i18n::UNKNOWN_DIRECTION;
   }
 }
+
+base::LazyInstance<std::vector<RenderViewHost::CreatedCallback> >
+g_created_callbacks = LAZY_INSTANCE_INITIALIZER;
 
 }  // namespace
 
@@ -165,7 +167,7 @@ RenderViewHostImpl::RenderViewHostImpl(
       enabled_bindings_(0),
       pending_request_id_(-1),
       navigations_suspended_(false),
-      suspended_nav_message_(NULL),
+      suspended_nav_params_(NULL),
       is_swapped_out_(swapped_out),
       is_subframe_(false),
       run_modal_reply_msg_(NULL),
@@ -189,26 +191,17 @@ RenderViewHostImpl::RenderViewHostImpl(
 
   GetProcess()->EnableSendQueue();
 
-  GetContentClient()->browser()->RenderViewHostCreated(this);
-
-  NotificationService::current()->Notify(
-      NOTIFICATION_RENDER_VIEW_HOST_CREATED,
-      Source<RenderViewHost>(this),
-      NotificationService::NoDetails());
+  for (size_t i = 0; i < g_created_callbacks.Get().size(); i++)
+    g_created_callbacks.Get().at(i).Run(this);
 
 #if defined(OS_ANDROID)
-  media_player_manager_ = new MediaPlayerManagerAndroid(this);
+  media_player_manager_ = new MediaPlayerManagerImpl(this);
 #endif
 }
 
 RenderViewHostImpl::~RenderViewHostImpl() {
   FOR_EACH_OBSERVER(
       RenderViewHostObserver, observers_, RenderViewHostDestruction());
-
-  NotificationService::current()->Notify(
-      NOTIFICATION_RENDER_VIEW_HOST_DELETED,
-      Source<RenderViewHost>(this),
-      NotificationService::NoDetails());
 
   ClearPowerSaveBlockers();
 
@@ -266,9 +259,8 @@ bool RenderViewHostImpl::CreateRenderView(
   params.swapped_out = is_swapped_out_;
   params.next_page_id = next_page_id;
   GetWebScreenInfo(&params.screen_info);
-
-  params.accessibility_mode =
-      BrowserAccessibilityStateImpl::GetInstance()->GetAccessibilityMode();
+  params.accessibility_mode = accessibility_mode();
+  params.allow_partial_swap = !GetProcess()->IsGuest();
 
   Send(new ViewMsg_New(params));
 
@@ -315,8 +307,6 @@ void RenderViewHostImpl::Navigate(const ViewMsg_Navigate_Params& params) {
     }
   }
 
-  ViewMsg_Navigate* nav_message = new ViewMsg_Navigate(GetRoutingID(), params);
-
   // Only send the message if we aren't suspended at the start of a cross-site
   // request.
   if (navigations_suspended_) {
@@ -324,14 +314,14 @@ void RenderViewHostImpl::Navigate(const ViewMsg_Navigate_Params& params) {
     // navigations will only be suspended during a cross-site request.  If a
     // second navigation occurs, WebContentsImpl will cancel this pending RVH
     // create a new pending RVH.
-    DCHECK(!suspended_nav_message_.get());
-    suspended_nav_message_.reset(nav_message);
+    DCHECK(!suspended_nav_params_.get());
+    suspended_nav_params_.reset(new ViewMsg_Navigate_Params(params));
   } else {
     // Get back to a clean state, in case we start a new navigation without
     // completing a RVH swap or unload handler.
     SetSwappedOut(false);
 
-    Send(nav_message);
+    Send(new ViewMsg_Navigate(GetRoutingID(), params));
   }
 
   // Force the throbber to start. We do this because WebKit's "started
@@ -363,31 +353,31 @@ void RenderViewHostImpl::NavigateToURL(const GURL& url) {
   Navigate(params);
 }
 
-void RenderViewHostImpl::SetNavigationsSuspended(bool suspend) {
+void RenderViewHostImpl::SetNavigationsSuspended(
+    bool suspend,
+    const base::TimeTicks& proceed_time) {
   // This should only be called to toggle the state.
   DCHECK(navigations_suspended_ != suspend);
 
   navigations_suspended_ = suspend;
-  if (!suspend && suspended_nav_message_.get()) {
-    // There's a navigation message waiting to be sent.  Now that we're not
-    // suspended anymore, resume navigation by sending it.  If we were swapped
+  if (!suspend && suspended_nav_params_) {
+    // There's navigation message params waiting to be sent.  Now that we're not
+    // suspended anymore, resume navigation by sending them.  If we were swapped
     // out, we should also stop filtering out the IPC messages now.
     SetSwappedOut(false);
 
-    Send(suspended_nav_message_.release());
+    DCHECK(!proceed_time.is_null());
+    suspended_nav_params_->browser_navigation_start = proceed_time;
+    Send(new ViewMsg_Navigate(GetRoutingID(), *suspended_nav_params_.get()));
+    suspended_nav_params_.reset();
   }
 }
 
 void RenderViewHostImpl::CancelSuspendedNavigations() {
   // Clear any state if a pending navigation is canceled or pre-empted.
-  if (suspended_nav_message_.get())
-    suspended_nav_message_.reset();
+  if (suspended_nav_params_)
+    suspended_nav_params_.reset();
   navigations_suspended_ = false;
-}
-
-void RenderViewHostImpl::SetNavigationStartTime(
-    const base::TimeTicks& navigation_start) {
-  Send(new ViewMsg_SetNavigationStartTime(GetRoutingID(), navigation_start));
 }
 
 void RenderViewHostImpl::FirePageBeforeUnload(bool for_cross_site_transition) {
@@ -572,25 +562,12 @@ int RenderViewHostImpl::GetPendingRequestId() {
 void RenderViewHostImpl::ActivateNearestFindResult(int request_id,
                                                    float x,
                                                    float y) {
-  Send(new ViewMsg_ActivateNearestFindResult(GetRoutingID(), request_id, x, y));
+  Send(new InputMsg_ActivateNearestFindResult(GetRoutingID(),
+                                              request_id, x, y));
 }
 
 void RenderViewHostImpl::RequestFindMatchRects(int current_version) {
   Send(new ViewMsg_FindMatchRects(GetRoutingID(), current_version));
-}
-
-void RenderViewHostImpl::SynchronousFind(int request_id,
-                                         const string16& search_text,
-                                         const WebKit::WebFindOptions& options,
-                                         int* match_count,
-                                         int* active_ordinal) {
-  if (!CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kEnableWebViewSynchronousAPIs)) {
-    return;
-  }
-
-  Send(new ViewMsg_SynchronousFind(GetRoutingID(), request_id, search_text,
-                                   options, match_count, active_ordinal));
 }
 #endif
 
@@ -1016,7 +993,6 @@ bool RenderViewHostImpl::OnMessageReceived(const IPC::Message& msg) {
                         OnDomOperationResponse)
     IPC_MESSAGE_HANDLER(AccessibilityHostMsg_Notifications,
                         OnAccessibilityNotifications)
-    IPC_MESSAGE_HANDLER(ViewHostMsg_FrameTreeUpdated, OnFrameTreeUpdated)
     // Have the super handle all other messages.
     IPC_MESSAGE_UNHANDLED(
         handled = RenderWidgetHostImpl::OnMessageReceived(msg))
@@ -1143,9 +1119,9 @@ void RenderViewHostImpl::OnRenderViewGone(int status, int exit_code) {
   // Our base class RenderWidgetHost needs to reset some stuff.
   RendererExited(render_view_termination_status_, exit_code);
 
-  delegate_->RenderViewGone(this,
-                            static_cast<base::TerminationStatus>(status),
-                            exit_code);
+  delegate_->RenderViewTerminated(this,
+                                  static_cast<base::TerminationStatus>(status),
+                                  exit_code);
 }
 
 void RenderViewHostImpl::OnDidStartProvisionalLoadForFrame(
@@ -1249,9 +1225,6 @@ void RenderViewHostImpl::OnNavigate(const IPC::Message& msg) {
   FilterURL(policy, process, true, &validated_params.password_form.action);
 
   delegate_->DidNavigate(this, validated_params);
-
-  // TODO(nasko): Send frame tree update for the top level frame, once
-  // http://crbug.com/153701 is fixed.
 }
 
 void RenderViewHostImpl::OnUpdateState(int32 page_id,
@@ -1527,8 +1500,7 @@ void RenderViewHostImpl::OnAddMessageToConsole(
   if (delegate_->AddMessageToConsole(level, message, line_no, source_id))
     return;
   // Pass through log level only on WebUI pages to limit console spew.
-  int32 resolved_level =
-      (enabled_bindings_ & BINDINGS_POLICY_WEB_UI) ? level : 0;
+  int32 resolved_level = HasWebUIScheme(delegate_->GetURL()) ? level : 0;
 
   if (resolved_level >= ::logging::GetMinLogLevel()) {
     logging::LogMessage("CONSOLE", line_no, resolved_level).stream() << "\"" <<
@@ -1749,6 +1721,19 @@ void RenderViewHostImpl::FilterURL(ChildProcessSecurityPolicyImpl* policy,
   }
 }
 
+void RenderViewHost::AddCreatedCallback(const CreatedCallback& callback) {
+  g_created_callbacks.Get().push_back(callback);
+}
+
+void RenderViewHost::RemoveCreatedCallback(const CreatedCallback& callback) {
+  for (size_t i = 0; i < g_created_callbacks.Get().size(); ++i) {
+    if (g_created_callbacks.Get().at(i).Equals(callback)) {
+      g_created_callbacks.Get().erase(g_created_callbacks.Get().begin() + i);
+      return;
+    }
+  }
+}
+
 void RenderViewHostImpl::SetAltErrorPageURL(const GURL& url) {
   Send(new ViewMsg_SetAltErrorPageURL(GetRoutingID(), url));
 }
@@ -1760,7 +1745,7 @@ void RenderViewHostImpl::ExitFullscreen() {
   WasResized();
 }
 
-webkit_glue::WebPreferences RenderViewHostImpl::GetWebkitPreferences() {
+WebPreferences RenderViewHostImpl::GetWebkitPreferences() {
   return delegate_->GetWebkitPrefs();
 }
 
@@ -1769,20 +1754,6 @@ void RenderViewHostImpl::DisownOpener() {
   DCHECK(is_swapped_out_);
 
   Send(new ViewMsg_DisownOpener(GetRoutingID()));
-}
-
-void RenderViewHostImpl::UpdateFrameTree(
-    int process_id,
-    int route_id,
-    const std::string& frame_tree) {
-  // This should only be called when swapped out.
-  DCHECK(is_swapped_out_);
-
-  frame_tree_ = frame_tree;
-  Send(new ViewMsg_UpdateFrameTree(GetRoutingID(),
-                                   process_id,
-                                   route_id,
-                                   frame_tree_));
 }
 
 void RenderViewHostImpl::SetAccessibilityLayoutCompleteCallbackForTesting(
@@ -1800,8 +1771,7 @@ void RenderViewHostImpl::SetAccessibilityOtherCallbackForTesting(
   accessibility_other_callback_ = callback;
 }
 
-void RenderViewHostImpl::UpdateWebkitPreferences(
-    const webkit_glue::WebPreferences& prefs) {
+void RenderViewHostImpl::UpdateWebkitPreferences(const WebPreferences& prefs) {
   Send(new ViewMsg_UpdateWebPreferences(GetRoutingID(), prefs));
 }
 
@@ -1903,7 +1873,7 @@ void RenderViewHostImpl::OnAccessibilityNotifications(
     if ((src_type == AccessibilityNotificationLayoutComplete ||
          src_type == AccessibilityNotificationLoadComplete) &&
         save_accessibility_tree_for_testing_) {
-      accessibility_tree_ = param.acc_tree;
+      MakeAccessibilityNodeDataTree(param.nodes, &accessibility_tree_);
     }
 
     if (src_type == AccessibilityNotificationLayoutComplete) {
@@ -1944,7 +1914,8 @@ void RenderViewHostImpl::OnDidZoomURL(double zoom_level,
   HostZoomMapImpl* host_zoom_map = static_cast<HostZoomMapImpl*>(
       HostZoomMap::GetForBrowserContext(GetProcess()->GetBrowserContext()));
   if (remember) {
-    host_zoom_map->SetZoomLevel(net::GetHostOrSpecFromURL(url), zoom_level);
+    host_zoom_map->
+        SetZoomLevelForHost(net::GetHostOrSpecFromURL(url), zoom_level);
   } else {
     host_zoom_map->SetTemporaryZoomLevel(
         GetProcess()->GetID(), GetRoutingID(), zoom_level);
@@ -2004,22 +1975,6 @@ void RenderViewHostImpl::OnCancelDesktopNotification(int notification_id) {
       GetProcess()->GetID(), GetRoutingID(), notification_id);
 }
 
-#if defined(OS_MACOSX) || defined(OS_ANDROID)
-void RenderViewHostImpl::OnShowPopup(
-    const ViewHostMsg_ShowPopup_Params& params) {
-  RenderViewHostDelegateView* view = delegate_->GetDelegateView();
-  if (view) {
-    view->ShowPopupMenu(params.bounds,
-                        params.item_height,
-                        params.item_font_size,
-                        params.selected_item,
-                        params.popup_items,
-                        params.right_aligned,
-                        params.allow_multiple_selection);
-  }
-}
-#endif
-
 void RenderViewHostImpl::OnRunFileChooser(const FileChooserParams& params) {
   delegate_->RunFileChooser(this, params);
 }
@@ -2031,28 +1986,6 @@ void RenderViewHostImpl::OnDomOperationResponse(
       NOTIFICATION_DOM_OPERATION_RESPONSE,
       Source<RenderViewHost>(this),
       Details<DomOperationNotificationDetails>(&details));
-}
-
-void RenderViewHostImpl::OnFrameTreeUpdated(const std::string& frame_tree) {
-  // TODO(nasko): Remove once http://crbug.com/153701 is fixed.
-  DCHECK(false);
-  frame_tree_ = frame_tree;
-  delegate_->DidUpdateFrameTree(this);
-}
-
-void RenderViewHostImpl::SetSwappedOut(bool is_swapped_out) {
-  is_swapped_out_ = is_swapped_out;
-
-  // Whenever we change swap out state, we should not be waiting for
-  // beforeunload or unload acks.  We clear them here to be safe, since they
-  // can cause navigations to be ignored in OnNavigate.
-  is_waiting_for_beforeunload_ack_ = false;
-  is_waiting_for_unload_ack_ = false;
-  has_timed_out_on_unload_ = false;
-}
-
-void RenderViewHostImpl::ClearPowerSaveBlockers() {
-  STLDeleteValues(&power_save_blockers_);
 }
 
 void RenderViewHostImpl::OnGetWindowSnapshot(const int snapshot_id) {
@@ -2076,6 +2009,37 @@ void RenderViewHostImpl::OnGetWindowSnapshot(const int snapshot_id) {
 
   Send(new ViewMsg_WindowSnapshotCompleted(
       GetRoutingID(), snapshot_id, gfx::Size(), png));
+}
+
+#if defined(OS_MACOSX) || defined(OS_ANDROID)
+void RenderViewHostImpl::OnShowPopup(
+    const ViewHostMsg_ShowPopup_Params& params) {
+  RenderViewHostDelegateView* view = delegate_->GetDelegateView();
+  if (view) {
+    view->ShowPopupMenu(params.bounds,
+                        params.item_height,
+                        params.item_font_size,
+                        params.selected_item,
+                        params.popup_items,
+                        params.right_aligned,
+                        params.allow_multiple_selection);
+  }
+}
+#endif
+
+void RenderViewHostImpl::SetSwappedOut(bool is_swapped_out) {
+  is_swapped_out_ = is_swapped_out;
+
+  // Whenever we change swap out state, we should not be waiting for
+  // beforeunload or unload acks.  We clear them here to be safe, since they
+  // can cause navigations to be ignored in OnNavigate.
+  is_waiting_for_beforeunload_ack_ = false;
+  is_waiting_for_unload_ack_ = false;
+  has_timed_out_on_unload_ = false;
+}
+
+void RenderViewHostImpl::ClearPowerSaveBlockers() {
+  STLDeleteValues(&power_save_blockers_);
 }
 
 }  // namespace content

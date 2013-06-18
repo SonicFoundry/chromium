@@ -5,11 +5,10 @@
 #ifndef CHROME_BROWSER_CHROME_BROWSER_MAIN_MAC_H_
 #define CHROME_BROWSER_CHROME_BROWSER_MAIN_MAC_H_
 
+#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/chrome_browser_main_posix.h"
-#include "base/memory/ref_counted.h"
 
 namespace chrome {
-class ImageCaptureDeviceManager;
 class StorageMonitorMac;
 }
 
@@ -23,15 +22,14 @@ class ChromeBrowserMainPartsMac : public ChromeBrowserMainPartsPosix {
   virtual void PreEarlyInitialization() OVERRIDE;
   virtual void PreMainMessageLoopStart() OVERRIDE;
   virtual void PreProfileInit() OVERRIDE;
+  virtual void PostProfileInit() OVERRIDE;
 
   // Perform platform-specific work that needs to be done after the main event
   // loop has ended. The embedder must be sure to call this.
   static void DidEndMainMessageLoop();
 
  private:
-  scoped_refptr<chrome::StorageMonitorMac> storage_monitor_;
-
-  scoped_ptr<chrome::ImageCaptureDeviceManager> image_capture_device_manager_;
+  scoped_ptr<chrome::StorageMonitorMac> storage_monitor_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserMainPartsMac);
 };

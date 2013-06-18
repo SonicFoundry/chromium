@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+'use strict';
+
 /**
  * Scrollable thumbnail ribbon at the bottom of the Gallery in the Slide mode.
  *
@@ -298,8 +300,12 @@ Ribbon.prototype.renderThumbnail_ = function(index) {
   var url = item.getUrl();
 
   var cached = this.renderCache_[url];
-  if (cached)
+  if (cached) {
+    var img = cached.querySelector('img');
+    if (img)
+      img.classList.add('cached');
     return cached;
+  }
 
   var thumbnail = this.ownerDocument.createElement('div');
   thumbnail.className = 'ribbon-image';

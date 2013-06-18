@@ -71,7 +71,7 @@ PPB_Graphics3D_Impl::PPB_Graphics3D_Impl(PP_Instance instance)
     : PPB_Graphics3D_Shared(instance),
       bound_to_instance_(false),
       commit_pending_(false),
-      weak_ptr_factory_(ALLOW_THIS_IN_INITIALIZER_LIST(this)) {
+      weak_ptr_factory_(this) {
 }
 
 PPB_Graphics3D_Impl::~PPB_Graphics3D_Impl() {
@@ -174,6 +174,10 @@ PP_Graphics3DTrustedState PPB_Graphics3D_Impl::FlushSyncFast(
     int32_t last_known_get) {
   return PPStateFromGPUState(
       GetCommandBuffer()->FlushSync(put_offset, last_known_get));
+}
+
+uint32_t PPB_Graphics3D_Impl::InsertSyncPoint() {
+  return GetCommandBuffer()->InsertSyncPoint();
 }
 
 bool PPB_Graphics3D_Impl::BindToInstance(bool bind) {
@@ -327,12 +331,17 @@ void PPB_Graphics3D_Impl::SendContextLost() {
   if (!instance || !instance->container())
     return;
 
+  // This PPB_Graphics3D_Impl could be deleted during the call to
+  // GetPluginInterface (which sends a sync message in some cases). We still
+  // send the Graphics3DContextLost to the plugin; the instance may care about
+  // that event even though this context has been destroyed.
+  PP_Instance this_pp_instance = pp_instance();
   const PPP_Graphics3D* ppp_graphics_3d =
       static_cast<const PPP_Graphics3D*>(
           instance->module()->GetPluginInterface(
               PPP_GRAPHICS_3D_INTERFACE));
   if (ppp_graphics_3d)
-    ppp_graphics_3d->Graphics3DContextLost(pp_instance());
+    ppp_graphics_3d->Graphics3DContextLost(this_pp_instance);
 }
 
 }  // namespace ppapi

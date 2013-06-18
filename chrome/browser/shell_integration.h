@@ -12,7 +12,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/string16.h"
 #include "googleurl/src/gurl.h"
-#include "ui/gfx/image/image.h"
+#include "ui/gfx/image/image_family.h"
 
 class CommandLine;
 
@@ -101,7 +101,7 @@ class ShellIntegration {
     string16 title;
     string16 description;
     base::FilePath extension_path;
-    gfx::Image favicon;
+    gfx::ImageFamily favicon;
     base::FilePath profile_path;
   };
 
@@ -111,12 +111,19 @@ class ShellIntegration {
 
     bool on_desktop;
     bool in_applications_menu;
+    string16 applications_menu_subdir;
 
     // For Windows, this refers to quick launch bar prior to Win7. In Win7,
     // this means "pin to taskbar". For Mac/Linux, this could be used for
     // Mac dock or the gnome/kde application launcher. However, those are not
     // implemented yet.
     bool in_quick_launch_bar;
+
+    // For Linux, this refers to a shortcut which the system knows about (for
+    // the purpose of identifying windows and giving them the correct
+    // title/icon), but which does not show up in menus or search results.
+    // Ignored if in_applications_menu == true.
+    bool hidden;
   };
 
   // Data that needs to be passed between the app launcher stub and Chrome.

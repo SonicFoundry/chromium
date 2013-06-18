@@ -67,6 +67,10 @@
   width: 10px;
 }
 
+html[dir='rtl'] .bookmark-separator {
+  -webkit-transform: scaleX(-1);
+}
+
 #bookmarks_title_wrapper .title-crumb {
   color: #555;
   margin: 0 10px;
@@ -82,7 +86,6 @@
 
 .favicon-cell {
   -webkit-tap-highlight-color: transparent;
-  -webkit-transition: background 300ms linear;
   display: inline-block;
   height: 105px;
   padding: 11px;

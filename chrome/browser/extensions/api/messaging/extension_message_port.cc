@@ -26,18 +26,23 @@ ExtensionMessagePort::ExtensionMessagePort(content::RenderProcessHost* process,
 void ExtensionMessagePort::DispatchOnConnect(
     int dest_port_id,
     const std::string& channel_name,
-    const std::string& tab_json,
+    const base::DictionaryValue& source_tab,
     const std::string& source_extension_id,
-    const std::string& target_extension_id) {
+    const std::string& target_extension_id,
+    const GURL& source_url) {
+  ExtensionMsg_ExternalConnectionInfo info;
+  info.target_id = target_extension_id;
+  info.source_id = source_extension_id;
+  info.source_url = source_url;
   process_->Send(new ExtensionMsg_DispatchOnConnect(
-      routing_id_, dest_port_id, channel_name,
-      tab_json, source_extension_id, target_extension_id));
+      routing_id_, dest_port_id, channel_name, source_tab, info));
 }
 
-void ExtensionMessagePort::DispatchOnDisconnect(int source_port_id,
-                                                bool connection_error) {
+void ExtensionMessagePort::DispatchOnDisconnect(
+    int source_port_id,
+    const std::string& error_message) {
   process_->Send(new ExtensionMsg_DispatchOnDisconnect(
-      routing_id_, source_port_id, connection_error));
+      routing_id_, source_port_id, error_message));
 }
 
 void ExtensionMessagePort::DispatchOnMessage(const std::string& message,

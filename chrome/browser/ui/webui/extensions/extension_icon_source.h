@@ -13,8 +13,8 @@
 #include "chrome/browser/favicon/favicon_service.h"
 #include "chrome/common/cancelable_task_tracker.h"
 #include "chrome/common/extensions/extension_icon_set.h"
-#include "chrome/common/extensions/extension_resource.h"
 #include "content/public/browser/url_data_source.h"
+#include "extensions/common/extension_resource.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
 class ExtensionIconSet;
@@ -71,11 +71,12 @@ class ExtensionIconSource : public content::URLDataSource,
   static SkBitmap* LoadImageByResourceId(int resource_id);
 
   // content::URLDataSource implementation.
-  virtual std::string GetSource() OVERRIDE;
+  virtual std::string GetSource() const OVERRIDE;
   virtual std::string GetMimeType(const std::string&) const OVERRIDE;
   virtual void StartDataRequest(
       const std::string& path,
-      bool is_incognito,
+      int render_process_id,
+      int render_view_id,
       const content::URLDataSource::GotDataCallback& callback) OVERRIDE;
 
  private:
@@ -100,7 +101,8 @@ class ExtensionIconSource : public content::URLDataSource,
 
   // Loads the extension's |icon| for the given |request_id| and returns the
   // image to the client.
-  void LoadExtensionImage(const ExtensionResource& icon, int request_id);
+  void LoadExtensionImage(const extensions::ExtensionResource& icon,
+                          int request_id);
 
   // Loads the favicon image for the app associated with the |request_id|. If
   // the image does not exist, we fall back to the default image.

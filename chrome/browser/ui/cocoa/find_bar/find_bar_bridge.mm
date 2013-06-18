@@ -5,15 +5,15 @@
 #import <Cocoa/Cocoa.h>
 #include "chrome/browser/ui/cocoa/find_bar/find_bar_bridge.h"
 
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #import "chrome/browser/ui/cocoa/find_bar/find_bar_cocoa_controller.h"
 
 // static
 bool FindBarBridge::disable_animations_during_testing_ = false;
 
-FindBarBridge::FindBarBridge()
+FindBarBridge::FindBarBridge(Browser* browser)
     : find_bar_controller_(NULL) {
-  cocoa_controller_ = [[FindBarCocoaController alloc] init];
+  cocoa_controller_ = [[FindBarCocoaController alloc] initWithBrowser:browser];
   [cocoa_controller_ setFindBarBridge:this];
 }
 

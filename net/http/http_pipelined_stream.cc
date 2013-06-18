@@ -27,6 +27,7 @@ HttpPipelinedStream::~HttpPipelinedStream() {
 
 int HttpPipelinedStream::InitializeStream(
     const HttpRequestInfo* request_info,
+    RequestPriority priority,
     const BoundNetLog& net_log,
     const CompletionCallback& callback) {
   request_info_ = request_info;
@@ -86,10 +87,6 @@ bool HttpPipelinedStream::CanFindEndOfResponse() const {
   return pipeline_->CanFindEndOfResponse(pipeline_id_);
 }
 
-bool HttpPipelinedStream::IsMoreDataBuffered() const {
-  return pipeline_->IsMoreDataBuffered(pipeline_id_);
-}
-
 bool HttpPipelinedStream::IsConnectionReused() const {
   return pipeline_->IsConnectionReused(pipeline_id_);
 }
@@ -118,10 +115,6 @@ void HttpPipelinedStream::GetSSLCertRequestInfo(
 
 bool HttpPipelinedStream::IsSpdyHttpStream() const {
   return false;
-}
-
-void HttpPipelinedStream::LogNumRttVsBytesMetrics() const {
-  // TODO(simonjam): I don't want to copy & paste this from http_basic_stream.
 }
 
 void HttpPipelinedStream::Drain(HttpNetworkSession* session) {

@@ -37,11 +37,11 @@ class MediaGalleriesDialog {
   // |permitted|. |gallery| is owned by the controller and is guaranteed to
   // live longer than the dialog. If the entry does not already exist, it
   // should be created.
-  virtual void UpdateGallery(const MediaGalleryPrefInfo* gallery,
+  virtual void UpdateGallery(const MediaGalleryPrefInfo& gallery,
                              bool permitted) = 0;
 
   // If there exists an entry for |gallery|, it should be removed.
-  virtual void ForgetGallery(const MediaGalleryPrefInfo* gallery) = 0;
+  virtual void ForgetGallery(MediaGalleryPrefId gallery) = 0;
 
   // Constructs a platform-specific dialog owned and controlled by |controller|.
   static MediaGalleriesDialog* Create(
@@ -56,7 +56,6 @@ class MediaGalleriesDialogController
       public RemovableStorageObserver,
       public MediaGalleriesPreferences::GalleryChangeObserver {
  public:
-  // A fancy pair.
   struct GalleryPermission {
     GalleryPermission(const MediaGalleryPrefInfo& pref_info, bool allowed)
         : pref_info(pref_info), allowed(allowed) {}
@@ -66,26 +65,53 @@ class MediaGalleriesDialogController
     bool allowed;
   };
 
-  // This type keeps track of media galleries already known to the prefs system.
-  typedef std::map<MediaGalleryPrefId, GalleryPermission>
-      KnownGalleryPermissions;
+  typedef std::vector<GalleryPermission> GalleryPermissionsVector;
 
   // The constructor creates a dialog controller which owns itself.
   MediaGalleriesDialogController(content::WebContents* web_contents,
                                  const extensions::Extension& extension,
                                  const base::Closure& on_finish);
 
-  // Called by the view.
-  static string16 GetGalleryDisplayName(const MediaGalleryPrefInfo& gallery);
+  // Called by the view to provide details for a particular gallery
+  // permission entry.
+  static string16 GetGalleryDisplayName(
+      const MediaGalleryPrefInfo& gallery);
+  static string16 GetGalleryDisplayNameNoAttachment(
+      const MediaGalleryPrefInfo& gallery);
   static string16 GetGalleryTooltip(const MediaGalleryPrefInfo& gallery);
-  virtual string16 GetHeader() const;
-  virtual string16 GetSubtext() const;
-  virtual bool HasPermittedGalleries() const;
+  static bool GetGalleryAttached(const MediaGalleryPrefInfo& gallery);
+  static string16 GetGalleryAdditionalDetails(
+      const MediaGalleryPrefInfo& gallery);
+
+  // The title of the dialog view.
+  string16 GetHeader() const;
+
+  // Explanatory text directly below the title.
+  string16 GetSubtext() const;
+
+  // Header for unattached devices part of the dialog.
+  string16 GetUnattachedLocationsHeader() const;
+
+  // Initial state of whether the dialog's confirmation button will be enabled.
+  bool HasPermittedGalleries() const;
+
+  // Get the set of permissions to attached galleries.
+  virtual GalleryPermissionsVector AttachedPermissions() const;
+
+  // Get the set of permissions to unattached galleries.
+  virtual GalleryPermissionsVector UnattachedPermissions() const;
+
+  // Called when the add-folder button in the dialog is clicked.
   virtual void OnAddFolderClicked();
-  virtual void DidToggleGallery(const MediaGalleryPrefInfo* pref_info,
-                                bool enabled);
+
+  // A checkbox beside a gallery permission was checked. The full set
+  // of gallery permissions checkbox settings is sent on every checkbox toggle.
+  virtual void DidToggleGalleryId(MediaGalleryPrefId pref_id,
+                                  bool enabled);
+
+  // The dialog is being deleted.
   virtual void DialogFinished(bool accepted);
-  virtual const KnownGalleryPermissions& permissions() const;
+
   virtual content::WebContents* web_contents();
 
  protected:
@@ -95,11 +121,9 @@ class MediaGalleriesDialogController
   virtual ~MediaGalleriesDialogController();
 
  private:
-  // This type is for media galleries that have been added via "add gallery"
-  // button, but have not yet been committed to the prefs system and will be
-  // forgotten if the user Cancels. Since they don't have IDs assigned yet, it's
-  // just a list and not a map.
-  typedef std::list<GalleryPermission> NewGalleryPermissions;
+  // This type keeps track of media galleries already known to the prefs system.
+  typedef std::map<MediaGalleryPrefId, GalleryPermission>
+      KnownGalleryPermissions;
 
   // SelectFileDialog::Listener implementation:
   virtual void FileSelected(const base::FilePath& path,
@@ -108,10 +132,8 @@ class MediaGalleriesDialogController
 
   // RemovableStorageObserver implementation.
   // Used to keep dialog in sync with removable device status.
-  virtual void OnRemovableStorageAttached(
-      const StorageMonitor::StorageInfo& info) OVERRIDE;
-  virtual void OnRemovableStorageDetached(
-      const StorageMonitor::StorageInfo& info) OVERRIDE;
+  virtual void OnRemovableStorageAttached(const StorageInfo& info) OVERRIDE;
+  virtual void OnRemovableStorageDetached(const StorageInfo& info) OVERRIDE;
 
   // MediaGalleriesPreferences::GalleryChangeObserver implementation.
   // Used to keep the dialog in sync when the preferences change.
@@ -134,6 +156,11 @@ class MediaGalleriesDialogController
   // Updates the model and view when a device is attached or detached.
   void UpdateGalleriesOnDeviceEvent(const std::string& device_id);
 
+  // Fill |permissions| with a sorted list of either attached or unattached
+  // gallery permissions.
+  void FillPermissions(bool attached,
+                       GalleryPermissionsVector* permissions) const;
+
   // The web contents from which the request originated.
   content::WebContents* web_contents_;
 
@@ -150,7 +177,7 @@ class MediaGalleriesDialogController
 
   // Map of new galleries the user added, but have not saved. This list should
   // never overlap with |known_galleries_|.
-  NewGalleryPermissions new_galleries_;
+  GalleryPermissionsVector new_galleries_;
 
   // Callback to run when the dialog closes.
   base::Closure on_finish_;

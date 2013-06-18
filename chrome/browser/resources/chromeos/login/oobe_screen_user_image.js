@@ -6,7 +6,7 @@
  * @fileoverview Oobe user image screen implementation.
  */
 
-cr.define('oobe', function() {
+cr.define('login', function() {
   var UserImagesGrid = options.UserImagesGrid;
   var ButtonImages = UserImagesGrid.ButtonImages;
 
@@ -31,7 +31,7 @@ cr.define('oobe', function() {
    * @constructor
    * @extends {HTMLDivElement}
    */
-  var UserImageScreen = cr.ui.define('div');
+  var UserImageScreen = cr.ui.define(login.Screen);
 
   /**
    * Registers with Oobe.
@@ -51,7 +51,7 @@ cr.define('oobe', function() {
   };
 
   UserImageScreen.prototype = {
-    __proto__: HTMLDivElement.prototype,
+    __proto__: login.Screen.prototype,
 
     /**
      * Currently selected user image index (take photo button is with zero
@@ -60,6 +60,16 @@ cr.define('oobe', function() {
      */
     selectedUserImage_: -1,
 
+    /**
+     * Indicates if profile picture should be displayed on current screen.
+     */
+    profilePictureEnabled_: false,
+
+    /**
+     * URL for profile picture.
+     */
+    profileImageUrl_: null,
+
     /** @override */
     decorate: function(element) {
       var imageGrid = $('user-image-grid');
@@ -67,6 +77,8 @@ cr.define('oobe', function() {
 
       // Preview image will track the selected item's URL.
       var previewElement = $('user-image-preview');
+      previewElement.oncontextmenu = function(e) { e.preventDefault(); };
+
       imageGrid.previewElement = previewElement;
       imageGrid.selectionType = 'default';
 
@@ -84,22 +96,8 @@ cr.define('oobe', function() {
           loadTimeData.getString('takePhoto'),
           loadTimeData.getString('photoFromCamera'));
 
-      // Profile image data (if present).
-      this.profileImage_ = imageGrid.addItem(
-          ButtonImages.PROFILE_PICTURE,  // Image URL.
-          loadTimeData.getString('profilePhoto'),  // Title.
-          undefined,  // Click handler.
-          undefined,  // Position.
-          function(el) {  // Custom decorator for Profile image element.
-            var spinner = el.ownerDocument.createElement('div');
-            spinner.className = 'spinner';
-            var spinnerBg = el.ownerDocument.createElement('div');
-            spinnerBg.className = 'spinner-bg';
-            spinnerBg.appendChild(spinner);
-            el.appendChild(spinnerBg);
-            el.id = 'profile-image';
-          });
-      this.profileImage_.type = 'profile';
+      this.setProfilePictureEnabled_(true);
+
       this.profileImageLoading = true;
 
       $('take-photo').addEventListener(
@@ -321,6 +319,7 @@ cr.define('oobe', function() {
      */
     setProfileImage_: function(imageUrl) {
       this.profileImageLoading = false;
+      this.profileImageUrl_ = imageUrl;
       if (imageUrl !== null) {
         this.profileImage_ =
             $('user-image-grid').updateItem(this.profileImage_, imageUrl);
@@ -332,6 +331,43 @@ cr.define('oobe', function() {
      */
     setCameraPresent_: function(present) {
       $('user-image-grid').cameraPresent = present;
+    },
+
+    /**
+     * Controls the profile image as one of image options.
+     * @param {enabled} Whether profile image option should be displayed.
+     * @private
+     */
+    setProfilePictureEnabled_: function(enabled) {
+      if (this.profilePictureEnabled_ == enabled)
+        return;
+      this.profilePictureEnabled_ = enabled;
+      var imageGrid = $('user-image-grid');
+      if (enabled) {
+        var url = ButtonImages.PROFILE_PICTURE;
+        if (!this.profileImageLoading && this.profileImageUrl_ !== null) {
+          url = this.profileImageUrl_;
+        }
+        // Profile image data (if present).
+        this.profileImage_ = imageGrid.addItem(
+            url,                                    // Image URL.
+            loadTimeData.getString('profilePhoto'), // Title.
+            undefined,                              // Click handler.
+            0,                                      // Position.
+            this.profileImageLoading ? function(el) {
+              // Custom decorator for Profile image element.
+              var spinner = el.ownerDocument.createElement('div');
+              spinner.className = 'spinner';
+              var spinnerBg = el.ownerDocument.createElement('div');
+              spinnerBg.className = 'spinner-bg';
+              spinnerBg.appendChild(spinner);
+              el.appendChild(spinnerBg);
+              el.id = 'profile-image';
+            } : undefined);
+        this.profileImage_.type = 'profile';
+      } else {
+        imageGrid.removeItem(this.profileImage_);
+      }
     },
 
     /**
@@ -393,6 +429,7 @@ cr.define('oobe', function() {
   [
     'setDefaultImages',
     'setCameraPresent',
+    'setProfilePictureEnabled',
     'setProfileImage',
     'setSelectedImage',
   ].forEach(function(name) {
@@ -405,3 +442,4 @@ cr.define('oobe', function() {
     UserImageScreen: UserImageScreen
   };
 });
+

@@ -20,7 +20,7 @@
 #include "ppapi/proxy/resource_message_params.h"
 #include "ppapi/shared_impl/time_conversion.h"
 
-#ifdef OS_WIN
+#if defined(OS_WIN)
 #include <windows.h>
 #elif defined(OS_MACOSX)
 #include <CoreServices/CoreServices.h>
@@ -55,7 +55,7 @@ PepperFlashBrowserHost::PepperFlashBrowserHost(
     PP_Resource resource)
     : ResourceHost(host->GetPpapiHost(), instance, resource),
       host_(host),
-      weak_factory_(ALLOW_THIS_IN_INITIALIZER_LIST(this)) {
+      weak_factory_(this) {
   int unused;
   host->GetRenderViewIDsForInstance(instance, &render_process_id_, &unused);
 }

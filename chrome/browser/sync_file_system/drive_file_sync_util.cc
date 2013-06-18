@@ -56,26 +56,16 @@ SyncStatusCode GDataErrorCodeToSyncStatusCode(
     case google_apis::GDATA_NO_SPACE:
       return SYNC_FILE_ERROR_NO_SPACE;
   }
-  NOTREACHED();
-  return SYNC_STATUS_FAILED;
-}
 
-google_apis::GDataErrorCode DriveUploadErrorToGDataErrorCode(
-    google_apis::DriveUploadError error) {
-  switch (error) {
-    case google_apis::DRIVE_UPLOAD_OK:
-       return google_apis::HTTP_SUCCESS;
-    case google_apis::DRIVE_UPLOAD_ERROR_NOT_FOUND:
-      return google_apis::HTTP_NOT_FOUND;
-    case google_apis::DRIVE_UPLOAD_ERROR_NO_SPACE:
-      return google_apis::GDATA_NO_SPACE;
-    case google_apis::DRIVE_UPLOAD_ERROR_CONFLICT:
-      return google_apis::HTTP_CONFLICT;
-    case google_apis::DRIVE_UPLOAD_ERROR_ABORT:
-      return google_apis::GDATA_OTHER_ERROR;
-  }
-  NOTREACHED();
-  return google_apis::GDATA_OTHER_ERROR;
+  // There's a case where DriveService layer returns GDataErrorCode==-1
+  // when network is unavailable. (http://crbug.com/223042)
+  // TODO(kinuko,nhiroki): We should identify from where this undefined error
+  // code is coming.
+  if (error == -1)
+    return SYNC_STATUS_NETWORK_ERROR;
+
+  LOG(WARNING) << "Got unexpected error: " << error;
+  return SYNC_STATUS_FAILED;
 }
 
 }  // namespace sync_file_system

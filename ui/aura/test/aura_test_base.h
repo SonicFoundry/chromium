@@ -14,6 +14,7 @@
 namespace aura {
 class RootWindow;
 class Window;
+class WindowDelegate;
 namespace test {
 
 // A base class for aura unit tests.
@@ -27,6 +28,10 @@ class AuraTestBase : public testing::Test {
   virtual void SetUp() OVERRIDE;
   virtual void TearDown() OVERRIDE;
 
+  // Creates a normal window parented to |parent|.
+  aura::Window* CreateNormalWindow(int id, Window* parent,
+                                   aura::WindowDelegate* delegate);
+
   // Creates a transient window that is transient to |parent|.
   aura::Window* CreateTransientChild(int id, aura::Window* parent);
 
@@ -39,7 +44,9 @@ class AuraTestBase : public testing::Test {
   RootWindow* root_window() { return helper_->root_window(); }
 
  private:
-  MessageLoopForUI message_loop_;
+  bool setup_called_;
+  bool teardown_called_;
+  base::MessageLoopForUI message_loop_;
   scoped_ptr<AuraTestHelper> helper_;
 
   DISALLOW_COPY_AND_ASSIGN(AuraTestBase);

@@ -5,11 +5,11 @@
 #include "base/auto_reset.h"
 #include "base/command_line.h"
 #include "base/utf_string_conversions.h"
-#include "chrome/browser/api/infobars/infobar_delegate.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
 #include "chrome/browser/content_settings/host_content_settings_map.h"
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/custom_handlers/protocol_handler_registry.h"
+#include "chrome/browser/infobars/infobar_delegate.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/content_settings/content_setting_bubble_model.h"
 #include "chrome/common/chrome_switches.h"
@@ -30,27 +30,10 @@ class ContentSettingBubbleModelTest : public ChromeRenderViewHostTestHarness {
       : ui_thread_(BrowserThread::UI, MessageLoop::current()) {
   }
 
-  void StartIOThread() {
-    io_thread_.reset(new content::TestBrowserThread(BrowserThread::IO));
-    io_thread_->StartIOThread();
-  }
-
   virtual void SetUp() OVERRIDE {
     ChromeRenderViewHostTestHarness::SetUp();
     TabSpecificContentSettings::CreateForWebContents(web_contents());
     InfoBarService::CreateForWebContents(web_contents());
-  }
-
-  virtual void TearDown() OVERRIDE {
-    // This will delete the TestingProfile on the UI thread.
-    ChromeRenderViewHostTestHarness::TearDown();
-
-    // Finish off deleting the ProtocolHandlerRegistry, which must be done on
-    // the IO thread.
-    if (io_thread_.get()) {
-      io_thread_->Stop();
-      io_thread_.reset(NULL);
-    }
   }
 
   void CheckGeolocationBubble(size_t expected_domains,
@@ -73,7 +56,6 @@ class ContentSettingBubbleModelTest : public ChromeRenderViewHostTestHarness {
   }
 
   content::TestBrowserThread ui_thread_;
-  scoped_ptr<content::TestBrowserThread> io_thread_;
 };
 
 TEST_F(ContentSettingBubbleModelTest, ImageRadios) {
@@ -103,15 +85,35 @@ TEST_F(ContentSettingBubbleModelTest, Cookies) {
 
   scoped_ptr<ContentSettingBubbleModel> content_setting_bubble_model(
       ContentSettingBubbleModel::CreateContentSettingBubbleModel(
-         NULL, web_contents(), profile(),
-         CONTENT_SETTINGS_TYPE_COOKIES));
+          NULL, web_contents(), profile(), CONTENT_SETTINGS_TYPE_COOKIES));
   const ContentSettingBubbleModel::BubbleContent& bubble_content =
       content_setting_bubble_model->bubble_content();
-  EXPECT_FALSE(bubble_content.title.empty());
-  EXPECT_FALSE(bubble_content.radio_group.radio_items.empty());
+  std::string title = bubble_content.title;
+  EXPECT_FALSE(title.empty());
+  ASSERT_EQ(2U, bubble_content.radio_group.radio_items.size());
+  std::string radio1 = bubble_content.radio_group.radio_items[0];
+  std::string radio2 = bubble_content.radio_group.radio_items[1];
   EXPECT_FALSE(bubble_content.custom_link.empty());
   EXPECT_TRUE(bubble_content.custom_link_enabled);
   EXPECT_FALSE(bubble_content.manage_link.empty());
+
+  content_settings->ClearCookieSpecificContentSettings();
+  content_settings->OnContentAllowed(CONTENT_SETTINGS_TYPE_COOKIES);
+  content_setting_bubble_model.reset(
+      ContentSettingBubbleModel::CreateContentSettingBubbleModel(
+          NULL, web_contents(), profile(), CONTENT_SETTINGS_TYPE_COOKIES));
+  const ContentSettingBubbleModel::BubbleContent& bubble_content_2 =
+      content_setting_bubble_model->bubble_content();
+
+  EXPECT_FALSE(bubble_content_2.title.empty());
+  EXPECT_NE(title, bubble_content_2.title);
+  ASSERT_EQ(2U, bubble_content_2.radio_group.radio_items.size());
+  // TODO(bauerb): Update this once the strings have been updated.
+  EXPECT_EQ(radio1, bubble_content_2.radio_group.radio_items[0]);
+  EXPECT_EQ(radio2, bubble_content_2.radio_group.radio_items[1]);
+  EXPECT_FALSE(bubble_content_2.custom_link.empty());
+  EXPECT_TRUE(bubble_content_2.custom_link_enabled);
+  EXPECT_FALSE(bubble_content_2.manage_link.empty());
 }
 
 TEST_F(ContentSettingBubbleModelTest, Mediastream) {
@@ -210,8 +212,7 @@ TEST_F(ContentSettingBubbleModelTest, BlockedMediastream) {
   // |infobar_service|.
   InfoBarService* infobar_service =
       InfoBarService::FromWebContents(web_contents());
-  scoped_ptr<InfoBarDelegate> delegate(
-      infobar_service->GetInfoBarDelegateAt(0));
+  scoped_ptr<InfoBarDelegate> delegate(infobar_service->infobar_at(0));
   infobar_service->RemoveInfoBar(delegate.get());
 }
 
@@ -429,7 +430,7 @@ class FakeDelegate : public ProtocolHandlerRegistry::Delegate {
   virtual ShellIntegration::DefaultProtocolClientWorker* CreateShellWorker(
       ShellIntegration::DefaultWebClientObserver* observer,
       const std::string& protocol) OVERRIDE {
-    LOG(INFO) << "CreateShellWorker";
+    VLOG(1) << "CreateShellWorker";
     return NULL;
   }
 
@@ -441,13 +442,11 @@ class FakeDelegate : public ProtocolHandlerRegistry::Delegate {
   virtual void RegisterWithOSAsDefaultClient(
       const std::string& protocol,
       ProtocolHandlerRegistry* registry) OVERRIDE {
-    LOG(INFO) << "Register With OS";
+    VLOG(1) << "Register With OS";
   }
 };
 
 TEST_F(ContentSettingBubbleModelTest, RPHAllow) {
-  StartIOThread();
-
   ProtocolHandlerRegistry registry(profile(), new FakeDelegate());
   registry.InitProtocolSettings();
 

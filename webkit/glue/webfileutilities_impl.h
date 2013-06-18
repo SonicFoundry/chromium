@@ -7,7 +7,7 @@
 
 #include "base/platform_file.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebFileInfo.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebFileUtilities.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebFileUtilities.h"
 #include "webkit/glue/webkit_glue_export.h"
 
 namespace webkit_glue {
@@ -29,7 +29,6 @@ class WEBKIT_GLUE_EXPORT WebFileUtilitiesImpl :
   virtual WebKit::WebString pathByAppendingComponent(
       const WebKit::WebString& path, const WebKit::WebString& component);
   virtual bool makeAllDirectories(const WebKit::WebString& path);
-  virtual WebKit::WebString getAbsolutePath(const WebKit::WebString& path);
   virtual bool isDirectory(const WebKit::WebString& path);
   virtual WebKit::WebURL filePathToURL(const WebKit::WebString& path);
   virtual base::PlatformFile openFile(const WebKit::WebString& path, int mode);

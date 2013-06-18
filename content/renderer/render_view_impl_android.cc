@@ -6,16 +6,19 @@
 
 #include "base/command_line.h"
 #include "base/message_loop.h"
-#include "cc/layer_tree_host.h"
+#include "cc/trees/layer_tree_host.h"
 #include "content/renderer/gpu/render_widget_compositor.h"
 
 namespace content {
 
-void RenderViewImpl::OnEnableHidingTopControls(bool enable) {
-  DCHECK(compositor_ && compositor_->layer_tree_host());
-  if (compositor_ && compositor_->layer_tree_host()) {
-    compositor_->layer_tree_host()->enableHidingTopControls(enable);
-  }
+void RenderViewImpl::OnUpdateTopControlsState(bool enable_hiding,
+                                              bool enable_showing,
+                                              bool animate) {
+  // TODO(tedchoc): Investigate why messages are getting here before the
+  //                compositor has been initialized.
+  LOG_IF(WARNING, !compositor_) << "OnUpdateTopControlsState was unhandled.";
+  if (compositor_)
+    compositor_->UpdateTopControlsState(enable_hiding, enable_showing, animate);
 }
 
 }  // namespace content

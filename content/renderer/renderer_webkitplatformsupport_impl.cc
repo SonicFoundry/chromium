@@ -16,9 +16,12 @@
 #include "content/common/file_utilities_messages.h"
 #include "content/common/fileapi/webblobregistry_impl.h"
 #include "content/common/fileapi/webfilesystem_impl.h"
+#include "content/common/gpu/client/context_provider_command_buffer.h"
+#include "content/common/gpu/client/webgraphicscontext3d_command_buffer_impl.h"
 #include "content/common/indexed_db/proxy_webidbfactory_impl.h"
 #include "content/common/mime_registry_messages.h"
 #include "content/common/npobject_util.h"
+#include "content/common/thread_safe_sender.h"
 #include "content/common/view_messages.h"
 #include "content/common/webmessageportchannel_impl.h"
 #include "content/public/common/content_switches.h"
@@ -114,9 +117,14 @@ class RendererWebKitPlatformSupportImpl::MimeRegistry
 class RendererWebKitPlatformSupportImpl::FileUtilities
     : public webkit_glue::WebFileUtilitiesImpl {
  public:
+  explicit FileUtilities(ThreadSafeSender* sender)
+      : thread_safe_sender_(sender) {}
   virtual bool getFileInfo(const WebString& path, WebFileInfo& result);
   virtual base::PlatformFile openFile(const WebKit::WebString& path,
                                       int mode);
+ private:
+  bool SendSyncMessageFromAnyThread(IPC::SyncMessage* msg) const;
+  scoped_refptr<ThreadSafeSender> thread_safe_sender_;
 };
 
 class RendererWebKitPlatformSupportImpl::Hyphenator
@@ -191,33 +199,16 @@ RendererWebKitPlatformSupportImpl::RendererWebKitPlatformSupportImpl()
   } else {
     DVLOG(1) << "Disabling sandbox support for testing.";
   }
+
+  // ChildThread may not exist in some tests.
+  if (ChildThread::current())
+    thread_safe_sender_ = ChildThread::current()->thread_safe_sender();
 }
 
 RendererWebKitPlatformSupportImpl::~RendererWebKitPlatformSupportImpl() {
 }
 
 //------------------------------------------------------------------------------
-
-namespace {
-
-bool SendSyncMessageFromAnyThreadInternal(IPC::SyncMessage* msg) {
-  RenderThread* render_thread = RenderThread::Get();
-  if (render_thread)
-    return render_thread->Send(msg);
-  scoped_refptr<IPC::SyncMessageFilter> sync_msg_filter(
-      ChildThread::current()->sync_message_filter());
-  return sync_msg_filter->Send(msg);
-}
-
-bool SendSyncMessageFromAnyThread(IPC::SyncMessage* msg) {
-  base::TimeTicks begin = base::TimeTicks::Now();
-  const bool success = SendSyncMessageFromAnyThreadInternal(msg);
-  base::TimeDelta delta = base::TimeTicks::Now() - begin;
-  UMA_HISTOGRAM_TIMES("RendererSyncIPC.ElapsedTime", delta);
-  return success;
-}
-
-}  // namespace
 
 WebKit::WebClipboard* RendererWebKitPlatformSupportImpl::clipboard() {
   WebKit::WebClipboard* clipboard =
@@ -237,8 +228,8 @@ WebKit::WebMimeRegistry* RendererWebKitPlatformSupportImpl::mimeRegistry() {
 
 WebKit::WebFileUtilities*
 RendererWebKitPlatformSupportImpl::fileUtilities() {
-  if (!file_utilities_.get()) {
-    file_utilities_.reset(new FileUtilities);
+  if (!file_utilities_) {
+    file_utilities_.reset(new FileUtilities(thread_safe_sender_));
     file_utilities_->set_sandbox_enabled(sandboxEnabled());
   }
   return file_utilities_.get();
@@ -256,6 +247,14 @@ WebKit::WebSandboxSupport* RendererWebKitPlatformSupportImpl::sandboxSupport() {
 WebKit::WebCookieJar* RendererWebKitPlatformSupportImpl::cookieJar() {
   NOTREACHED() << "Use WebFrameClient::cookieJar() instead!";
   return NULL;
+}
+
+WebKit::WebThemeEngine* RendererWebKitPlatformSupportImpl::themeEngine() {
+  WebKit::WebThemeEngine* theme_engine =
+      GetContentClient()->renderer()->OverrideThemeEngine();
+  if (theme_engine)
+    return theme_engine;
+  return WebKitPlatformSupportImpl::themeEngine();
 }
 
 bool RendererWebKitPlatformSupportImpl::sandboxEnabled() {
@@ -358,7 +357,7 @@ RendererWebKitPlatformSupportImpl::createLocalStorageNamespace(
 //------------------------------------------------------------------------------
 
 WebIDBFactory* RendererWebKitPlatformSupportImpl::idbFactory() {
-  if (!web_idb_factory_.get()) {
+  if (!web_idb_factory_) {
     if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kSingleProcess))
       web_idb_factory_.reset(WebIDBFactory::create());
     else
@@ -370,7 +369,7 @@ WebIDBFactory* RendererWebKitPlatformSupportImpl::idbFactory() {
 //------------------------------------------------------------------------------
 
 WebFileSystem* RendererWebKitPlatformSupportImpl::fileSystem() {
-  if (!web_file_system_.get())
+  if (!web_file_system_)
     web_file_system_.reset(new WebFileSystemImpl());
   return web_file_system_.get();
 }
@@ -447,6 +446,15 @@ base::PlatformFile RendererWebKitPlatformSupportImpl::FileUtilities::openFile(
   return IPC::PlatformFileForTransitToPlatformFile(handle);
 }
 
+bool RendererWebKitPlatformSupportImpl::FileUtilities::
+SendSyncMessageFromAnyThread(IPC::SyncMessage* msg) const {
+  base::TimeTicks begin = base::TimeTicks::Now();
+  const bool success = thread_safe_sender_->Send(msg);
+  base::TimeDelta delta = base::TimeTicks::Now() - begin;
+  UMA_HISTOGRAM_TIMES("RendererSyncIPC.ElapsedTime", delta);
+  return success;
+}
+
 //------------------------------------------------------------------------------
 
 RendererWebKitPlatformSupportImpl::Hyphenator::Hyphenator() {}
@@ -462,9 +470,9 @@ bool RendererWebKitPlatformSupportImpl::Hyphenator::canHyphenate(
 
   // Create a hyphenator object and attach it to the render thread so it can
   // receive a dictionary file opened by a browser.
-  if (!hyphenator_.get()) {
+  if (!hyphenator_) {
     hyphenator_.reset(new content::Hyphenator(base::kInvalidPlatformFileValue));
-    if (!hyphenator_.get())
+    if (!hyphenator_)
       return false;
     return hyphenator_->Attach(RenderThreadImpl::current(), locale);
   }
@@ -619,7 +627,7 @@ bool RendererWebKitPlatformSupportImpl::canAccelerate2dCanvas() {
 }
 
 bool RendererWebKitPlatformSupportImpl::isThreadedCompositingEnabled() {
-  return !!RenderThreadImpl::current()->compositor_thread();
+  return !!RenderThreadImpl::current()->compositor_message_loop_proxy();
 }
 
 double RendererWebKitPlatformSupportImpl::audioHardwareSampleRate() {
@@ -630,6 +638,11 @@ double RendererWebKitPlatformSupportImpl::audioHardwareSampleRate() {
 size_t RendererWebKitPlatformSupportImpl::audioHardwareBufferSize() {
   RenderThreadImpl* thread = RenderThreadImpl::current();
   return thread->GetAudioHardwareConfig()->GetOutputBufferSize();
+}
+
+unsigned RendererWebKitPlatformSupportImpl::audioHardwareOutputChannels() {
+  RenderThreadImpl* thread = RenderThreadImpl::current();
+  return thread->GetAudioHardwareConfig()->GetOutputChannels();
 }
 
 // TODO(crogers): remove deprecated API as soon as WebKit calls new API.
@@ -745,10 +758,9 @@ void RendererWebKitPlatformSupportImpl::screenColorProfile(
 //------------------------------------------------------------------------------
 
 WebBlobRegistry* RendererWebKitPlatformSupportImpl::blobRegistry() {
-  // ChildThread::current can be NULL when running some tests.
-  if (!blob_registry_.get() && ChildThread::current()) {
-    blob_registry_.reset(new WebBlobRegistryImpl(ChildThread::current()));
-  }
+  // thread_safe_sender_ can be NULL when running some tests.
+  if (!blob_registry_.get() && thread_safe_sender_)
+    blob_registry_.reset(new WebBlobRegistryImpl(thread_safe_sender_));
   return blob_registry_.get();
 }
 
@@ -756,7 +768,7 @@ WebBlobRegistry* RendererWebKitPlatformSupportImpl::blobRegistry() {
 
 void RendererWebKitPlatformSupportImpl::sampleGamepads(WebGamepads& gamepads) {
   if (g_test_gamepads == 0) {
-    if (!gamepad_shared_memory_reader_.get())
+    if (!gamepad_shared_memory_reader_)
       gamepad_shared_memory_reader_.reset(new GamepadSharedMemoryReader);
     gamepad_shared_memory_reader_->SampleGamepads(gamepads);
   } else {
@@ -831,11 +843,6 @@ void RendererWebKitPlatformSupportImpl::SetMockGamepadsForTesting(
   g_test_gamepads.Get() = pads;
 }
 
-GpuChannelHostFactory*
-RendererWebKitPlatformSupportImpl::GetGpuChannelHostFactory() {
-  return RenderThreadImpl::current();
-}
-
 //------------------------------------------------------------------------------
 
 WebKit::WebHyphenator* RendererWebKitPlatformSupportImpl::hyphenator() {
@@ -846,18 +853,12 @@ WebKit::WebHyphenator* RendererWebKitPlatformSupportImpl::hyphenator() {
   return hyphenator_.get();
 }
 
-bool RendererWebKitPlatformSupportImpl::canHyphenate(
-    const WebKit::WebString& locale) {
-  return hyphenator()->canHyphenate(locale);
-}
+//------------------------------------------------------------------------------
 
-size_t RendererWebKitPlatformSupportImpl::computeLastHyphenLocation(
-    const char16* characters,
-    size_t length,
-    size_t before_index,
-    const WebKit::WebString& locale) {
-  return hyphenator()->computeLastHyphenLocation(
-      characters, length, before_index, locale);
+WebKit::WebSpeechSynthesizer*
+RendererWebKitPlatformSupportImpl::createSpeechSynthesizer(
+    WebKit::WebSpeechSynthesizerClient* client) {
+  return GetContentClient()->renderer()->OverrideSpeechSynthesizer(client);
 }
 
 //------------------------------------------------------------------------------
@@ -868,5 +869,39 @@ bool RendererWebKitPlatformSupportImpl::processMemorySizesInBytes(
       new ViewHostMsg_GetProcessMemorySizes(private_bytes, shared_bytes));
   return true;
 }
+
+//------------------------------------------------------------------------------
+
+WebKit::WebGraphicsContext3D*
+RendererWebKitPlatformSupportImpl::createOffscreenGraphicsContext3D(
+    const WebKit::WebGraphicsContext3D::Attributes& attributes) {
+  return WebGraphicsContext3DCommandBufferImpl::CreateOffscreenContext(
+      RenderThreadImpl::current(),
+      attributes,
+      GURL(attributes.topDocumentURL));
+}
+
+//------------------------------------------------------------------------------
+
+WebKit::WebGraphicsContext3D* RendererWebKitPlatformSupportImpl::
+    sharedOffscreenGraphicsContext3D() {
+  if (!shared_offscreen_context_ ||
+      shared_offscreen_context_->DestroyedOnMainThread()) {
+    shared_offscreen_context_ =
+        RenderThreadImpl::current()->OffscreenContextProviderForMainThread();
+  }
+  if (!shared_offscreen_context_)
+    return NULL;
+  return shared_offscreen_context_->Context3d();
+}
+
+//------------------------------------------------------------------------------
+
+GrContext* RendererWebKitPlatformSupportImpl::sharedOffscreenGrContext() {
+  if (!shared_offscreen_context_)
+    return NULL;
+  return shared_offscreen_context_->GrContext();
+}
+
 
 }  // namespace content

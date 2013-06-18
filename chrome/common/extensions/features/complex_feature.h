@@ -35,15 +35,21 @@ class ComplexFeature : public Feature {
 
   virtual Availability IsAvailableToContext(const Extension* extension,
                                             Context context,
+                                            const GURL& url,
                                             Platform platform) const OVERRIDE;
+
+  virtual bool IsIdInWhitelist(const std::string& extension_id) const OVERRIDE;
 
  protected:
   // extensions::Feature:
   virtual std::string GetAvailabilityMessage(
       AvailabilityResult result,
-      Manifest::Type type) const OVERRIDE;
+      Manifest::Type type,
+      const GURL& url) const OVERRIDE;
 
   virtual std::set<Context>* GetContexts() OVERRIDE;
+
+  virtual bool IsInternal() const OVERRIDE;
 
  private:
   FeatureList features_;

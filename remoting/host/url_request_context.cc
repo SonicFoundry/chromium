@@ -5,16 +5,16 @@
 #include "remoting/host/url_request_context.h"
 
 #include "base/message_loop_proxy.h"
-#include "net/base/cert_verifier.h"
-#include "net/base/host_resolver.h"
-#include "net/base/ssl_config_service_defaults.h"
-#include "net/base/transport_security_state.h"
+#include "net/cert/cert_verifier.h"
+#include "net/dns/host_resolver.h"
 #include "net/http/http_auth_handler_factory.h"
 #include "net/http/http_network_layer.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_server_properties_impl.h"
+#include "net/http/transport_security_state.h"
 #include "net/proxy/proxy_config_service.h"
 #include "net/proxy/proxy_service.h"
+#include "net/ssl/ssl_config_service_defaults.h"
 #include "remoting/host/vlog_net_log.h"
 
 #if defined(OS_WIN)
@@ -80,7 +80,7 @@ net::ProxyConfigService* CreateSystemProxyConfigService(
 // which is in turn copied from some test code. Move it somewhere reusable.
 URLRequestContext::URLRequestContext(
     scoped_ptr<net::ProxyConfigService> proxy_config_service)
-    : ALLOW_THIS_IN_INITIALIZER_LIST(storage_(this)) {
+    : storage_(this) {
   scoped_ptr<VlogNetLog> net_log(new VlogNetLog());
   storage_.set_host_resolver(
       net::HostResolver::CreateDefaultResolver(net_log.get()));

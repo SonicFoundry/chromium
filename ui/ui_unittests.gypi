@@ -39,6 +39,20 @@
       ],
     },
     {
+      'target_name': 'run_ui_unittests',
+      'type': 'static_library',
+      'dependencies': [
+        '../base/base.gyp:base',
+        '../base/base.gyp:test_support_base',
+        'ui',
+      ],
+      'sources': [
+        'test/test_suite.cc',
+        'test/test_suite.h',
+        'test/run_all_unittests.cc',
+      ],
+    },
+    {
       'target_name': 'ui_unittests',
       'type': '<(gtest_target_type)',
       'dependencies': [
@@ -51,6 +65,7 @@
         '../third_party/icu/icu.gyp:icui18n',
         '../third_party/icu/icu.gyp:icuuc',
         '../third_party/libpng/libpng.gyp:libpng',
+        'run_ui_unittests',
         'shell_dialogs',
         'ui',
         'ui_resources',
@@ -66,6 +81,7 @@
         'base/layout_unittest.cc',
         'base/l10n/l10n_util_mac_unittest.mm',
         'base/l10n/l10n_util_unittest.cc',
+        'base/l10n/l10n_util_win_unittest.cc',
         'base/models/tree_node_iterator_unittest.cc',
         'base/range/range_mac_unittest.mm',
         'base/range/range_unittest.cc',
@@ -78,6 +94,7 @@
         'gfx/color_utils_unittest.cc',
         'gfx/display_unittest.cc',
         'gfx/font_unittest.cc',
+        'gfx/image/image_family_unittest.cc',
         'gfx/image/image_skia_unittest.cc',
         'gfx/image/image_unittest.cc',
         'gfx/image/image_unittest_util.cc',
@@ -98,9 +115,6 @@
         'gfx/text_utils_unittest.cc',
         'gfx/vector2d_unittest.cc',
         'gfx/vector3d_unittest.cc',
-        'test/run_all_unittests.cc',
-        'test/test_suite.cc',
-        'test/test_suite.h',
       ],
       'all_sources': [
         '<@(_common_sources)',
@@ -111,8 +125,11 @@
         'base/cocoa/events_mac_unittest.mm',
         'base/cocoa/focus_tracker_unittest.mm',
         'base/cocoa/fullscreen_window_manager_unittest.mm',
+        'base/cocoa/hover_image_button_unittest.mm',
+        'base/cocoa/tracking_area_unittest.mm',
         'base/events/event_dispatcher_unittest.cc',
         'base/events/event_unittest.cc',
+        'base/events/key_identifier_conversion_unittest.cc',
         'base/gtk/gtk_expanded_container_unittest.cc',
         'base/gtk/gtk_im_context_util_unittest.cc',
         'base/gtk/menu_label_accelerator_util_unittest.cc',
@@ -135,7 +152,6 @@
         'gfx/platform_font_mac_unittest.mm',
         'gfx/render_text_unittest.cc',
         'gfx/transform_util_unittest.cc',
-        'gfx/video_decode_acceleration_support_mac_unittest.mm',
         'shell_dialogs/select_file_dialog_win_unittest.cc',
         'webui/web_ui_util_unittest.cc',
       ],
@@ -268,6 +284,7 @@
           'sources!': [
             'base/events/event_dispatcher_unittest.cc',
             'base/events/event_unittest.cc',
+            'base/events/key_identifier_conversion_unittest.cc',
           ],
         }],
         ['use_aura==1', {

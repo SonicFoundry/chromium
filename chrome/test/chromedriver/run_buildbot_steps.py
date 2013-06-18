@@ -8,7 +8,9 @@
 import optparse
 import os
 import subprocess
+import shutil
 import sys
+import tempfile
 import urllib2
 import zipfile
 
@@ -66,25 +68,25 @@ def Download():
   if util.RunCommand(cmd):
     print '@@@STEP_FAILURE@@@'
 
-  build_dir = chrome_paths.GetBuildDir([
-      os.path.join('apks', 'ChromiumTestShell.apk')])
+  build_dir = chrome_paths.GetBuildDir(['host_forwarder'])
   print 'Unzipping prebuilts %s to %s' % (zip_path, build_dir)
   f = zipfile.ZipFile(zip_path, 'r')
   f.extractall(build_dir)
   f.close()
+  # Workaround for Python bug: http://bugs.python.org/issue15795
+  os.chmod(os.path.join(build_dir, 'chromedriver2_server'), 0700)
 
 
 def MaybeRelease(revision):
   # Version is embedded as: const char kChromeDriverVersion[] = "0.1";
-  with open(os.path.join(_THIS_DIR, 'version.cc'), 'r') as f:
+  with open(os.path.join(_THIS_DIR, 'chrome', 'version.cc'), 'r') as f:
     version_line = filter(lambda x: 'kChromeDriverVersion' in x, f.readlines())
   version = version_line[0].split('"')[1]
 
-  # This assumes the bitness of python is the same as the built ChromeDriver.
   bitness = '32'
-  if sys.maxint > 2**32:
+  if util.IsLinux():
     bitness = '64'
-  zip_name = 'experimental_chromedriver2_%s%s_%s.zip' % (
+  zip_name = 'chromedriver2_%s%s_%s.zip' % (
       util.GetPlatformName(), bitness, version)
 
   site = 'https://code.google.com/p/chromedriver/downloads/list'
@@ -110,21 +112,47 @@ def MaybeRelease(revision):
   zip_path = os.path.join(temp_dir, zip_name)
   f = zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED)
   f.write(server, server_name)
+  if util.IsLinux() or util.IsMac():
+    adb_commands = os.path.join(_THIS_DIR, 'chrome', 'adb_commands.py')
+    f.write(adb_commands, 'adb_commands.py')
   f.close()
 
   cmd = [
     sys.executable,
     os.path.join(_THIS_DIR, 'third_party', 'googlecode',
                  'googlecode_upload.py'),
-    '--summary', 'alpha version of ChromeDriver2 r%s' % revision,
+    '--summary', 'version of ChromeDriver2 r%s' % revision,
     '--project', 'chromedriver',
     '--user', 'chromedriver.bot@gmail.com',
-    '--label', 'Release-Alpha',
+    '--label', 'Release',
     zip_path
   ]
   with open(os.devnull, 'wb') as no_output:
     if subprocess.Popen(cmd, stdout=no_output, stderr=no_output).wait():
       print '@@@STEP_FAILURE@@@'
+
+
+def KillChromes():
+  chrome_map = {
+      'win': 'chrome.exe',
+      'mac': 'Chromium',
+      'linux': 'chrome',
+  }
+  if util.IsWindows():
+    cmd = ['taskkill', '/F', '/IM']
+  else:
+    cmd = ['killall', '-9']
+  cmd.append(chrome_map[util.GetPlatformName()])
+  util.RunCommand(cmd)
+
+
+def CleanTmpDir():
+  tmp_dir = tempfile.gettempdir()
+  print 'cleaning temp directory:', tmp_dir
+  for file_name in os.listdir(tmp_dir):
+    if os.path.isdir(os.path.join(tmp_dir, file_name)):
+      print 'deleting sub-directory', file_name
+      shutil.rmtree(os.path.join(tmp_dir, file_name), True)
 
 
 def main():
@@ -136,6 +164,10 @@ def main():
       '-r', '--revision', type='string', default=None,
       help='Chromium revision')
   options, _ = parser.parse_args()
+
+  if not options.android_package:
+    KillChromes()
+  CleanTmpDir()
 
   if options.android_package:
     Download()

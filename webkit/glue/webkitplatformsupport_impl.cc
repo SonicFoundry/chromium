@@ -10,7 +10,6 @@
 
 #include "base/allocator/allocator_extension.h"
 #include "base/bind.h"
-#include "base/debug/trace_event.h"
 #include "base/memory/discardable_memory.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/singleton.h"
@@ -20,8 +19,8 @@
 #include "base/platform_file.h"
 #include "base/process_util.h"
 #include "base/rand_util.h"
-#include "base/string_number_conversions.h"
 #include "base/string_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/synchronization/lock.h"
 #include "base/sys_info.h"
 #include "base/time.h"
@@ -29,16 +28,17 @@
 #include "grit/webkit_chromium_resources.h"
 #include "grit/webkit_resources.h"
 #include "grit/webkit_strings.h"
+#include "net/base/net_errors.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebCookie.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebData.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebDiscardableMemory.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebGestureCurve.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebPluginListBuilder.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebURL.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebVector.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebFrameClient.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebInputEvent.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebPluginListBuilder.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebScreenInfo.h"
 #include "ui/base/layout.h"
 #include "webkit/base/file_path_string_conversions.h"
@@ -69,6 +69,7 @@ using WebKit::WebString;
 using WebKit::WebSocketStreamHandle;
 using WebKit::WebThemeEngine;
 using WebKit::WebURL;
+using WebKit::WebURLError;
 using WebKit::WebURLLoader;
 using WebKit::WebVector;
 
@@ -121,6 +122,14 @@ class MemoryUsageCache {
 
   base::Lock lock_;
 };
+
+#if defined(OS_ANDROID)
+void NullRunWebAudioMediaCodec(
+    base::SharedMemoryHandle encoded_data_handle,
+    base::FileDescriptor pcm_output,
+    size_t data_size) {
+}
+#endif
 
 }  // anonymous namespace
 
@@ -392,6 +401,11 @@ WebString WebKitPlatformSupportImpl::userAgent(const WebURL& url) {
   return WebString::fromUTF8(webkit_glue::GetUserAgent(url));
 }
 
+WebURLError WebKitPlatformSupportImpl::cancelledError(
+    const WebURL& unreachableURL) const {
+  return WebURLLoaderImpl::CreateError(unreachableURL, net::ERR_ABORTED);
+}
+
 void WebKitPlatformSupportImpl::getPluginList(bool refresh,
                                      WebPluginListBuilder* builder) {
   std::vector<webkit::WebPluginInfo> plugins;
@@ -449,13 +463,28 @@ void WebKitPlatformSupportImpl::histogramEnumeration(
 }
 
 const unsigned char* WebKitPlatformSupportImpl::getTraceCategoryEnabledFlag(
-    const char* category_name) {
-  return TRACE_EVENT_API_GET_CATEGORY_ENABLED(category_name);
+    const char* category_group) {
+  return TRACE_EVENT_API_GET_CATEGORY_GROUP_ENABLED(category_group);
+}
+
+long* WebKitPlatformSupportImpl::getTraceSamplingState(
+    const unsigned thread_bucket) {
+  switch(thread_bucket) {
+  case 0:
+    return reinterpret_cast<long*>(&TRACE_EVENT_API_THREAD_BUCKET(0));
+  case 1:
+    return reinterpret_cast<long*>(&TRACE_EVENT_API_THREAD_BUCKET(1));
+  case 2:
+    return reinterpret_cast<long*>(&TRACE_EVENT_API_THREAD_BUCKET(2));
+  default:
+    NOTREACHED() << "Unknown thread bucket type.";
+  }
+  return NULL;
 }
 
 void WebKitPlatformSupportImpl::addTraceEvent(
     char phase,
-    const unsigned char* category_enabled,
+    const unsigned char* category_group_enabled,
     const char* name,
     unsigned long long id,
     int num_args,
@@ -463,9 +492,9 @@ void WebKitPlatformSupportImpl::addTraceEvent(
     const unsigned char* arg_types,
     const unsigned long long* arg_values,
     unsigned char flags) {
-  TRACE_EVENT_API_ADD_TRACE_EVENT(phase, category_enabled, name, id,
+  TRACE_EVENT_API_ADD_TRACE_EVENT(phase, category_group_enabled, name, id,
                                   num_args, arg_names, arg_types,
-                                  arg_values, flags);
+                                  arg_values, NULL, flags);
 }
 
 
@@ -473,6 +502,15 @@ namespace {
 
 WebData loadAudioSpatializationResource(WebKitPlatformSupportImpl* platform,
                                         const char* name) {
+#ifdef IDR_AUDIO_SPATIALIZATION_COMPOSITE
+  if (!strcmp(name, "Composite")) {
+    base::StringPiece resource =
+        platform->GetDataResource(IDR_AUDIO_SPATIALIZATION_COMPOSITE,
+                                  ui::SCALE_FACTOR_NONE);
+    return WebData(resource.data(), resource.size());
+  }
+#endif
+
 #ifdef IDR_AUDIO_SPATIALIZATION_T000_P000
   const size_t kExpectedSpatializationNameLength = 31;
   if (strlen(name) != kExpectedSpatializationNameLength) {
@@ -628,6 +666,8 @@ const DataResource kDataResources[] = {
   { "generatePassword", IDR_PASSWORD_GENERATION_ICON, ui::SCALE_FACTOR_100P },
   { "generatePasswordHover",
     IDR_PASSWORD_GENERATION_ICON_HOVER, ui::SCALE_FACTOR_100P },
+  { "syntheticTouchCursor",
+    IDR_SYNTHETIC_TOUCH_CURSOR, ui::SCALE_FACTOR_100P },
 };
 
 }  // namespace
@@ -640,7 +680,8 @@ WebData WebKitPlatformSupportImpl::loadResource(const char* name) {
     return WebData();
 
   // Check the name prefix to see if it's an audio resource.
-  if (StartsWithASCII(name, "IRC_Composite", true))
+  if (StartsWithASCII(name, "IRC_Composite", true) ||
+      StartsWithASCII(name, "Composite", true))
     return loadAudioSpatializationResource(this, name);
 
   // TODO(flackr): We should use a better than linear search here, a trie would
@@ -661,10 +702,20 @@ WebData WebKitPlatformSupportImpl::loadResource(const char* name) {
 bool WebKitPlatformSupportImpl::loadAudioResource(
     WebKit::WebAudioBus* destination_bus, const char* audio_file_data,
     size_t data_size, double sample_rate) {
+#if !defined(OS_ANDROID)
   return webkit_media::DecodeAudioFileData(destination_bus,
                                            audio_file_data,
                                            data_size,
                                            sample_rate);
+#else
+  webkit_media::WebAudioMediaCodecRunner runner = GetWebAudioMediaCodecRunner();
+  return webkit_media::DecodeAudioFileData(
+      destination_bus,
+      audio_file_data,
+      data_size,
+      sample_rate,
+      runner);
+#endif
 }
 
 WebString WebKitPlatformSupportImpl::queryLocalizedString(
@@ -695,7 +746,7 @@ WebString WebKitPlatformSupportImpl::queryLocalizedString(
   int message_id = ToMessageID(name);
   if (message_id < 0)
     return WebString();
-  std::vector<string16> values;
+  std::vector<base::string16> values;
   values.reserve(2);
   values.push_back(value1);
   values.push_back(value2);
@@ -947,5 +998,11 @@ WebKit::WebDiscardableMemory*
   return NULL;
 }
 
+#if defined(OS_ANDROID)
+webkit_media::WebAudioMediaCodecRunner
+    WebKitPlatformSupportImpl::GetWebAudioMediaCodecRunner() {
+  return base::Bind(&NullRunWebAudioMediaCodec);
+}
+#endif
 
 }  // namespace webkit_glue

@@ -16,12 +16,12 @@
 #include "googleurl/src/gurl.h"
 #include "net/base/address_list.h"
 #include "net/base/host_port_pair.h"
-#include "net/base/host_resolver.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_log.h"
 #include "net/base/net_util.h"
 #include "net/base/test_completion_callback.h"
-#include "net/base/test_root_certs.h"
+#include "net/cert/test_root_certs.h"
+#include "net/dns/host_resolver.h"
 
 namespace net {
 
@@ -92,7 +92,7 @@ base::FilePath BaseTestServer::SSLOptions::GetCertificateFile() const {
 
 std::string BaseTestServer::SSLOptions::GetOCSPArgument() const {
   if (server_certificate != CERT_AUTO)
-    return "";
+    return std::string();
 
   switch (ocsp_status) {
     case OCSP_OK:
@@ -107,7 +107,7 @@ std::string BaseTestServer::SSLOptions::GetOCSPArgument() const {
       return "unknown";
     default:
       NOTREACHED();
-      return "";
+      return std::string();
   }
 }
 

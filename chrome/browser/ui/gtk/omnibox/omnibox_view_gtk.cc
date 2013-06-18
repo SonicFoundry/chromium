@@ -20,6 +20,8 @@
 #include "chrome/browser/command_updater.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/platform_util.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/search/search.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/gtk/gtk_theme_service.h"
 #include "chrome/browser/ui/gtk/gtk_util.h"
@@ -29,16 +31,17 @@
 #include "chrome/browser/ui/omnibox/omnibox_edit_controller.h"
 #include "chrome/browser/ui/omnibox/omnibox_edit_model.h"
 #include "chrome/browser/ui/omnibox/omnibox_popup_model.h"
-#include "chrome/browser/ui/search/search.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/toolbar_model.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/common/constants.h"
 #include "googleurl/src/gurl.h"
 #include "grit/generated_resources.h"
 #include "net/base/escape.h"
 #include "third_party/undoview/undo_view.h"
+#include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/gtk_dnd_util.h"
 #include "ui/base/gtk/gtk_compat.h"
@@ -166,10 +169,12 @@ guint GetPopupMenuIndexForStockLabel(const char* label, GtkMenu* menu) {
 }
 
 // Writes the |url| and |text| to the primary clipboard.
-void DoWriteToClipboard(const GURL& url, const string16& text) {
+void DoWriteURLToClipboard(const GURL& url,
+                           const string16& text,
+                           Profile* profile) {
   BookmarkNodeData data;
   data.ReadFromTuple(url, text);
-  data.WriteToClipboard(NULL);
+  data.WriteToClipboard(profile);
 }
 
 }  // namespace
@@ -177,11 +182,11 @@ void DoWriteToClipboard(const GURL& url, const string16& text) {
 OmniboxViewGtk::OmniboxViewGtk(OmniboxEditController* controller,
                                ToolbarModel* toolbar_model,
                                Browser* browser,
+                               Profile* profile,
                                CommandUpdater* command_updater,
                                bool popup_window_mode,
                                GtkWidget* location_bar)
-    : OmniboxView(browser->profile(), controller, toolbar_model,
-                  command_updater),
+    : OmniboxView(profile, controller, toolbar_model, command_updater),
       browser_(browser),
       text_view_(NULL),
       tag_table_(NULL),
@@ -197,7 +202,7 @@ OmniboxViewGtk::OmniboxViewGtk(OmniboxEditController* controller,
       security_level_(ToolbarModel::NONE),
       mark_set_handler_id_(0),
       button_1_pressed_(false),
-      theme_service_(GtkThemeService::GetFrom(browser->profile())),
+      theme_service_(GtkThemeService::GetFrom(profile)),
       enter_was_pressed_(false),
       tab_was_pressed_(false),
       paste_clipboard_requested_(false),
@@ -428,12 +433,6 @@ void OmniboxViewGtk::SetFocus() {
 
 void OmniboxViewGtk::ApplyCaretVisibility() {
   // TODO(mathp): implement for Linux.
-  NOTIMPLEMENTED();
-}
-
-int OmniboxViewGtk::WidthOfTextAfterCursor() {
-  // Not used.
-  return -1;
 }
 
 void OmniboxViewGtk::SaveStateToTab(WebContents* tab) {
@@ -603,6 +602,17 @@ void OmniboxViewGtk::OnRevertTemporaryText() {
   StartUpdatingHighlightedText();
   SetSelectedRange(saved_temporary_selection_);
   FinishUpdatingHighlightedText();
+  // We got here because the user hit the Escape key. We explicitly don't call
+  // TextChanged(), since calling it breaks Instant-Extended, and isn't needed
+  // otherwise (in regular non-Instant or Instant-but-not-Extended modes).
+  //
+  // Why it breaks Instant-Extended: Instant handles the Escape key separately
+  // (cf: OmniboxEditModel::RevertTemporaryText). Calling TextChanged() makes
+  // the page think the user additionally typed some text, causing it to update
+  // its suggestions dropdown with new suggestions, which is wrong.
+  //
+  // Why it isn't needed: OmniboxPopupModel::ResetToDefaultMatch() has already
+  // been called by now; it would've called TextChanged() if it was warranted.
 }
 
 void OmniboxViewGtk::OnBeforePossibleChange() {
@@ -1232,7 +1242,7 @@ void OmniboxViewGtk::HandlePopulatePopup(GtkWidget* sender, GtkMenu* menu) {
   g_free(text);
 
   // Copy URL menu item.
-  if (chrome::search::IsQueryExtractionEnabled(browser_->profile())) {
+  if (chrome::IsQueryExtractionEnabled()) {
     GtkWidget* copy_url_menuitem = gtk_menu_item_new_with_mnemonic(
         ui::ConvertAcceleratorsFromWindowsStyle(
             l10n_util::GetStringUTF8(IDS_COPY_URL)).c_str());
@@ -1246,14 +1256,14 @@ void OmniboxViewGtk::HandlePopulatePopup(GtkWidget* sender, GtkMenu* menu) {
                           GetPopupMenuIndexForStockLabel(GTK_STOCK_COPY, menu));
     g_signal_connect(copy_url_menuitem, "activate",
                      G_CALLBACK(HandleCopyURLClipboardThunk), this);
-    gtk_widget_set_sensitive(
-        copy_url_menuitem,
-        toolbar_model()->WouldReplaceSearchURLWithSearchTerms() &&
-            !model()->user_input_in_progress());
+    gtk_widget_set_sensitive(copy_url_menuitem,
+        !model()->user_input_in_progress() &&
+            (toolbar_model()->GetSearchTermsType() !=
+                ToolbarModel::NO_SEARCH_TERMS));
     gtk_widget_show(copy_url_menuitem);
   }
 
- // Paste and Go menu item.
+  // Paste and Go menu item.
   GtkWidget* paste_go_menuitem = gtk_menu_item_new_with_mnemonic(
       ui::ConvertAcceleratorsFromWindowsStyle(l10n_util::GetStringUTF8(
           model()->IsPasteAndSearch(sanitized_text_for_paste_and_go_) ?
@@ -1448,20 +1458,24 @@ void OmniboxViewGtk::HandleInsertText(GtkTextBuffer* buffer,
   if (len == 1 && (text[0] == '\n' || text[0] == '\r'))
     enter_was_inserted_ = true;
 
-  if (model()->is_pasting()) {
-    filtered_text = GetClipboardText();
-  } else {
-    for (const gchar* p = text; *p && (p - text) < len;
-         p = g_utf8_next_char(p)) {
-      gunichar c = g_utf8_get_char(p);
+  for (const gchar* p = text; *p && (p - text) < len;
+       p = g_utf8_next_char(p)) {
+    gunichar c = g_utf8_get_char(p);
 
-      // 0x200B is Zero Width Space, which is inserted just before the Instant
-      // anchor for working around the GtkTextView's misalignment bug.
-      // This character might be captured and inserted into the content by undo
-      // manager, so we need to filter it out here.
-      if (c != 0x200B)
-        base::WriteUnicodeCharacter(c, &filtered_text);
-    }
+    // 0x200B is Zero Width Space, which is inserted just before the Instant
+    // anchor for working around the GtkTextView's misalignment bug.
+    // This character might be captured and inserted into the content by undo
+    // manager, so we need to filter it out here.
+    if (c != 0x200B)
+      base::WriteUnicodeCharacter(c, &filtered_text);
+  }
+
+  if (model()->is_pasting()) {
+    // If the user is pasting all-whitespace, paste a single space
+    // rather than nothing, since pasting nothing feels broken.
+    filtered_text = CollapseWhitespace(filtered_text, true);
+    filtered_text = filtered_text.empty() ? ASCIIToUTF16(" ") :
+        StripJavascriptSchemas(filtered_text);
   }
 
   if (!filtered_text.empty()) {
@@ -1519,7 +1533,7 @@ void OmniboxViewGtk::HandleViewMoveFocus(GtkWidget* widget,
 
   // Trigger Tab to search behavior only when Tab key is pressed.
   if (model()->is_keyword_hint() && !shift_was_pressed_) {
-    handled = model()->AcceptKeyword();
+    handled = model()->AcceptKeyword(ENTERED_KEYWORD_MODE_VIA_TAB);
   } else if (model()->popup_model()->IsOpen()) {
     if (shift_was_pressed_ &&
         model()->popup_model()->selected_line_state() ==
@@ -1537,9 +1551,6 @@ void OmniboxViewGtk::HandleViewMoveFocus(GtkWidget* widget,
   if (!handled && gtk_widget_get_visible(instant_view_))
     handled = model()->CommitSuggestedText(true);
 
-  if (!handled)
-    handled = model()->AcceptCurrentInstantPreview();
-
   if (handled) {
     static guint signal_id = g_signal_lookup("move-focus", GTK_TYPE_WIDGET);
     g_signal_stop_emission(widget, signal_id, 0);
@@ -1551,8 +1562,9 @@ void OmniboxViewGtk::HandleCopyClipboard(GtkWidget* sender) {
 }
 
 void OmniboxViewGtk::HandleCopyURLClipboard(GtkWidget* sender) {
-  DoWriteToClipboard(toolbar_model()->GetURL(),
-                     toolbar_model()->GetText(false));
+  DoWriteURLToClipboard(toolbar_model()->GetURL(),
+                        toolbar_model()->GetText(false),
+                        browser_->profile());
 }
 
 void OmniboxViewGtk::HandleCutClipboard(GtkWidget* sender) {
@@ -1569,35 +1581,36 @@ void OmniboxViewGtk::HandleCopyOrCutClipboard(bool copy) {
   if (!gtk_text_buffer_get_has_selection(text_buffer_))
     return;
 
-  GtkClipboard* clipboard = gtk_clipboard_get(GDK_SELECTION_PRIMARY);
-  DCHECK(clipboard);
+  // Stop propagating the signal.
+  static guint copy_signal_id =
+      g_signal_lookup("copy-clipboard", GTK_TYPE_TEXT_VIEW);
+  static guint cut_signal_id =
+      g_signal_lookup("cut-clipboard", GTK_TYPE_TEXT_VIEW);
+  g_signal_stop_emission(text_view_,
+                         copy ? copy_signal_id : cut_signal_id,
+                         0);
 
   CharRange selection = GetSelection();
   GURL url;
   string16 text(UTF8ToUTF16(GetSelectedText()));
   bool write_url;
   model()->AdjustTextForCopy(selection.selection_min(), IsSelectAll(), &text,
-                            &url, &write_url);
+                             &url, &write_url);
 
-  // On other platforms we write |text| to the clipboard irregardless of
-  // |write_url|.  We don't need to do that here because we fall through to
-  // the default signal handlers.
   if (write_url) {
-    DoWriteToClipboard(url, text);
-    SetSelectedRange(selection);
-
-    // Stop propagating the signal.
-    static guint copy_signal_id =
-        g_signal_lookup("copy-clipboard", GTK_TYPE_TEXT_VIEW);
-    static guint cut_signal_id =
-        g_signal_lookup("cut-clipboard", GTK_TYPE_TEXT_VIEW);
-    g_signal_stop_emission(text_view_,
-                           copy ? copy_signal_id : cut_signal_id,
-                           0);
-
-    if (!copy && gtk_text_view_get_editable(GTK_TEXT_VIEW(text_view_)))
-      gtk_text_buffer_delete_selection(text_buffer_, true, true);
+    DoWriteURLToClipboard(url, text, browser_->profile());
+  } else {
+    ui::ScopedClipboardWriter scoped_clipboard_writer(
+        ui::Clipboard::GetForCurrentThread(),
+        ui::Clipboard::BUFFER_STANDARD,
+        content::BrowserContext::GetMarkerForOffTheRecordContext(
+            browser_->profile()));
+    scoped_clipboard_writer.WriteText(text);
   }
+
+  SetSelectedRange(selection);
+  if (!copy && gtk_text_view_get_editable(GTK_TEXT_VIEW(text_view_)))
+    gtk_text_buffer_delete_selection(text_buffer_, true, true);
 
   OwnPrimarySelection(UTF16ToUTF8(text));
 }
@@ -1633,27 +1646,26 @@ void OmniboxViewGtk::EmphasizeURLComponents() {
   // And Go system uses.
   url_parse::Component scheme, host;
   string16 text(GetText());
-  AutocompleteInput::ParseForEmphasizeComponents(
-      text, model()->GetDesiredTLD(), &scheme, &host);
-  const bool emphasize = model()->CurrentTextIsURL() && (host.len > 0);
+  AutocompleteInput::ParseForEmphasizeComponents(text, &scheme, &host);
 
   // Set the baseline emphasis.
   GtkTextIter start, end;
   GetTextBufferBounds(&start, &end);
   gtk_text_buffer_remove_all_tags(text_buffer_, &start, &end);
-  if (emphasize) {
-    gtk_text_buffer_apply_tag(text_buffer_, faded_text_tag_, &start, &end);
+  bool grey_out_url = text.substr(scheme.begin, scheme.len) ==
+       UTF8ToUTF16(extensions::kExtensionScheme);
+  bool grey_base = model()->CurrentTextIsURL() &&
+      (host.is_nonempty() || grey_out_url);
+  gtk_text_buffer_apply_tag(
+      text_buffer_, grey_base ? faded_text_tag_ : normal_text_tag_ , &start,
+      &end);
 
+  if (grey_base && !grey_out_url) {
     // We've found a host name, give it more emphasis.
-    gtk_text_buffer_get_iter_at_line_index(text_buffer_, &start, 0,
-                                           GetUTF8Offset(text,
-                                                         host.begin));
-    gtk_text_buffer_get_iter_at_line_index(text_buffer_, &end, 0,
-                                           GetUTF8Offset(text,
-                                                         host.end()));
-
-    gtk_text_buffer_apply_tag(text_buffer_, normal_text_tag_, &start, &end);
-  } else {
+    gtk_text_buffer_get_iter_at_line_index(
+        text_buffer_, &start, 0, GetUTF8Offset(text, host.begin));
+    gtk_text_buffer_get_iter_at_line_index(
+        text_buffer_, &end, 0, GetUTF8Offset(text, host.end()));
     gtk_text_buffer_apply_tag(text_buffer_, normal_text_tag_, &start, &end);
   }
 

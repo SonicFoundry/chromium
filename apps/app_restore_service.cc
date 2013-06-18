@@ -10,12 +10,17 @@
 #include "chrome/browser/extensions/extension_host.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/extensions/platform_app_launcher.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_set.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
+
+#if defined(OS_WIN)
+#include "win8/util/win8_util.h"
+#endif
 
 using extensions::AppEventRouter;
 using extensions::Extension;
@@ -24,6 +29,20 @@ using extensions::ExtensionPrefs;
 using extensions::ExtensionSystem;
 
 namespace apps {
+
+// static
+bool AppRestoreService::ShouldRestoreApps(bool is_browser_restart) {
+  bool should_restore_apps = is_browser_restart;
+#if defined(OS_CHROMEOS)
+  // Chromeos always restarts apps, even if it was a regular shutdown.
+  should_restore_apps = true;
+#elif defined(OS_WIN)
+  // Packaged apps are not supported in Metro mode, so don't try to start them.
+  if (win8::IsSingleWindowMetroMode())
+    should_restore_apps = false;
+#endif
+  return should_restore_apps;
+}
 
 AppRestoreService::AppRestoreService(Profile* profile)
     : profile_(profile) {
@@ -103,8 +122,9 @@ void AppRestoreService::RecordAppStop(const std::string& extension_id) {
 void AppRestoreService::RestoreApp(
     const Extension* extension,
     const std::vector<SavedFileEntry>& file_entries) {
-  // TODO(koz): Make |file_entries| available to the newly restarted app.
-  AppEventRouter::DispatchOnRestartedEvent(profile_, extension);
+  extensions::RestartPlatformAppWithFileEntries(profile_,
+                                                extension,
+                                                file_entries);
 }
 
 }  // namespace apps

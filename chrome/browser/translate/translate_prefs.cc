@@ -6,8 +6,8 @@
 
 #include "base/prefs/pref_service.h"
 #include "base/string_util.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/prefs/scoped_user_pref_update.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 
 const char TranslatePrefs::kPrefTranslateLanguageBlacklist[] =
     "translate_language_blacklist";
@@ -97,12 +97,20 @@ void TranslatePrefs::ClearBlacklistedLanguages() {
   prefs_->ClearPref(kPrefTranslateLanguageBlacklist);
 }
 
-bool TranslatePrefs::HasBlacklistedSites() {
+bool TranslatePrefs::HasBlacklistedSites() const {
   return !IsListEmpty(kPrefTranslateSiteBlacklist);
 }
 
 void TranslatePrefs::ClearBlacklistedSites() {
   prefs_->ClearPref(kPrefTranslateSiteBlacklist);
+}
+
+bool TranslatePrefs::HasWhitelistedLanguagePairs() const {
+  return !IsDictionaryEmpty(kPrefTranslateWhitelists);
+}
+
+void TranslatePrefs::ClearWhitelistedLanguagePairs() {
+  prefs_->ClearPref(kPrefTranslateWhitelists);
 }
 
 int TranslatePrefs::GetTranslationDeniedCount(
@@ -166,17 +174,21 @@ bool TranslatePrefs::ShouldAutoTranslate(PrefService* user_prefs,
   return prefs.IsLanguageWhitelisted(original_language, target_language);
 }
 
-void TranslatePrefs::RegisterUserPrefs(PrefRegistrySyncable* registry) {
+void TranslatePrefs::RegisterUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterListPref(kPrefTranslateLanguageBlacklist,
-                             PrefRegistrySyncable::SYNCABLE_PREF);
+                             user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterListPref(kPrefTranslateSiteBlacklist,
-                             PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterDictionaryPref(kPrefTranslateWhitelists,
-                                   PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterDictionaryPref(kPrefTranslateDeniedCount,
-                                   PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterDictionaryPref(kPrefTranslateAcceptedCount,
-                                   PrefRegistrySyncable::SYNCABLE_PREF);
+                             user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterDictionaryPref(
+      kPrefTranslateWhitelists,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterDictionaryPref(
+      kPrefTranslateDeniedCount,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterDictionaryPref(
+      kPrefTranslateAcceptedCount,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
 }
 
 void TranslatePrefs::MigrateUserPrefs(PrefService* user_prefs) {
@@ -274,4 +286,9 @@ bool TranslatePrefs::IsLanguageWhitelisted(
 bool TranslatePrefs::IsListEmpty(const char* pref_id) const {
   const ListValue* blacklist = prefs_->GetList(pref_id);
   return (blacklist == NULL || blacklist->empty());
+}
+
+bool TranslatePrefs::IsDictionaryEmpty(const char* pref_id) const {
+  const DictionaryValue* dict = prefs_->GetDictionary(pref_id);
+  return (dict == NULL || dict->empty());
 }

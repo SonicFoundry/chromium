@@ -8,19 +8,24 @@
 #include "base/basictypes.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
-#include "ui/base/dragdrop/drag_source.h"
+#include "ui/base/dragdrop/drag_source_win.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/point.h"
+
+namespace ui {
+class OSExchangeData;
+}  // namespace ui
 
 namespace content {
 class RenderViewHost;
 class WebContents;
+class WebContentsImpl;
 
 // An IDropSource implementation for a WebContentsImpl. Handles notifications
 // sent by an active drag-drop operation as the user mouses over other drop
 // targets on their system. This object tells Windows whether or not the drag
 // should continue, and supplies the appropriate cursors.
-class WebDragSource : public ui::DragSource,
+class WebDragSource : public ui::DragSourceWin,
                       public NotificationObserver {
  public:
   // Create a new DragSource for a given HWND and WebContents.
@@ -33,9 +38,13 @@ class WebDragSource : public ui::DragSource,
                        const NotificationDetails& details);
 
   void set_effect(DWORD effect) { effect_ = effect; }
+  // Used to set the active data object for the current drag operation. The
+  // caller must ensure that |data| is not destroyed before the nested drag loop
+  // terminates.
+  void set_data(ui::OSExchangeData* data) { data_ = data; }
 
  protected:
-  // ui::DragSource
+  // ui::DragSourceWin
   virtual void OnDragSourceCancel();
   virtual void OnDragSourceDrop();
   virtual void OnDragSourceMove();
@@ -54,11 +63,13 @@ class WebDragSource : public ui::DragSource,
   // We use this as a channel to the renderer to tell it about various drag
   // drop events that it needs to know about (such as when a drag operation it
   // initiated terminates).
-  RenderViewHost* render_view_host_;
+  WebContentsImpl* web_contents_;
 
   NotificationRegistrar registrar_;
 
   DWORD effect_;
+
+  ui::OSExchangeData* data_;
 
   DISALLOW_COPY_AND_ASSIGN(WebDragSource);
 };

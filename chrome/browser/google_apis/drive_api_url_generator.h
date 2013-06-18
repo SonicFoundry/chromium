@@ -30,23 +30,31 @@ class DriveApiUrlGenerator {
   GURL GetApplistUrl() const;
 
   // Returns a URL to fetch a list of changes.
-  // override_url:
-  //   The base url for the fetch. If empty, the default url is used.
+  // include_deleted:
+  //   Set to true if the requesting change list should contain the deleted
+  //   entries. Otherwise false.
   // start_changestamp:
   //   The starting point of the requesting change list, or 0 if all changes
   //   are necessary.
+  // max_results:
+  //   The max of the number of files resource in the response.
   GURL GetChangelistUrl(
-      const GURL& override_url, int64 start_changestamp) const;
+      bool include_deleted, int64 start_changestamp, int max_results) const;
+
+  // Returns a URL to edit (especially add) a resource, such as inserting
+  // a file metadata or creating a new directory.
+  GURL GetFilesUrl() const;
 
   // Returns a URL to fetch a list of files with the given |search_string|.
-  // override_url:
-  //   The base url for the fetching. If empty, the default url is used.
   // search_string: The search query.
-  GURL GetFilelistUrl(
-      const GURL& override_url, const std::string& search_string) const;
+  // max_results: The max of the number of files resource in the response.
+  GURL GetFilelistUrl(const std::string& search_string, int max_results) const;
 
   // Returns a URL to fetch a file content.
   GURL GetFileUrl(const std::string& file_id) const;
+
+  // Returns a URL to copy a file specified by |resource_id|.
+  GURL GetFileCopyUrl(const std::string& resource_id) const;
 
   // Returns a URL to trash a resource with the given |resource_id|.
   // Note that the |resource_id| is corresponding to the "file id" in the

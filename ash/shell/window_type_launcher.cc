@@ -6,11 +6,12 @@
 
 #include "ash/root_window_controller.h"
 #include "ash/screensaver/screensaver_view.h"
+#include "ash/session_state_delegate.h"
+#include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
 #include "ash/shell/example_factory.h"
 #include "ash/shell/panel_window.h"
 #include "ash/shell/toplevel_window.h"
-#include "ash/shell_delegate.h"
 #include "ash/shell_window_ids.h"
 #include "ash/system/status_area_widget.h"
 #include "ash/system/web_notification/web_notification_tray.h"
@@ -22,6 +23,7 @@
 #include "ui/aura/window.h"
 #include "ui/compositor/layer.h"
 #include "ui/gfx/canvas.h"
+#include "ui/message_center/message_center.h"
 #include "ui/message_center/notification_types.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/menu/menu_item_view.h"
@@ -52,8 +54,7 @@ class ModalWindow : public views::WidgetDelegateView,
   explicit ModalWindow(ui::ModalType modal_type)
       : modal_type_(modal_type),
         color_(g_colors[g_color_index]),
-        ALLOW_THIS_IN_INITIALIZER_LIST(open_button_(
-            new views::LabelButton(this, ASCIIToUTF16("Moar!")))) {
+        open_button_(new views::LabelButton(this, ASCIIToUTF16("Moar!"))) {
     ++g_color_index %= arraysize(g_colors);
     open_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
     AddChildView(open_button_);
@@ -91,7 +92,7 @@ class ModalWindow : public views::WidgetDelegateView,
   virtual bool CanResize() const OVERRIDE {
     return true;
   }
-  virtual string16 GetWindowTitle() const OVERRIDE {
+  virtual base::string16 GetWindowTitle() const OVERRIDE {
     return ASCIIToUTF16("Modal Window");
   }
   virtual ui::ModalType GetModalType() const OVERRIDE {
@@ -156,7 +157,7 @@ class NonModalTransient : public views::WidgetDelegateView {
   virtual bool CanResize() const OVERRIDE {
     return true;
   }
-  virtual string16 GetWindowTitle() const OVERRIDE {
+  virtual base::string16 GetWindowTitle() const OVERRIDE {
     return ASCIIToUTF16("Non-Modal Transient");
   }
   virtual void DeleteDelegate() OVERRIDE {
@@ -198,48 +199,36 @@ void InitWindowTypeLauncher() {
 }
 
 WindowTypeLauncher::WindowTypeLauncher()
-    : ALLOW_THIS_IN_INITIALIZER_LIST(create_button_(
-          new views::LabelButton(this, ASCIIToUTF16("Create Window")))),
-      ALLOW_THIS_IN_INITIALIZER_LIST(create_persistant_button_(
-          new views::LabelButton(
-              this, ASCIIToUTF16("Create Persistant Window")))),
-      ALLOW_THIS_IN_INITIALIZER_LIST(panel_button_(
-          new views::LabelButton(this, ASCIIToUTF16("Create Panel")))),
-      ALLOW_THIS_IN_INITIALIZER_LIST(create_nonresizable_button_(
-          new views::LabelButton(
-              this, ASCIIToUTF16("Create Non-Resizable Window")))),
-      ALLOW_THIS_IN_INITIALIZER_LIST(bubble_button_(
-          new views::LabelButton(
-              this, ASCIIToUTF16("Create Pointy Bubble")))),
-      ALLOW_THIS_IN_INITIALIZER_LIST(lock_button_(
-          new views::LabelButton(this, ASCIIToUTF16("Lock Screen")))),
-      ALLOW_THIS_IN_INITIALIZER_LIST(widgets_button_(
-          new views::LabelButton(
-              this, ASCIIToUTF16("Show Example Widgets")))),
-      ALLOW_THIS_IN_INITIALIZER_LIST(system_modal_button_(
-          new views::LabelButton(
-              this, ASCIIToUTF16("Open System Modal Window")))),
-      ALLOW_THIS_IN_INITIALIZER_LIST(window_modal_button_(
-          new views::LabelButton(
-              this, ASCIIToUTF16("Open Window Modal Window")))),
-      ALLOW_THIS_IN_INITIALIZER_LIST(child_modal_button_(
-          new views::LabelButton(
-              this, ASCIIToUTF16("Open Child Modal Window")))),
-      ALLOW_THIS_IN_INITIALIZER_LIST(transient_button_(
-          new views::LabelButton(
-              this, ASCIIToUTF16("Open Non-Modal Transient Window")))),
-      ALLOW_THIS_IN_INITIALIZER_LIST(examples_button_(
-          new views::LabelButton(
-              this, ASCIIToUTF16("Open Views Examples Window")))),
-      ALLOW_THIS_IN_INITIALIZER_LIST(show_hide_window_button_(
-          new views::LabelButton(
-              this, ASCIIToUTF16("Show/Hide a Window")))),
-      ALLOW_THIS_IN_INITIALIZER_LIST(show_screensaver_(
-          new views::LabelButton(
-              this, ASCIIToUTF16("Show the Screensaver [for 5 seconds]")))),
-      ALLOW_THIS_IN_INITIALIZER_LIST(show_web_notification_(
-          new views::LabelButton(
-              this, ASCIIToUTF16("Show a web/app notification")))) {
+    : create_button_(new views::LabelButton(
+          this, ASCIIToUTF16("Create Window"))),
+      create_persistant_button_(new views::LabelButton(
+          this, ASCIIToUTF16("Create Persistant Window"))),
+      panel_button_(new views::LabelButton(
+          this, ASCIIToUTF16("Create Panel"))),
+      create_nonresizable_button_(new views::LabelButton(
+          this, ASCIIToUTF16("Create Non-Resizable Window"))),
+      bubble_button_(new views::LabelButton(
+          this, ASCIIToUTF16("Create Pointy Bubble"))),
+      lock_button_(new views::LabelButton(
+          this, ASCIIToUTF16("Lock Screen"))),
+      widgets_button_(new views::LabelButton(
+          this, ASCIIToUTF16("Show Example Widgets"))),
+      system_modal_button_(new views::LabelButton(
+          this, ASCIIToUTF16("Open System Modal Window"))),
+      window_modal_button_(new views::LabelButton(
+          this, ASCIIToUTF16("Open Window Modal Window"))),
+      child_modal_button_(new views::LabelButton(
+          this, ASCIIToUTF16("Open Child Modal Window"))),
+      transient_button_(new views::LabelButton(
+          this, ASCIIToUTF16("Open Non-Modal Transient Window"))),
+      examples_button_(new views::LabelButton(
+          this, ASCIIToUTF16("Open Views Examples Window"))),
+      show_hide_window_button_(new views::LabelButton(
+          this, ASCIIToUTF16("Show/Hide a Window"))),
+      show_screensaver_(new views::LabelButton(
+          this, ASCIIToUTF16("Show the Screensaver [for 5 seconds]"))),
+      show_web_notification_(new views::LabelButton(
+          this, ASCIIToUTF16("Show a web/app notification"))) {
   create_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
   create_persistant_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
   panel_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
@@ -306,7 +295,7 @@ bool WindowTypeLauncher::CanResize() const {
   return true;
 }
 
-string16 WindowTypeLauncher::GetWindowTitle() const {
+base::string16 WindowTypeLauncher::GetWindowTitle() const {
   return ASCIIToUTF16("Examples: Window Builder");
 }
 
@@ -334,7 +323,7 @@ void WindowTypeLauncher::ButtonPressed(views::Button* sender,
   } else if (sender == bubble_button_) {
     CreatePointyBubble(sender);
   } else if (sender == lock_button_) {
-    Shell::GetInstance()->delegate()->LockScreen();
+    Shell::GetInstance()->session_state_delegate()->LockScreen();
   } else if (sender == widgets_button_) {
     CreateWidgetsWindow();
   } else if (sender == system_modal_button_) {
@@ -358,8 +347,8 @@ void WindowTypeLauncher::ButtonPressed(views::Button* sender,
                                             base::TimeDelta::FromSeconds(5));
 
   } else if (sender == show_web_notification_) {
-    ash::Shell::GetPrimaryRootWindowController()->status_area_widget()->
-        web_notification_tray()->message_center()->AddNotification(
+    ash::Shell::GetPrimaryRootWindowController()->shelf()->status_area_widget()
+        ->web_notification_tray()->message_center()->AddNotification(
             message_center::NOTIFICATION_TYPE_SIMPLE,
             "id0",
             ASCIIToUTF16("Test Shell Web Notification"),
@@ -378,7 +367,7 @@ void WindowTypeLauncher::ButtonPressed(views::Button* sender,
 }
 
 #if !defined(OS_MACOSX)
-void WindowTypeLauncher::ExecuteCommand(int id) {
+void WindowTypeLauncher::ExecuteCommand(int id, int event_flags) {
   switch (id) {
     case COMMAND_NEW_WINDOW:
       InitWindowTypeLauncher();

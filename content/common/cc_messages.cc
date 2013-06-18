@@ -4,7 +4,7 @@
 
 #include "content/common/cc_messages.h"
 
-#include "cc/compositor_frame.h"
+#include "cc/output/compositor_frame.h"
 #include "content/public/common/common_param_traits.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebData.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebFilterOperations.h"
@@ -38,8 +38,8 @@ void ParamTraits<WebKit::WebFilterOperation>::Write(
         WriteParam(m, p.matrix()[i]);
       break;
     case WebKit::WebFilterOperation::FilterTypeZoom:
-      WriteParam(m, p.zoomRect());
       WriteParam(m, p.amount());
+      WriteParam(m, p.zoomInset());
       break;
   }
 }
@@ -51,7 +51,7 @@ bool ParamTraits<WebKit::WebFilterOperation>::Read(
   WebKit::WebPoint dropShadowOffset;
   WebKit::WebColor dropShadowColor;
   SkScalar matrix[20];
-  WebKit::WebRect zoomRect;
+  int zoom_inset;
 
   if (!ReadParam(m, iter, &type))
     return false;
@@ -97,10 +97,12 @@ bool ParamTraits<WebKit::WebFilterOperation>::Read(
       break;
     }
     case WebKit::WebFilterOperation::FilterTypeZoom:
-      if (ReadParam(m, iter, &zoomRect) &&
-          ReadParam(m, iter, &amount)) {
-        r->setZoomRect(zoomRect);
+      if (ReadParam(m, iter, &amount) &&
+          ReadParam(m, iter, &zoom_inset) &&
+          amount >= 0.f &&
+          zoom_inset >= 0) {
         r->setAmount(amount);
+        r->setZoomInset(zoom_inset);
         success = true;
       }
       break;
@@ -142,9 +144,9 @@ void ParamTraits<WebKit::WebFilterOperation>::Log(
       }
       break;
     case WebKit::WebFilterOperation::FilterTypeZoom:
-      LogParam(p.zoomRect(), l);
-      l->append(", ");
       LogParam(p.amount(), l);
+      l->append(", ");
+      LogParam(p.zoomInset(), l);
       break;
   }
   l->append(")");
@@ -318,6 +320,9 @@ void ParamTraits<cc::RenderPass>::Write(
       case cc::DrawQuad::IO_SURFACE_CONTENT:
         WriteParam(m, *cc::IOSurfaceDrawQuad::MaterialCast(quad));
         break;
+      case cc::DrawQuad::PICTURE_CONTENT:
+        NOTREACHED();
+        break;
       case cc::DrawQuad::TEXTURE_CONTENT:
         WriteParam(m, *cc::TextureDrawQuad::MaterialCast(quad));
         break;
@@ -432,6 +437,9 @@ bool ParamTraits<cc::RenderPass>::Read(
       case cc::DrawQuad::IO_SURFACE_CONTENT:
         draw_quad = ReadDrawQuad<cc::IOSurfaceDrawQuad>(m, iter);
         break;
+      case cc::DrawQuad::PICTURE_CONTENT:
+        NOTREACHED();
+        return false;
       case cc::DrawQuad::TEXTURE_CONTENT:
         draw_quad = ReadDrawQuad<cc::TextureDrawQuad>(m, iter);
         break;
@@ -511,6 +519,9 @@ void ParamTraits<cc::RenderPass>::Log(
       case cc::DrawQuad::IO_SURFACE_CONTENT:
         LogParam(*cc::IOSurfaceDrawQuad::MaterialCast(quad), l);
         break;
+      case cc::DrawQuad::PICTURE_CONTENT:
+        NOTREACHED();
+        break;
       case cc::DrawQuad::TEXTURE_CONTENT:
         LogParam(*cc::TextureDrawQuad::MaterialCast(quad), l);
         break;
@@ -541,6 +552,7 @@ namespace {
     NO_FRAME,
     DELEGATED_FRAME,
     GL_FRAME,
+    SOFTWARE_FRAME,
   };
 }
 
@@ -549,11 +561,16 @@ void ParamTraits<cc::CompositorFrame>::Write(Message* m,
   WriteParam(m, p.metadata);
   if (p.delegated_frame_data) {
     DCHECK(!p.gl_frame_data);
+    DCHECK(!p.software_frame_data);
     WriteParam(m, static_cast<int>(DELEGATED_FRAME));
     WriteParam(m, *p.delegated_frame_data);
   } else if (p.gl_frame_data) {
+    DCHECK(!p.software_frame_data);
     WriteParam(m, static_cast<int>(GL_FRAME));
     WriteParam(m, *p.gl_frame_data);
+  } else if (p.software_frame_data) {
+    WriteParam(m, static_cast<int>(SOFTWARE_FRAME));
+    WriteParam(m, *p.software_frame_data);
   } else {
     WriteParam(m, static_cast<int>(NO_FRAME));
   }
@@ -580,6 +597,11 @@ bool ParamTraits<cc::CompositorFrame>::Read(const Message* m,
       if (!ReadParam(m, iter, p->gl_frame_data.get()))
         return false;
       break;
+    case SOFTWARE_FRAME:
+      p->software_frame_data.reset(new cc::SoftwareFrameData());
+      if (!ReadParam(m, iter, p->software_frame_data.get()))
+        return false;
+      break;
     case NO_FRAME:
       break;
     default:
@@ -597,12 +619,15 @@ void ParamTraits<cc::CompositorFrame>::Log(const param_type& p,
     LogParam(*p.delegated_frame_data, l);
   else if (p.gl_frame_data)
     LogParam(*p.gl_frame_data, l);
+  else if (p.software_frame_data)
+    LogParam(*p.software_frame_data, l);
   l->append(")");
 }
 
 void ParamTraits<cc::CompositorFrameAck>::Write(Message* m,
                                                 const param_type& p) {
   WriteParam(m, p.resources);
+  WriteParam(m, p.last_dib_id);
   if (p.gl_frame_data) {
     WriteParam(m, static_cast<int>(GL_FRAME));
     WriteParam(m, *p.gl_frame_data);
@@ -615,6 +640,9 @@ bool ParamTraits<cc::CompositorFrameAck>::Read(const Message* m,
                                                PickleIterator* iter,
                                                param_type* p) {
   if (!ReadParam(m, iter, &p->resources))
+    return false;
+
+  if (!ReadParam(m, iter, &p->last_dib_id))
     return false;
 
   int compositor_frame_type;
@@ -639,6 +667,8 @@ void ParamTraits<cc::CompositorFrameAck>::Log(const param_type& p,
                                               std::string* l) {
   l->append("CompositorFrameAck(");
   LogParam(p.resources, l);
+  l->append(", ");
+  LogParam(p.last_dib_id, l);
   l->append(", ");
   if (p.gl_frame_data)
     LogParam(*p.gl_frame_data, l);

@@ -11,14 +11,18 @@
 #include "base/memory/scoped_ptr.h"
 #include "content/browser/android/content_view_core_impl.h"
 #include "content/browser/download/download_item_impl.h"
+#include "content/browser/download/download_manager_impl.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_delegate.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/download_url_parameters.h"
 #include "content/public/browser/global_request_id.h"
 #include "content/public/browser/web_contents_view.h"
+#include "content/public/common/referrer.h"
 #include "jni/DownloadController_jni.h"
 #include "net/cookies/cookie_options.h"
 #include "net/cookies/cookie_store.h"
@@ -27,17 +31,8 @@
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 
-using base::android::AttachCurrentThread;
-using base::android::CheckException;
 using base::android::ConvertUTF8ToJavaString;
-using base::android::GetClass;
-using base::android::MethodID;
 using base::android::ScopedJavaLocalRef;
-
-namespace {
-const char kDownloadControllerClassPathName[] =
-    "org/chromium/content/browser/DownloadController";
-}  // namespace
 
 namespace content {
 
@@ -74,10 +69,10 @@ DownloadControllerAndroidImpl::DownloadControllerAndroidImpl()
 
 DownloadControllerAndroidImpl::~DownloadControllerAndroidImpl() {
   if (java_object_) {
-    JNIEnv* env = AttachCurrentThread();
+    JNIEnv* env = base::android::AttachCurrentThread();
     env->DeleteWeakGlobalRef(java_object_->obj);
     delete java_object_;
-    CheckException(env);
+    base::android::CheckException(env);
   }
 }
 
@@ -88,10 +83,8 @@ void DownloadControllerAndroidImpl::Init(JNIEnv* env, jobject obj) {
 }
 
 void DownloadControllerAndroidImpl::CreateGETDownload(
-    RenderViewHost* render_view_host,
-    int request_id) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  int render_process_id = render_view_host->GetProcess()->GetID();
+    int render_process_id, int render_view_id, int request_id) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   GlobalRequestID global_id(render_process_id, request_id);
 
   // We are yielding the UI thread and render_view_host may go away by
@@ -100,14 +93,12 @@ void DownloadControllerAndroidImpl::CreateGETDownload(
   GetDownloadInfoCB cb = base::Bind(
         &DownloadControllerAndroidImpl::StartAndroidDownload,
         base::Unretained(this), render_process_id,
-        render_view_host->GetRoutingID());
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
-      base::Bind(
-          &DownloadControllerAndroidImpl::PrepareDownloadInfo,
-          base::Unretained(this), global_id,
-          base::Bind(&DownloadControllerAndroidImpl::StartDownloadOnUIThread,
-                     base::Unretained(this), cb)));
+        render_view_id);
+
+  PrepareDownloadInfo(
+      global_id,
+      base::Bind(&DownloadControllerAndroidImpl::StartDownloadOnUIThread,
+                 base::Unretained(this), cb));
 }
 
 void DownloadControllerAndroidImpl::PrepareDownloadInfo(
@@ -205,7 +196,7 @@ void DownloadControllerAndroidImpl::StartAndroidDownload(
     int render_process_id, int render_view_id,
     const DownloadInfoAndroid& info) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  JNIEnv* env = AttachCurrentThread();
+  JNIEnv* env = base::android::AttachCurrentThread();
 
   // Call newHttpGetDownload
   ScopedJavaLocalRef<jobject> view = GetContentView(render_process_id,
@@ -235,33 +226,41 @@ void DownloadControllerAndroidImpl::StartAndroidDownload(
       jcookie.obj(), jreferer.obj(), info.total_bytes);
 }
 
-void DownloadControllerAndroidImpl::OnPostDownloadStarted(
-    WebContents* web_contents,
+void DownloadControllerAndroidImpl::OnDownloadStarted(
     DownloadItem* download_item) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  JNIEnv* env = AttachCurrentThread();
+  if (!download_item->GetWebContents())
+    return;
+
+  JNIEnv* env = base::android::AttachCurrentThread();
 
   // Register for updates to the DownloadItem.
   download_item->AddObserver(this);
 
   ScopedJavaLocalRef<jobject> view =
-      GetContentViewCoreFromWebContents(web_contents);
+      GetContentViewCoreFromWebContents(download_item->GetWebContents());
   // The view went away. Can't proceed.
   if (view.is_null())
     return;
 
-  Java_DownloadController_onHttpPostDownloadStarted(
+  Java_DownloadController_onDownloadStarted(
       env, GetJavaObject()->Controller(env).obj(), view.obj());
 }
 
 void DownloadControllerAndroidImpl::OnDownloadUpdated(DownloadItem* item) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  if (item->IsDangerous() && !item->IsCancelled())
+    OnDangerousDownload(item);
 
-  if (item->GetState() != DownloadItem::COMPLETE)
+  if (!item->IsComplete())
     return;
 
+  // Multiple OnDownloadUpdated() notifications may be issued while the download
+  // is in the COMPLETE state. Only handle one.
+  item->RemoveObserver(this);
+
   // Call onHttpPostDownloadCompleted
-  JNIEnv* env = AttachCurrentThread();
+  JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jstring> jurl =
       ConvertUTF8ToJavaString(env, item->GetURL().spec());
   ScopedJavaLocalRef<jstring> jcontent_disposition =
@@ -278,13 +277,23 @@ void DownloadControllerAndroidImpl::OnDownloadUpdated(DownloadItem* item) {
     return;
   }
 
-  Java_DownloadController_onHttpPostDownloadCompleted(env,
+  Java_DownloadController_onDownloadCompleted(env,
       GetJavaObject()->Controller(env).obj(), view_core.obj(), jurl.obj(),
       jcontent_disposition.obj(), jmime_type.obj(), jpath.obj(),
       item->GetReceivedBytes(), true);
 }
 
-void DownloadControllerAndroidImpl::OnDownloadOpened(DownloadItem* item) {
+void DownloadControllerAndroidImpl::OnDangerousDownload(DownloadItem* item) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  ScopedJavaLocalRef<jstring> jfilename = ConvertUTF8ToJavaString(
+      env, item->GetTargetFilePath().BaseName().value());
+  ScopedJavaLocalRef<jobject> view_core = GetContentViewCoreFromWebContents(
+      item->GetWebContents());
+  if (!view_core.is_null()) {
+    Java_DownloadController_onDangerousDownload(
+        env, GetJavaObject()->Controller(env).obj(), view_core.obj(),
+        jfilename.obj(), item->GetId());
+  }
 }
 
 ScopedJavaLocalRef<jobject> DownloadControllerAndroidImpl::GetContentView(
@@ -307,10 +316,7 @@ ScopedJavaLocalRef<jobject> DownloadControllerAndroidImpl::GetContentView(
 ScopedJavaLocalRef<jobject>
     DownloadControllerAndroidImpl::GetContentViewCoreFromWebContents(
     WebContents* web_contents) {
-  if (!web_contents)
-    return ScopedJavaLocalRef<jobject>();
-
-  ContentViewCore* view_core = web_contents->GetView()->GetContentNativeView();
+  ContentViewCore* view_core = ContentViewCore::FromWebContents(web_contents);
   return view_core ? view_core->GetJavaObject() :
       ScopedJavaLocalRef<jobject>();
 }
@@ -321,19 +327,46 @@ DownloadControllerAndroidImpl::JavaObject*
     // Initialize Java DownloadController by calling
     // DownloadController.getInstance(), which will call Init()
     // if Java DownloadController is not instantiated already.
-    JNIEnv* env = AttachCurrentThread();
-    ScopedJavaLocalRef<jclass> clazz =
-        GetClass(env, kDownloadControllerClassPathName);
-    jmethodID get_instance = MethodID::Get<MethodID::TYPE_STATIC>(
-        env, clazz.obj(), "getInstance",
-        "()Lorg/chromium/content/browser/DownloadController;");
-    ScopedJavaLocalRef<jobject> jobj(env,
-        env->CallStaticObjectMethod(clazz.obj(), get_instance));
-    CheckException(env);
+    JNIEnv* env = base::android::AttachCurrentThread();
+    Java_DownloadController_getInstance(env);
   }
 
   DCHECK(java_object_);
   return java_object_;
+}
+
+void DownloadControllerAndroidImpl::StartContextMenuDownload(
+    const ContextMenuParams& params, WebContents* web_contents, bool is_link) {
+  const GURL& url = is_link ? params.link_url : params.src_url;
+  const GURL& referrer = params.frame_url.is_empty() ?
+      params.page_url : params.frame_url;
+  DownloadManagerImpl* dlm = static_cast<DownloadManagerImpl*>(
+      BrowserContext::GetDownloadManager(web_contents->GetBrowserContext()));
+  scoped_ptr<DownloadUrlParameters> dl_params(
+      DownloadUrlParameters::FromWebContents(web_contents, url));
+  dl_params->set_referrer(
+      Referrer(referrer, params.referrer_policy));
+  if (is_link)
+    dl_params->set_referrer_encoding(params.frame_charset);
+  else
+    dl_params->set_prefer_cache(true);
+  dl_params->set_prompt(false);
+  dlm->DownloadUrl(dl_params.Pass());
+}
+
+void DownloadControllerAndroidImpl::DangerousDownloadValidated(
+    WebContents* web_contents, int download_id, bool accept) {
+  if (!web_contents)
+    return;
+  DownloadManagerImpl* dlm = static_cast<DownloadManagerImpl*>(
+      BrowserContext::GetDownloadManager(web_contents->GetBrowserContext()));
+  DownloadItem* item = dlm->GetDownload(download_id);
+  if (!item)
+    return;
+  if (accept)
+    item->DangerousDownloadValidated();
+  else
+    item->Delete(content::DownloadItem::DELETE_DUE_TO_USER_DISCARD);
 }
 
 DownloadControllerAndroidImpl::DownloadInfoAndroid::DownloadInfoAndroid(
@@ -345,7 +378,7 @@ DownloadControllerAndroidImpl::DownloadInfoAndroid::DownloadInfoAndroid(
 
   request->extra_request_headers().GetHeader(
       net::HttpRequestHeaders::kUserAgent, &user_agent);
-  GURL referer_url(request->GetSanitizedReferrer());
+  GURL referer_url(request->referrer());
   if (referer_url.is_valid())
     referer = referer_url.spec();
   if (!request->url_chain().empty()) {

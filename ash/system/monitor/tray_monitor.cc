@@ -5,7 +5,6 @@
 #include "ash/system/monitor/tray_monitor.h"
 
 #include "ash/system/tray/tray_item_view.h"
-#include "ash/system/tray/tray_views.h"
 #include "base/process_util.h"
 #include "base/stringprintf.h"
 #include "base/utf_string_conversions.h"
@@ -63,14 +62,14 @@ void TrayMonitor::OnGotHandles(const std::list<base::ProcessHandle>& handles) {
   base::SystemMemoryInfoKB mem_info;
   base::GetSystemMemoryInfo(&mem_info);
   std::string output;
-  string16 free_bytes =
+  base::string16 free_bytes =
       ui::FormatBytes(static_cast<int64>(mem_info.free) * 1024);
-  output = StringPrintf("free: %s", UTF16ToUTF8(free_bytes).c_str());
+  output = base::StringPrintf("free: %s", UTF16ToUTF8(free_bytes).c_str());
   if (mem_info.gem_size != -1) {
-    string16 gem_size = ui::FormatBytes(mem_info.gem_size);
-    output += StringPrintf("  gmem: %s", UTF16ToUTF8(gem_size).c_str());
+    base::string16 gem_size = ui::FormatBytes(mem_info.gem_size);
+    output += base::StringPrintf("  gmem: %s", UTF16ToUTF8(gem_size).c_str());
     if (mem_info.gem_objects != -1)
-      output += StringPrintf("  gobjects: %d", mem_info.gem_objects);
+      output += base::StringPrintf("  gobjects: %d", mem_info.gem_objects);
   }
   size_t total_private_bytes = 0, total_shared_bytes = 0;
   for (std::list<base::ProcessHandle>::const_iterator i = handles.begin();
@@ -82,12 +81,12 @@ void TrayMonitor::OnGotHandles(const std::list<base::ProcessHandle>& handles) {
     total_shared_bytes += shared_bytes;
     delete pm;
   }
-  string16 private_size = ui::FormatBytes(total_private_bytes);
-  string16 shared_size = ui::FormatBytes(total_shared_bytes);
+  base::string16 private_size = ui::FormatBytes(total_private_bytes);
+  base::string16 shared_size = ui::FormatBytes(total_shared_bytes);
 
-  output += StringPrintf("\nGPU private: %s  shared: %s",
-                         UTF16ToUTF8(private_size).c_str(),
-                         UTF16ToUTF8(shared_size).c_str());
+  output += base::StringPrintf("\nGPU private: %s  shared: %s",
+                               UTF16ToUTF8(private_size).c_str(),
+                               UTF16ToUTF8(shared_size).c_str());
   label_->SetText(UTF8ToUTF16(output));
   refresh_timer_.Start(FROM_HERE,
       base::TimeDelta::FromMilliseconds(kRefreshTimeoutMs),

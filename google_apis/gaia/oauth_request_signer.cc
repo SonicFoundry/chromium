@@ -79,17 +79,17 @@ const std::string SignatureMethodName(
 std::string BuildBaseString(const GURL& request_base_url,
                             OAuthRequestSigner::HttpMethod http_method,
                             const std::string& base_parameters) {
-  return StringPrintf("%s&%s&%s",
-                      HttpMethodName(http_method).c_str(),
-                      OAuthRequestSigner::Encode(
-                          request_base_url.spec()).c_str(),
-                      OAuthRequestSigner::Encode(
-                          base_parameters).c_str());
+  return base::StringPrintf("%s&%s&%s",
+                            HttpMethodName(http_method).c_str(),
+                            OAuthRequestSigner::Encode(
+                                request_base_url.spec()).c_str(),
+                            OAuthRequestSigner::Encode(
+                                base_parameters).c_str());
 }
 
 std::string BuildBaseStringParameters(
     const OAuthRequestSigner::Parameters& parameters) {
-  std::string result = "";
+  std::string result;
   OAuthRequestSigner::Parameters::const_iterator cursor;
   OAuthRequestSigner::Parameters::const_iterator limit;
   bool first = true;
@@ -297,7 +297,7 @@ bool SignParameters(const GURL& request_base_url,
 // static
 bool OAuthRequestSigner::Decode(const std::string& text,
                                 std::string* decoded_text) {
-  std::string accumulator = "";
+  std::string accumulator;
   std::string::const_iterator cursor;
   std::string::const_iterator limit;
   for (limit = text.end(), cursor = text.begin(); cursor != limit; ++cursor) {
@@ -335,7 +335,7 @@ bool OAuthRequestSigner::Decode(const std::string& text,
 
 // static
 std::string OAuthRequestSigner::Encode(const std::string& text) {
-  std::string result = "";
+  std::string result;
   std::string::const_iterator cursor;
   std::string::const_iterator limit;
   for (limit = text.end(), cursor = text.begin(); cursor != limit; ++cursor) {
@@ -448,9 +448,10 @@ bool OAuthRequestSigner::SignAuthHeader(
       else
         signed_text += ", ";
       signed_text +=
-          StringPrintf("%s=\"%s\"",
-                       OAuthRequestSigner::Encode(param->first).c_str(),
-                       OAuthRequestSigner::Encode(param->second).c_str());
+          base::StringPrintf(
+              "%s=\"%s\"",
+              OAuthRequestSigner::Encode(param->first).c_str(),
+              OAuthRequestSigner::Encode(param->second).c_str());
     }
     *signed_text_return = signed_text;
   }

@@ -66,9 +66,9 @@ void SetRestoreBounds(aura::Window* window, const gfx::Rect& bounds) {
 
 NativeWidgetAura::NativeWidgetAura(internal::NativeWidgetDelegate* delegate)
     : delegate_(delegate),
-      ALLOW_THIS_IN_INITIALIZER_LIST(window_(new aura::Window(this))),
+      window_(new aura::Window(this)),
       ownership_(Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET),
-      ALLOW_THIS_IN_INITIALIZER_LIST(close_widget_factory_(this)),
+      close_widget_factory_(this),
       can_activate_(true),
       destroying_(false),
       cursor_(gfx::kNullCursor),
@@ -244,19 +244,6 @@ TooltipManager* NativeWidgetAura::GetTooltipManager() const {
   return tooltip_manager_.get();
 }
 
-bool NativeWidgetAura::IsScreenReaderActive() const {
-  // http://crbug.com/102570
-  // NOTIMPLEMENTED();
-  return false;
-}
-
-void NativeWidgetAura::SendNativeAccessibilityEvent(
-    View* view,
-    ui::AccessibilityTypes::Event event_type) {
-  // http://crbug.com/102570
-  // NOTIMPLEMENTED();
-}
-
 void NativeWidgetAura::SetCapture() {
   window_->SetCapture();
 }
@@ -344,21 +331,6 @@ void NativeWidgetAura::SetWindowIcons(const gfx::ImageSkia& window_icon,
   // Aura doesn't have window icons.
 }
 
-void NativeWidgetAura::SetAccessibleName(const string16& name) {
-  // http://crbug.com/102570
-  // NOTIMPLEMENTED();
-}
-
-void NativeWidgetAura::SetAccessibleRole(ui::AccessibilityTypes::Role role) {
-  // http://crbug.com/102570
-  // NOTIMPLEMENTED();
-}
-
-void NativeWidgetAura::SetAccessibleState(ui::AccessibilityTypes::State state) {
-  // http://crbug.com/102570
-  // NOTIMPLEMENTED();
-}
-
 void NativeWidgetAura::InitModalType(ui::ModalType modal_type) {
   if (modal_type != ui::MODAL_TYPE_NONE)
     window_->SetProperty(aura::client::kModalKey, modal_type);
@@ -439,7 +411,7 @@ void NativeWidgetAura::Close() {
   }
 
   if (!close_widget_factory_.HasWeakPtrs()) {
-    MessageLoop::current()->PostTask(
+    base::MessageLoop::current()->PostTask(
         FROM_HERE,
         base::Bind(&NativeWidgetAura::CloseNow,
                    close_widget_factory_.GetWeakPtr()));
@@ -489,9 +461,12 @@ bool NativeWidgetAura::IsVisible() const {
 void NativeWidgetAura::Activate() {
   // We don't necessarily have a root window yet. This can happen with
   // constrained windows.
-  if (window_->GetRootWindow())
+  if (window_->GetRootWindow()) {
     aura::client::GetActivationClient(window_->GetRootWindow())->ActivateWindow(
         window_);
+  }
+  if (window_->GetProperty(aura::client::kDrawAttentionKey))
+    window_->SetProperty(aura::client::kDrawAttentionKey, false);
 }
 
 void NativeWidgetAura::Deactivate() {
@@ -559,12 +534,6 @@ void NativeWidgetAura::SetUseDragFrame(bool use_drag_frame) {
 
 void NativeWidgetAura::FlashFrame(bool flash) {
   window_->SetProperty(aura::client::kDrawAttentionKey, flash);
-}
-
-bool NativeWidgetAura::IsAccessibleWidget() const {
-  // http://crbug.com/102570
-  // NOTIMPLEMENTED();
-  return false;
 }
 
 void NativeWidgetAura::RunShellDrag(View* view,
@@ -640,7 +609,8 @@ void NativeWidgetAura::SetVisibilityChangedAnimationsEnabled(bool value) {
 
 ui::NativeTheme* NativeWidgetAura::GetNativeTheme() const {
 #if !defined(OS_CHROMEOS)
-  return DesktopRootWindowHost::GetNativeTheme(window_);
+  if (window_)
+    return DesktopRootWindowHost::GetNativeTheme(window_);
 #endif
   return ui::NativeThemeAura::instance();
 }
@@ -933,7 +903,11 @@ BOOL CALLBACK WindowCallbackProc(HWND hwnd, LPARAM lParam) {
   if (root_window) {
     Widget* widget = Widget::GetWidgetForNativeView(root_window);
     if (widget && widget->is_secondary_widget())
-      widget->Close();
+      // To avoid the delay in shutdown caused by using Close which may wait
+      // for animations, use CloseNow. Because this is only used on secondary
+      // widgets it seems relatively safe to skip the extra processing of
+      // Close.
+      widget->CloseNow();
   }
   return TRUE;
 }

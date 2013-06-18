@@ -51,7 +51,7 @@ namespace content {
 class GpuChannelManager;
 struct GpuRenderingStats;
 class GpuWatchdog;
-class SyncPointMessageFilter;
+class GpuChannelMessageFilter;
 
 // Encapsulates an IPC channel between the GPU process and one renderer
 // process. On the renderer side there's a corresponding GpuChannelHost.
@@ -137,6 +137,9 @@ class GpuChannel : public IPC::Listener,
 
   gpu::PreemptionFlag* GetPreemptionFlag();
 
+  bool handle_messages_scheduled() const { return handle_messages_scheduled_; }
+  uint64 messages_processed() const { return messages_processed_; }
+
   // If |preemption_flag->IsSet()|, any stub on this channel
   // should stop issuing GL commands. Setting this to NULL stops deferral.
   void SetPreemptByFlag(
@@ -148,12 +151,14 @@ class GpuChannel : public IPC::Listener,
   }
 #endif
 
+  void CacheShader(const std::string& key, const std::string& shader);
+
  protected:
   virtual ~GpuChannel();
 
  private:
   friend class base::RefCountedThreadSafe<GpuChannel>;
-  friend class SyncPointMessageFilter;
+  friend class GpuChannelMessageFilter;
 
   void OnDestroy();
 
@@ -177,8 +182,7 @@ class GpuChannel : public IPC::Listener,
   // Create a java surface texture object and send it to the renderer process
   // through binder thread.
   void OnEstablishStreamTexture(
-      int32 stream_id, SurfaceTexturePeer::SurfaceTextureTarget type,
-      int32 primary_id, int32 secondary_id);
+      int32 stream_id, int32 primary_id, int32 secondary_id);
 #endif
 
   // Collect rendering stats.
@@ -242,7 +246,7 @@ class GpuChannel : public IPC::Listener,
 
   base::WeakPtrFactory<GpuChannel> weak_factory_;
 
-  scoped_refptr<SyncPointMessageFilter> filter_;
+  scoped_refptr<GpuChannelMessageFilter> filter_;
   scoped_refptr<base::MessageLoopProxy> io_message_loop_;
 
   size_t num_stubs_descheduled_;

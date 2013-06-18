@@ -5,22 +5,25 @@
 #ifndef CC_TEST_LAYER_TEST_COMMON_H_
 #define CC_TEST_LAYER_TEST_COMMON_H_
 
+#define EXPECT_SET_NEEDS_COMMIT(expect, code_to_test) do {                \
+    EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times((expect));   \
+    code_to_test;                                                         \
+    Mock::VerifyAndClearExpectations(layer_tree_host_.get());           \
+  } while (false)
+
+namespace gfx { class Rect; }
+
 namespace cc {
 class QuadList;
-}
 
-namespace gfx {
-class Rect;
-}
+class LayerTestCommon {
+ public:
+  static const char* quad_string;
 
-namespace cc {
-namespace LayerTestCommon {
+  static void VerifyQuadsExactlyCoverRect(const cc::QuadList& quads,
+                                          gfx::Rect rect);
+};
 
-extern const char* quadString;
-
-void verifyQuadsExactlyCoverRect(const cc::QuadList&, const gfx::Rect&);
-
-} // namespace LayerTestCommon
-} // namespace cc
+}  // namespace cc
 
 #endif  // CC_TEST_LAYER_TEST_COMMON_H_

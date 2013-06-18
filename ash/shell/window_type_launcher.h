@@ -48,7 +48,7 @@ class WindowTypeLauncher : public views::WidgetDelegateView,
   // Overridden from views::WidgetDelegate:
   virtual views::View* GetContentsView() OVERRIDE;
   virtual bool CanResize() const OVERRIDE;
-  virtual string16 GetWindowTitle() const OVERRIDE;
+  virtual base::string16 GetWindowTitle() const OVERRIDE;
   virtual bool CanMaximize() const OVERRIDE;
 
   // Overridden from views::ButtonListener:
@@ -57,7 +57,7 @@ class WindowTypeLauncher : public views::WidgetDelegateView,
 
 #if !defined(OS_MACOSX)
   // Overridden from views::MenuDelegate:
-  virtual void ExecuteCommand(int id) OVERRIDE;
+  virtual void ExecuteCommand(int id, int event_flags) OVERRIDE;
 
   // Override from views::ContextMenuController:
   virtual void ShowContextMenuForView(views::View* source,

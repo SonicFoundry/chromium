@@ -9,11 +9,14 @@
 
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/observer_list.h"
 #include "ui/base/ime/input_method.h"
+#include "ui/base/ime/input_method_observer.h"
 #include "ui/base/ui_export.h"
 
 namespace ui {
 
+class InputMethodObserver;
 class KeyEvent;
 class TextInputClient;
 
@@ -30,9 +33,8 @@ class UI_EXPORT FakeInputMethod : NON_EXPORTED_BASE(public InputMethod) {
   virtual void OnBlur() OVERRIDE;
   virtual void SetFocusedTextInputClient(TextInputClient* client) OVERRIDE;
   virtual TextInputClient* GetTextInputClient() const OVERRIDE;
-  virtual void DispatchKeyEvent(const base::NativeEvent& native_event) OVERRIDE;
-  virtual void DispatchFabricatedKeyEvent(const ui::KeyEvent& event) OVERRIDE {
-  }
+  virtual bool DispatchKeyEvent(const base::NativeEvent& native_event) OVERRIDE;
+  virtual bool DispatchFabricatedKeyEvent(const ui::KeyEvent& event) OVERRIDE;
   virtual void OnTextInputTypeChanged(const TextInputClient* client) OVERRIDE;
   virtual void OnCaretBoundsChanged(const TextInputClient* client) OVERRIDE;
   virtual void CancelComposition(const TextInputClient* client) OVERRIDE;
@@ -41,10 +43,13 @@ class UI_EXPORT FakeInputMethod : NON_EXPORTED_BASE(public InputMethod) {
   virtual bool IsActive() OVERRIDE;
   virtual ui::TextInputType GetTextInputType() const OVERRIDE;
   virtual bool CanComposeInline() const OVERRIDE;
+  virtual void AddObserver(InputMethodObserver* observer) OVERRIDE;
+  virtual void RemoveObserver(InputMethodObserver* observer) OVERRIDE;
 
  private:
   internal::InputMethodDelegate* delegate_;
   TextInputClient* text_input_client_;
+  ObserverList<InputMethodObserver> observers_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeInputMethod);
 };

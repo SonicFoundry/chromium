@@ -8,6 +8,7 @@
 #include "base/chromeos/chromeos_version.h"
 #include "base/stl_util.h"
 #include "base/threading/platform_thread.h"
+#include "chrome/browser/chromeos/dbus/display_power_service_provider.h"
 #include "chrome/browser/chromeos/dbus/liveness_service_provider.h"
 #include "chrome/browser/chromeos/dbus/printer_service_provider.h"
 #include "chrome/browser/chromeos/dbus/proxy_resolution_service_provider.h"
@@ -78,7 +79,7 @@ class CrosDBusServiceImpl : public CrosDBusService {
   // Called when an ownership request is completed.
   void OnOwnership(const std::string& service_name,
                    bool success) {
-    LOG_IF(ERROR, !success) << "Failed to own: " << service_name;
+    LOG_IF(FATAL, !success) << "Failed to own: " << service_name;
   }
 
   bool service_started_;
@@ -111,6 +112,7 @@ void CrosDBusService::Initialize() {
   if (base::chromeos::IsRunningOnChromeOS() && bus) {
     CrosDBusServiceImpl* service = new CrosDBusServiceImpl(bus);
     service->RegisterServiceProvider(ProxyResolutionServiceProvider::Create());
+    service->RegisterServiceProvider(new DisplayPowerServiceProvider);
     service->RegisterServiceProvider(new LivenessServiceProvider);
     service->RegisterServiceProvider(new PrinterServiceProvider);
     g_cros_dbus_service = service;

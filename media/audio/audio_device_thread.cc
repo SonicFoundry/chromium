@@ -37,7 +37,7 @@ class AudioDeviceThread::Thread
   // a task to join (close) the thread handle later instead of waiting for
   // the thread.  If loop_for_join is NULL, then the function waits
   // synchronously for the thread to terminate.
-  void Stop(MessageLoop* loop_for_join);
+  void Stop(base::MessageLoop* loop_for_join);
 
  private:
   friend class base::RefCountedThreadSafe<AudioDeviceThread::Thread>;
@@ -77,7 +77,7 @@ void AudioDeviceThread::Start(AudioDeviceThread::Callback* callback,
   thread_->Start();
 }
 
-void AudioDeviceThread::Stop(MessageLoop* loop_for_join) {
+void AudioDeviceThread::Stop(base::MessageLoop* loop_for_join) {
   base::AutoLock auto_lock(thread_lock_);
   if (thread_) {
     thread_->Stop(loop_for_join);
@@ -115,7 +115,7 @@ void AudioDeviceThread::Thread::Start() {
   CHECK(thread_ != base::kNullThreadHandle);
 }
 
-void AudioDeviceThread::Thread::Stop(MessageLoop* loop_for_join) {
+void AudioDeviceThread::Thread::Stop(base::MessageLoop* loop_for_join) {
   socket_.Shutdown();
 
   base::PlatformThreadHandle thread = base::kNullThreadHandle;
@@ -177,16 +177,22 @@ void AudioDeviceThread::Thread::Run() {
 
 AudioDeviceThread::Callback::Callback(
     const AudioParameters& audio_parameters,
-    base::SharedMemoryHandle memory, int memory_length)
+    base::SharedMemoryHandle memory,
+    int memory_length,
+    int total_segments)
     : audio_parameters_(audio_parameters),
       samples_per_ms_(audio_parameters.sample_rate() / 1000),
       bytes_per_ms_(audio_parameters.channels() *
                     (audio_parameters_.bits_per_sample() / 8) *
                     samples_per_ms_),
       shared_memory_(memory, false),
-      memory_length_(memory_length) {
+      memory_length_(memory_length),
+      total_segments_(total_segments) {
   CHECK_NE(bytes_per_ms_, 0);  // Catch division by zero early.
   CHECK_NE(samples_per_ms_, 0);
+  CHECK_GT(total_segments_, 0);
+  CHECK_EQ(memory_length_ % total_segments_, 0);
+  segment_length_ = memory_length_ / total_segments_;
 }
 
 AudioDeviceThread::Callback::~Callback() {}

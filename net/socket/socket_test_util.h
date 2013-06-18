@@ -21,7 +21,6 @@
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_log.h"
-#include "net/base/ssl_config_service.h"
 #include "net/base/test_completion_callback.h"
 #include "net/http/http_auth_controller.h"
 #include "net/http/http_proxy_client_socket_pool.h"
@@ -31,6 +30,7 @@
 #include "net/socket/ssl_client_socket.h"
 #include "net/socket/ssl_client_socket_pool.h"
 #include "net/socket/transport_client_socket_pool.h"
+#include "net/ssl/ssl_config_service.h"
 #include "net/udp/datagram_client_socket.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -529,6 +529,8 @@ class SocketDataProviderArray {
     data_providers_.push_back(data_provider);
   }
 
+  size_t next_index() { return next_index_; }
+
   void ResetNextIndex() {
     next_index_ = 0;
   }
@@ -665,8 +667,6 @@ class MockTCPClientSocket : public MockClientSocket, public AsyncSocket {
   virtual int GetPeerAddress(IPEndPoint* address) const OVERRIDE;
   virtual bool WasEverUsed() const OVERRIDE;
   virtual bool UsingTCPFastOpen() const OVERRIDE;
-  virtual int64 NumBytesRead() const OVERRIDE;
-  virtual base::TimeDelta GetConnectTimeMicros() const OVERRIDE;
   virtual bool WasNpnNegotiated() const OVERRIDE;
   virtual bool GetSSLInfo(SSLInfo* ssl_info) OVERRIDE;
 
@@ -680,7 +680,6 @@ class MockTCPClientSocket : public MockClientSocket, public AsyncSocket {
 
   SocketDataProvider* data_;
   int read_offset_;
-  int num_bytes_read_;
   MockRead read_data_;
   bool need_read_data_;
 
@@ -725,8 +724,6 @@ class DeterministicMockTCPClientSocket
   virtual bool IsConnectedAndIdle() const OVERRIDE;
   virtual bool WasEverUsed() const OVERRIDE;
   virtual bool UsingTCPFastOpen() const OVERRIDE;
-  virtual int64 NumBytesRead() const OVERRIDE;
-  virtual base::TimeDelta GetConnectTimeMicros() const OVERRIDE;
   virtual bool WasNpnNegotiated() const OVERRIDE;
   virtual bool GetSSLInfo(SSLInfo* ssl_info) OVERRIDE;
 
@@ -746,6 +743,7 @@ class DeterministicMockTCPClientSocket
   CompletionCallback read_callback_;
   DeterministicSocketData* data_;
   bool was_used_to_convey_data_;
+  bool peer_closed_connection_;
 };
 
 class MockSSLClientSocket : public MockClientSocket, public AsyncSocket {
@@ -769,9 +767,7 @@ class MockSSLClientSocket : public MockClientSocket, public AsyncSocket {
   virtual bool IsConnected() const OVERRIDE;
   virtual bool WasEverUsed() const OVERRIDE;
   virtual bool UsingTCPFastOpen() const OVERRIDE;
-  virtual int64 NumBytesRead() const OVERRIDE;
   virtual int GetPeerAddress(IPEndPoint* address) const OVERRIDE;
-  virtual base::TimeDelta GetConnectTimeMicros() const OVERRIDE;
   virtual bool WasNpnNegotiated() const OVERRIDE;
   virtual bool GetSSLInfo(SSLInfo* ssl_info) OVERRIDE;
 

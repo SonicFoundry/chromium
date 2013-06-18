@@ -35,7 +35,7 @@ class PropertyTest : public testing::Test {
     Properties(dbus::ObjectProxy* object_proxy,
                PropertyChangedCallback property_changed_callback)
         : dbus::PropertySet(object_proxy,
-                            "org.chromium.TestService",
+                            "org.chromium.TestInterface",
                             property_changed_callback) {
       RegisterProperty("Name", &name);
       RegisterProperty("Version", &version);
@@ -51,7 +51,7 @@ class PropertyTest : public testing::Test {
     // Start the D-Bus thread.
     dbus_thread_.reset(new base::Thread("D-Bus Thread"));
     base::Thread::Options thread_options;
-    thread_options.message_loop_type = MessageLoop::TYPE_IO;
+    thread_options.message_loop_type = base::MessageLoop::TYPE_IO;
     ASSERT_TRUE(dbus_thread_->StartWithOptions(thread_options));
 
     // Start the test service, using the D-Bus thread.
@@ -136,7 +136,7 @@ class PropertyTest : public testing::Test {
     }
   }
 
-  MessageLoop message_loop_;
+  base::MessageLoop message_loop_;
   scoped_ptr<base::Thread> dbus_thread_;
   scoped_refptr<dbus::Bus> bus_;
   dbus::ObjectProxy* object_proxy_;

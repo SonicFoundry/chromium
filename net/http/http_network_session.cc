@@ -19,6 +19,7 @@
 #include "net/proxy/proxy_service.h"
 #include "net/quic/crypto/quic_random.h"
 #include "net/quic/quic_clock.h"
+#include "net/quic/quic_crypto_client_stream_factory.h"
 #include "net/quic/quic_stream_factory.h"
 #include "net/socket/client_socket_factory.h"
 #include "net/socket/client_socket_pool_manager_impl.h"
@@ -84,7 +85,8 @@ HttpNetworkSession::Params::Params()
       origin_port_to_force_quic_on(0),
       quic_clock(NULL),
       quic_random(NULL),
-      enable_user_alternate_protocol_ports(false) {
+      enable_user_alternate_protocol_ports(false),
+      quic_crypto_client_stream_factory(NULL) {
 }
 
 // TODO(mbelshe): Move the socket factories into HttpStreamFactory.
@@ -105,6 +107,7 @@ HttpNetworkSession::HttpNetworkSession(const Params& params)
                            params.client_socket_factory ?
                                params.client_socket_factory :
                                net::ClientSocketFactory::GetDefaultFactory(),
+                           params.quic_crypto_client_stream_factory,
                            params.quic_random ? params.quic_random :
                                QuicRandom::GetInstance(),
                            params.quic_clock ? params. quic_clock :
@@ -124,8 +127,7 @@ HttpNetworkSession::HttpNetworkSession(const Params& params)
                          params.spdy_max_concurrent_streams_limit,
                          params.time_func,
                          params.trusted_spdy_proxy),
-      ALLOW_THIS_IN_INITIALIZER_LIST(http_stream_factory_(
-          new HttpStreamFactoryImpl(this))),
+      http_stream_factory_(new HttpStreamFactoryImpl(this)),
       params_(params) {
   DCHECK(proxy_service_);
   DCHECK(ssl_config_service_);

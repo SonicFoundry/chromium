@@ -18,16 +18,19 @@
 #include "base/version.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/extensions/image_loader.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/extensions/api/i18n/default_locale_handler.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_file_util.h"
-#include "chrome/common/extensions/extension_resource.h"
 #include "chrome/common/extensions/extension_set.h"
+#include "chrome/common/extensions/manifest_handlers/content_scripts_handler.h"
 #include "chrome/common/extensions/message_bundle.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_process_host.h"
+#include "extensions/common/extension_resource.h"
+#include "ui/base/resource/resource_bundle.h"
 
 using content::BrowserThread;
 
@@ -117,12 +120,12 @@ bool UserScriptMaster::ScriptReloader::ParseMetadataHeader(
       } else if (GetDeclarationValue(line, kDescriptionDeclaration, &value)) {
         script->set_description(value);
       } else if (GetDeclarationValue(line, kMatchDeclaration, &value)) {
-        URLPattern pattern(UserScript::kValidUserScriptSchemes);
+        URLPattern pattern(UserScript::ValidUserScriptSchemes());
         if (URLPattern::PARSE_SUCCESS != pattern.Parse(value))
           return false;
         script->add_url_pattern(pattern);
       } else if (GetDeclarationValue(line, kExcludeMatchDeclaration, &value)) {
-        URLPattern exclude(UserScript::kValidUserScriptSchemes);
+        URLPattern exclude(UserScript::ValidUserScriptSchemes());
         if (URLPattern::PARSE_SUCCESS != exclude.Parse(value))
           return false;
         script->add_exclude_url_pattern(exclude);
@@ -187,14 +190,23 @@ static bool LoadScriptContent(UserScript::File* script_file,
       script_file->extension_root(), script_file->relative_path(),
       ExtensionResource::SYMLINKS_MUST_RESOLVE_WITHIN_ROOT);
   if (path.empty()) {
-    LOG(WARNING) << "Failed to get file path to "
-                 << script_file->relative_path().value() << " from "
-                 << script_file->extension_root().value();
-    return false;
-  }
-  if (!file_util::ReadFileToString(path, &content)) {
-    LOG(WARNING) << "Failed to load user script file: " << path.value();
-    return false;
+    int resource_id;
+    if (extensions::ImageLoader::IsComponentExtensionResource(
+            script_file->extension_root(), script_file->relative_path(),
+            &resource_id)) {
+      const ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+      content = rb.GetRawDataResource(resource_id).as_string();
+    } else {
+      LOG(WARNING) << "Failed to get file path to "
+                   << script_file->relative_path().value() << " from "
+                   << script_file->extension_root().value();
+      return false;
+    }
+  } else {
+    if (!file_util::ReadFileToString(path, &content)) {
+      LOG(WARNING) << "Failed to load user script file: " << path.value();
+      return false;
+    }
   }
 
   // Localize the content.
@@ -363,7 +375,8 @@ void UserScriptMaster::Observe(int type,
               extension->path(), LocaleInfo::GetDefaultLocale(extension));
       bool incognito_enabled = extensions::ExtensionSystem::Get(profile_)->
           extension_service()->IsIncognitoEnabled(extension->id());
-      const UserScriptList& scripts = extension->content_scripts();
+      const UserScriptList& scripts =
+          ContentScriptsInfo::GetContentScripts(extension);
       for (UserScriptList::const_iterator iter = scripts.begin();
            iter != scripts.end(); ++iter) {
         user_scripts_.push_back(*iter);

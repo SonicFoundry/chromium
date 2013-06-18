@@ -35,6 +35,8 @@ Env::~Env() {
       &device_list_updater_aurax11_);
 #endif
 
+  FOR_EACH_OBSERVER(EnvObserver, observers_, OnWillDestroyEnv());
+
   ui::Compositor::Terminate();
 }
 
@@ -80,7 +82,7 @@ void Env::RootWindowActivated(RootWindow* root_window) {
 // Env, private:
 
 void Env::Init() {
-#if !defined(USE_X11)
+#if !defined(USE_X11) && !defined(USE_MESSAGEPUMP_LINUX)
   dispatcher_.reset(CreateDispatcher());
 #endif
 #if defined(USE_X11)
@@ -89,13 +91,17 @@ void Env::Init() {
   base::MessagePumpAuraX11::Current()->AddObserver(
       &device_list_updater_aurax11_);
 #endif
-  ui::Compositor::Initialize(
-      CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kUIEnableThreadedCompositing));
+  ui::Compositor::Initialize();
 }
 
 void Env::NotifyWindowInitialized(Window* window) {
   FOR_EACH_OBSERVER(EnvObserver, observers_, OnWindowInitialized(window));
+}
+
+void Env::NotifyRootWindowInitialized(RootWindow* root_window) {
+  FOR_EACH_OBSERVER(EnvObserver,
+                    observers_,
+                    OnRootWindowInitialized(root_window));
 }
 
 ////////////////////////////////////////////////////////////////////////////////

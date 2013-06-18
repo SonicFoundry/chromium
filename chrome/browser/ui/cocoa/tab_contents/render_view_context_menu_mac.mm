@@ -8,7 +8,7 @@
 #import "base/mac/scoped_sending_event.h"
 #include "base/memory/scoped_nsobject.h"
 #include "base/message_loop.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/menu_controller.h"
@@ -56,8 +56,8 @@ RenderViewContextMenuMac::RenderViewContextMenuMac(
     const content::ContextMenuParams& params,
     NSView* parent_view)
     : RenderViewContextMenu(web_contents, params),
-      ALLOW_THIS_IN_INITIALIZER_LIST(speech_submenu_model_(this)),
-      ALLOW_THIS_IN_INITIALIZER_LIST(bidi_submenu_model_(this)),
+      speech_submenu_model_(this),
+      bidi_submenu_model_(this),
       parent_view_(parent_view) {
 }
 
@@ -108,7 +108,7 @@ void RenderViewContextMenuMac::PlatformCancel() {
   [menu_controller_ cancel];
 }
 
-void RenderViewContextMenuMac::ExecuteCommand(int id) {
+void RenderViewContextMenuMac::ExecuteCommand(int command_id, int event_flags) {
   // Auxiliary windows that do not have address bars (Panels for example)
   // may not have Instant support.
   NSWindow* parent_window = [parent_view_ window];
@@ -116,10 +116,6 @@ void RenderViewContextMenuMac::ExecuteCommand(int id) {
       [BrowserWindowController browserWindowControllerForWindow:parent_window];
   [controller commitInstant];  // It's ok if controller is nil.
 
-  ExecuteCommand(id, 0);
-}
-
-void RenderViewContextMenuMac::ExecuteCommand(int command_id, int event_flags) {
   switch (command_id) {
     case IDC_CONTENT_CONTEXT_LOOK_UP_IN_DICTIONARY:
       LookUpInDictionary();

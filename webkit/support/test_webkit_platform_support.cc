@@ -10,17 +10,18 @@
 #include "base/metrics/stats_counters.h"
 #include "base/path_service.h"
 #include "base/utf_string_conversions.h"
-#include "cc/context_provider.h"
-#include "cc/thread_impl.h"
+#include "cc/base/thread_impl.h"
+#include "cc/output/context_provider.h"
 #include "media/base/media.h"
 #include "net/cookies/cookie_monster.h"
 #include "net/http/http_cache.h"
-#include "net/test/test_server.h"
+#include "net/test/spawned_test_server.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebAudioDevice.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebData.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebFileSystem.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebGamepads.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebStorageArea.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebStorageNamespace.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebURL.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebDatabase.h"
@@ -29,7 +30,6 @@
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebScriptController.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebSecurityPolicy.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebStorageEventDispatcher.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebStorageNamespace.h"
 #include "v8/include/v8.h"
 #include "webkit/appcache/web_application_cache_host_impl.h"
 #include "webkit/compositor_bindings/web_compositor_support_impl.h"
@@ -41,7 +41,6 @@
 #include "webkit/glue/webkitplatformsupport_impl.h"
 #include "webkit/gpu/test_context_provider_factory.h"
 #include "webkit/gpu/webgraphicscontext3d_in_process_command_buffer_impl.h"
-#include "webkit/gpu/webgraphicscontext3d_in_process_impl.h"
 #include "webkit/plugins/npapi/plugin_list.h"
 #include "webkit/support/gc_extension.h"
 #include "webkit/support/simple_database_system.h"
@@ -66,8 +65,8 @@
 #include "base/mac/mac_util.h"
 #endif
 
-using WebKit::WebLayerTreeViewImplForTesting;
 using WebKit::WebScriptController;
+using webkit::WebLayerTreeViewImplForTesting;
 
 TestWebKitPlatformSupport::TestWebKitPlatformSupport(bool unit_test_mode,
     WebKit::Platform* shadow_platform_delegate)
@@ -87,10 +86,8 @@ TestWebKitPlatformSupport::TestWebKitPlatformSupport(bool unit_test_mode,
   WebKit::WebSecurityPolicy::registerURLSchemeAsEmptyDocument(
       WebKit::WebString::fromUTF8("test-shell-resource"));
   WebScriptController::enableV8SingleThreadMode();
-  WebKit::WebRuntimeFeatures::enableSockets(true);
   WebKit::WebRuntimeFeatures::enableApplicationCache(true);
   WebKit::WebRuntimeFeatures::enableDatabase(true);
-  WebKit::WebRuntimeFeatures::enableDataTransferItems(true);
   WebKit::WebRuntimeFeatures::enableNotifications(true);
   WebKit::WebRuntimeFeatures::enableTouch(true);
   WebKit::WebRuntimeFeatures::enableGamepad(true);
@@ -373,21 +370,9 @@ WebKit::WebThemeEngine* TestWebKitPlatformSupport::themeEngine() {
 WebKit::WebGraphicsContext3D*
 TestWebKitPlatformSupport::createOffscreenGraphicsContext3D(
     const WebKit::WebGraphicsContext3D::Attributes& attributes) {
-  switch (webkit_support::GetGraphicsContext3DImplementation()) {
-    case webkit_support::IN_PROCESS:
-      return webkit::gpu::WebGraphicsContext3DInProcessImpl::CreateForWebView(
-          attributes, false);
-    case webkit_support::IN_PROCESS_COMMAND_BUFFER: {
-      scoped_ptr<webkit::gpu::WebGraphicsContext3DInProcessCommandBufferImpl>
-          context(new
-              webkit::gpu::WebGraphicsContext3DInProcessCommandBufferImpl());
-      if (!context->Initialize(attributes, NULL))
-        return NULL;
-      return context.release();
-    }
-  }
-  NOTREACHED();
-  return NULL;
+  using webkit::gpu::WebGraphicsContext3DInProcessCommandBufferImpl;
+  return WebGraphicsContext3DInProcessCommandBufferImpl::CreateOffscreenContext(
+      attributes);
 }
 
 WebKit::WebGraphicsContext3D*
@@ -395,9 +380,7 @@ TestWebKitPlatformSupport::sharedOffscreenGraphicsContext3D() {
   main_thread_contexts_ =
       webkit::gpu::TestContextProviderFactory::GetInstance()->
           OffscreenContextProviderForMainThread();
-  if (!main_thread_contexts_->InitializeOnMainThread())
-    return NULL;
-  if (!main_thread_contexts_->BindToCurrentThread())
+  if (!main_thread_contexts_)
     return NULL;
   return main_thread_contexts_->Context3d();
 }
@@ -463,21 +446,6 @@ void TestWebKitPlatformSupport::GetPlugins(
   if (refresh)
     webkit::npapi::PluginList::Singleton()->RefreshPlugins();
   webkit::npapi::PluginList::Singleton()->GetPlugins(plugins);
-  // Don't load the forked npapi_layout_test_plugin in DRT, we only want to
-  // use the upstream version TestNetscapePlugIn.
-  const base::FilePath::StringType kPluginBlackList[] = {
-    FILE_PATH_LITERAL("npapi_layout_test_plugin.dll"),
-    FILE_PATH_LITERAL("WebKitTestNetscapePlugIn.plugin"),
-    FILE_PATH_LITERAL("libnpapi_layout_test_plugin.so"),
-  };
-  for (int i = plugins->size() - 1; i >= 0; --i) {
-    webkit::WebPluginInfo plugin_info = plugins->at(i);
-    for (size_t j = 0; j < arraysize(kPluginBlackList); ++j) {
-      if (plugin_info.path.BaseName() == base::FilePath(kPluginBlackList[j])) {
-        plugins->erase(plugins->begin() + i);
-      }
-    }
-  }
 }
 
 webkit_glue::ResourceLoaderBridge*
@@ -511,19 +479,6 @@ TestWebKitPlatformSupport::createRTCPeerConnectionHandler(
 
   return webkit_glue::WebKitPlatformSupportImpl::createRTCPeerConnectionHandler(
       client);
-}
-
-bool TestWebKitPlatformSupport::canHyphenate(const WebKit::WebString& locale) {
-  return hyphenator()->canHyphenate(locale);
-}
-
-size_t TestWebKitPlatformSupport::computeLastHyphenLocation(
-    const char16* characters,
-    size_t length,
-    size_t before_index,
-    const WebKit::WebString& locale) {
-  return hyphenator()->computeLastHyphenLocation(
-      characters, length, before_index, locale);
 }
 
 WebKit::WebGestureCurve* TestWebKitPlatformSupport::createFlingAnimationCurve(

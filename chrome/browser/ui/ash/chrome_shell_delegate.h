@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_UI_ASH_CHROME_SHELL_DELEGATE_H_
 #define CHROME_BROWSER_UI_ASH_CHROME_SHELL_DELEGATE_H_
 
+#include <string>
+
 #include "ash/launcher/launcher_types.h"
 #include "ash/shell_delegate.h"
 #include "base/basictypes.h"
@@ -19,6 +21,14 @@ namespace ash {
 class WindowPositioner;
 }
 
+namespace content {
+class WebContents;
+}
+
+namespace keyboard {
+class KeyboardControllerProxy;
+}
+
 class ChromeLauncherController;
 
 class ChromeShellDelegate : public ash::ShellDelegate,
@@ -29,29 +39,31 @@ class ChromeShellDelegate : public ash::ShellDelegate,
 
   static ChromeShellDelegate* instance() { return instance_; }
 
+  // Prefer the version in ImmersiveModeController.
+  static bool UseImmersiveFullscreen();
+
   ash::WindowPositioner* window_positioner() {
     return window_positioner_.get();
   }
 
   // ash::ShellDelegate overrides;
-  virtual bool IsUserLoggedIn() const OVERRIDE;
-  virtual bool IsSessionStarted() const OVERRIDE;
   virtual bool IsFirstRunAfterBoot() const OVERRIDE;
-  virtual bool CanLockScreen() const OVERRIDE;
-  virtual void LockScreen() OVERRIDE;
-  virtual void UnlockScreen() OVERRIDE;
-  virtual bool IsScreenLocked() const OVERRIDE;
+  virtual bool IsMultiProfilesEnabled() const OVERRIDE;
+  virtual bool IsRunningInForcedAppMode() const OVERRIDE;
+  virtual void PreInit() OVERRIDE;
   virtual void Shutdown() OVERRIDE;
   virtual void Exit() OVERRIDE;
   virtual void NewTab() OVERRIDE;
   virtual void NewWindow(bool is_incognito) OVERRIDE;
+  virtual void ToggleFullscreen() OVERRIDE;
   virtual void ToggleMaximized() OVERRIDE;
   virtual void OpenFileManager(bool as_dialog) OVERRIDE;
   virtual void OpenCrosh() OVERRIDE;
   virtual void OpenMobileSetup(const std::string& service_path) OVERRIDE;
   virtual void RestoreTab() OVERRIDE;
-  virtual bool RotatePaneFocus(ash::Shell::Direction direction) OVERRIDE;
   virtual void ShowKeyboardOverlay() OVERRIDE;
+  virtual keyboard::KeyboardControllerProxy*
+      CreateKeyboardControllerProxy() OVERRIDE;
   virtual void ShowTaskManager() OVERRIDE;
   virtual content::BrowserContext* GetCurrentBrowserContext() OVERRIDE;
   virtual void ToggleHighContrast() OVERRIDE;
@@ -64,12 +76,14 @@ class ChromeShellDelegate : public ash::ShellDelegate,
   virtual bool IsMagnifierEnabled() const OVERRIDE;
   virtual ash::MagnifierType GetMagnifierType() const OVERRIDE;
   virtual bool ShouldAlwaysShowAccessibilityMenu() const OVERRIDE;
+  virtual void SilenceSpokenFeedback() const OVERRIDE;
   virtual app_list::AppListViewDelegate* CreateAppListViewDelegate() OVERRIDE;
   virtual ash::LauncherDelegate* CreateLauncherDelegate(
       ash::LauncherModel* model) OVERRIDE;
   virtual ash::SystemTrayDelegate* CreateSystemTrayDelegate() OVERRIDE;
   virtual ash::UserWallpaperDelegate* CreateUserWallpaperDelegate() OVERRIDE;
   virtual ash::CapsLockDelegate* CreateCapsLockDelegate() OVERRIDE;
+  virtual ash::SessionStateDelegate* CreateSessionStateDelegate() OVERRIDE;
   virtual aura::client::UserActionClient* CreateUserActionClient() OVERRIDE;
   virtual void OpenFeedbackPage() OVERRIDE;
   virtual void RecordUserMetricsAction(ash::UserMetricsAction action) OVERRIDE;

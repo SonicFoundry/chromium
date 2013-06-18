@@ -11,24 +11,25 @@
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/memory/ref_counted.h"
-#include "base/string_split.h"
 #include "base/string_util.h"
+#include "base/strings/string_split.h"
 #include "googleurl/src/gurl.h"
 #include "net/base/completion_callback.h"
-#include "net/base/mock_host_resolver.h"
 #include "net/base/net_errors.h"
-#include "net/base/ssl_config_service.h"
 #include "net/base/test_completion_callback.h"
-#include "net/base/transport_security_state.h"
 #include "net/cookies/cookie_store.h"
 #include "net/cookies/cookie_store_test_helpers.h"
+#include "net/dns/mock_host_resolver.h"
 #include "net/http/http_transaction_factory.h"
+#include "net/http/transport_security_state.h"
 #include "net/proxy/proxy_service.h"
+#include "net/socket/next_proto.h"
 #include "net/socket/socket_test_util.h"
 #include "net/socket_stream/socket_stream.h"
 #include "net/spdy/spdy_session.h"
 #include "net/spdy/spdy_test_util_spdy2.h"
 #include "net/spdy/spdy_websocket_test_util_spdy2.h"
+#include "net/ssl/ssl_config_service.h"
 #include "net/url_request/url_request_context.h"
 #include "net/websockets/websocket_throttle.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -263,10 +264,10 @@ class MockHttpTransactionFactory : public net::HttpTransactionFactory {
     data_ = data;
     net::MockConnect connect_data(net::SYNCHRONOUS, net::OK);
     data_->set_connect_data(connect_data);
-    session_deps_.reset(new SpdySessionDependencies);
+    session_deps_.reset(new net::SpdySessionDependencies(net::kProtoSPDY2));
     session_deps_->socket_factory->AddSocketDataProvider(data_);
     http_session_ =
-        SpdySessionDependencies::SpdyCreateSession(session_deps_.get());
+        net::SpdySessionDependencies::SpdyCreateSession(session_deps_.get());
     host_port_pair_.set_host("example.com");
     host_port_pair_.set_port(80);
     host_port_proxy_pair_.first = host_port_pair_;
@@ -297,6 +298,7 @@ class MockHttpTransactionFactory : public net::HttpTransactionFactory {
   }
 
   virtual int CreateTransaction(
+      net::RequestPriority priority,
       scoped_ptr<net::HttpTransaction>* trans,
       net::HttpTransactionDelegate* delegate) OVERRIDE {
     NOTREACHED();
@@ -314,13 +316,14 @@ class MockHttpTransactionFactory : public net::HttpTransactionFactory {
 
  private:
   net::OrderedSocketData* data_;
-  scoped_ptr<SpdySessionDependencies> session_deps_;
+  scoped_ptr<net::SpdySessionDependencies> session_deps_;
   scoped_refptr<net::HttpNetworkSession> http_session_;
   scoped_refptr<net::TransportSocketParams> transport_params_;
   scoped_refptr<net::SpdySession> session_;
   net::HostPortPair host_port_pair_;
   net::HostPortProxyPair host_port_proxy_pair_;
 };
+
 }  // namespace
 
 namespace net {
@@ -1090,5 +1093,4 @@ TEST_F(WebSocketJobSpdy2Test, ThrottlingSpdySpdyEnabled) {
 
 // TODO(toyoshim): Add tests to verify throttling, SPDY stream limitation.
 // TODO(toyoshim,yutak): Add tests to verify closing handshake.
-
 }  // namespace net

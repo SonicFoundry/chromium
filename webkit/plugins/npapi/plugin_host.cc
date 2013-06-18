@@ -8,9 +8,9 @@
 #include "base/file_util.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/string_piece.h"
 #include "base/string_util.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/string_piece.h"
+#include "base/strings/sys_string_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "net/base/net_util.h"
@@ -73,11 +73,6 @@ static bool SupportsCoreAnimationPlugins() {
     implementation = gfx::GetGLImplementation();
   }
   return (implementation == gfx::kGLImplementationDesktopGL);
-}
-
-static bool UsingCompositedCoreAnimationPlugins() {
-  return !CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kDisableCompositedCoreAnimationPlugins);
 }
 #endif
 
@@ -818,8 +813,7 @@ NPError NPN_GetValue(NPP id, NPNVariable variable, void* value) {
     case NPNVsupportsCompositingCoreAnimationPluginsBool: {
       NPBool* supports_compositing = reinterpret_cast<NPBool*>(value);
       *supports_compositing =
-          webkit::npapi::SupportsCoreAnimationPlugins() &&
-          webkit::npapi::UsingCompositedCoreAnimationPlugins();
+          webkit::npapi::SupportsCoreAnimationPlugins();
       rv = NPERR_NO_ERROR;
       break;
     }

@@ -28,6 +28,7 @@
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/test/base/model_test_utils.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chrome/test/base/ui_test_utils.h"
 #include "content/public/test/test_browser_thread.h"
 #include "googleurl/src/gurl.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -206,10 +207,14 @@ class BookmarkModelTest : public testing::Test,
     ++extensive_changes_ended_count_;
   }
 
+  virtual void BookmarkAllNodesRemoved(BookmarkModel* model) OVERRIDE {
+    ++all_bookmarks_removed_;
+  }
+
   void ClearCounts() {
     added_count_ = moved_count_ = removed_count_ = changed_count_ =
         reordered_count_ = extensive_changes_beginning_count_ =
-        extensive_changes_ended_count_ = 0;
+        extensive_changes_ended_count_ = all_bookmarks_removed_ = 0;
   }
 
   void AssertObserverCount(int added_count,
@@ -232,6 +237,8 @@ class BookmarkModelTest : public testing::Test,
     EXPECT_EQ(extensive_changes_ended_count_, extensive_changes_ended_count);
   }
 
+  int AllNodesRemovedObserverCount() const { return all_bookmarks_removed_; }
+
  protected:
   BookmarkModel model_;
   ObserverDetails observer_details_;
@@ -244,6 +251,7 @@ class BookmarkModelTest : public testing::Test,
   int reordered_count_;
   int extensive_changes_beginning_count_;
   int extensive_changes_ended_count_;
+  int all_bookmarks_removed_;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkModelTest);
 };
@@ -425,6 +433,33 @@ TEST_F(BookmarkModelTest, RemoveFolder) {
   ASSERT_TRUE(model_.GetMostRecentlyAddedNodeForURL(url) == NULL);
 }
 
+TEST_F(BookmarkModelTest, RemoveAll) {
+  const BookmarkNode* bookmark_bar_node = model_.bookmark_bar_node();
+
+  ClearCounts();
+
+  // Add a url to bookmark bar.
+  string16 title(ASCIIToUTF16("foo"));
+  GURL url("http://foo.com");
+  model_.AddURL(bookmark_bar_node, 0, title, url);
+
+  // Add a folder with child URL.
+  const BookmarkNode* folder = model_.AddFolder(bookmark_bar_node, 0, title);
+  model_.AddURL(folder, 0, title, url);
+
+  AssertObserverCount(3, 0, 0, 0, 0);
+  ClearCounts();
+
+  model_.RemoveAll();
+
+  EXPECT_EQ(0, bookmark_bar_node->child_count());
+  // No individual BookmarkNodeRemoved events are fired, so removed count
+  // should be 0.
+  AssertObserverCount(0, 0, 0, 0, 0);
+  AssertExtensiveChangesObserverCount(1, 1);
+  EXPECT_EQ(1, AllNodesRemovedObserverCount());
+}
+
 TEST_F(BookmarkModelTest, SetTitle) {
   const BookmarkNode* root = model_.bookmark_bar_node();
   string16 title(ASCIIToUTF16("foo"));
@@ -530,55 +565,56 @@ TEST_F(BookmarkModelTest, NonMovingMoveCall) {
 TEST_F(BookmarkModelTest, Copy) {
   const BookmarkNode* root = model_.bookmark_bar_node();
   static const std::string model_string("a 1:[ b c ] d 2:[ e f g ] h ");
-  model_test_utils::AddNodesFromModelString(model_, root, model_string);
+  model_test_utils::AddNodesFromModelString(&model_, root, model_string);
 
   // Validate initial model.
-  std::string actualModelString = model_test_utils::ModelStringFromNode(root);
-  EXPECT_EQ(model_string, actualModelString);
+  std::string actual_model_string = model_test_utils::ModelStringFromNode(root);
+  EXPECT_EQ(model_string, actual_model_string);
 
   // Copy 'd' to be after '1:b': URL item from bar to folder.
   const BookmarkNode* nodeToCopy = root->GetChild(2);
   const BookmarkNode* destination = root->GetChild(1);
   model_.Copy(nodeToCopy, destination, 1);
-  actualModelString = model_test_utils::ModelStringFromNode(root);
-  EXPECT_EQ("a 1:[ b d c ] d 2:[ e f g ] h ", actualModelString);
+  actual_model_string = model_test_utils::ModelStringFromNode(root);
+  EXPECT_EQ("a 1:[ b d c ] d 2:[ e f g ] h ", actual_model_string);
 
   // Copy '1:d' to be after 'a': URL item from folder to bar.
   const BookmarkNode* folder = root->GetChild(1);
   nodeToCopy = folder->GetChild(1);
   model_.Copy(nodeToCopy, root, 1);
-  actualModelString = model_test_utils::ModelStringFromNode(root);
-  EXPECT_EQ("a d 1:[ b d c ] d 2:[ e f g ] h ", actualModelString);
+  actual_model_string = model_test_utils::ModelStringFromNode(root);
+  EXPECT_EQ("a d 1:[ b d c ] d 2:[ e f g ] h ", actual_model_string);
 
   // Copy '1' to be after '2:e': Folder from bar to folder.
   nodeToCopy = root->GetChild(2);
   destination = root->GetChild(4);
   model_.Copy(nodeToCopy, destination, 1);
-  actualModelString = model_test_utils::ModelStringFromNode(root);
-  EXPECT_EQ("a d 1:[ b d c ] d 2:[ e 1:[ b d c ] f g ] h ", actualModelString);
+  actual_model_string = model_test_utils::ModelStringFromNode(root);
+  EXPECT_EQ("a d 1:[ b d c ] d 2:[ e 1:[ b d c ] f g ] h ",
+            actual_model_string);
 
   // Copy '2:1' to be after '2:f': Folder within same folder.
   folder = root->GetChild(4);
   nodeToCopy = folder->GetChild(1);
   model_.Copy(nodeToCopy, folder, 3);
-  actualModelString = model_test_utils::ModelStringFromNode(root);
+  actual_model_string = model_test_utils::ModelStringFromNode(root);
   EXPECT_EQ("a d 1:[ b d c ] d 2:[ e 1:[ b d c ] f 1:[ b d c ] g ] h ",
-            actualModelString);
+            actual_model_string);
 
   // Copy first 'd' to be after 'h': URL item within the bar.
   nodeToCopy = root->GetChild(1);
   model_.Copy(nodeToCopy, root, 6);
-  actualModelString = model_test_utils::ModelStringFromNode(root);
+  actual_model_string = model_test_utils::ModelStringFromNode(root);
   EXPECT_EQ("a d 1:[ b d c ] d 2:[ e 1:[ b d c ] f 1:[ b d c ] g ] h d ",
-            actualModelString);
+            actual_model_string);
 
   // Copy '2' to be after 'a': Folder within the bar.
   nodeToCopy = root->GetChild(4);
   model_.Copy(nodeToCopy, root, 1);
-  actualModelString = model_test_utils::ModelStringFromNode(root);
+  actual_model_string = model_test_utils::ModelStringFromNode(root);
   EXPECT_EQ("a 2:[ e 1:[ b d c ] f 1:[ b d c ] g ] d 1:[ b d c ] "
             "d 2:[ e 1:[ b d c ] f 1:[ b d c ] g ] h d ",
-            actualModelString);
+            actual_model_string);
 }
 
 // Tests that adding a URL to a folder updates the last modified time.
@@ -841,7 +877,7 @@ class BookmarkModelTestWithProfile : public testing::Test {
 
   void BlockTillBookmarkModelLoaded() {
     bb_model_ = BookmarkModelFactory::GetForProfile(profile_.get());
-    profile_->BlockUntilBookmarkModelLoaded();
+    ui_test_utils::WaitForBookmarkModelToLoad(bb_model_);
   }
 
   // Destroys the current profile, creates a new one and creates the history

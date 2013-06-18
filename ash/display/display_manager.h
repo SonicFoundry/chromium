@@ -33,8 +33,7 @@ namespace internal {
 // and notifies observers when configuration changes.
 // This is exported for unittest.
 //
-// TODO(oshima): gfx::Screen needs to return translated coordinates
-// if the root window is translated. crbug.com/119268.
+// TODO(oshima): Make this non internal.
 class ASH_EXPORT DisplayManager : public aura::RootWindowObserver {
  public:
   DisplayManager();
@@ -43,7 +42,10 @@ class ASH_EXPORT DisplayManager : public aura::RootWindowObserver {
   // Used to emulate display change when run in a desktop environment instead
   // of on a device.
   static void CycleDisplay();
-  static void ToggleDisplayScale();
+  static void ToggleDisplayScaleFactor();
+
+  // Returns next valid UI scale.
+  static float GetNextUIScale(const DisplayInfo& info, bool up);
 
   // When set to true, the MonitorManager calls OnDisplayBoundsChanged
   // even if the display's bounds didn't change. Used to swap primary
@@ -83,6 +85,23 @@ class ASH_EXPORT DisplayManager : public aura::RootWindowObserver {
   // Clears the overscan insets
   void ClearCustomOverscanInsets(int64 display_id);
 
+  // Sets the display's rotation.
+  void SetDisplayRotation(int64 display_id, gfx::Display::Rotation rotation);
+
+  // Sets the display's ui scale.
+  void SetDisplayUIScale(int64 display_id, float ui_scale);
+
+  // Register per display properties. |overscan_insets| is NULL if
+  // the display has no custom overscan insets.
+  void RegisterDisplayProperty(int64 display_id,
+                               gfx::Display::Rotation rotation,
+                               float ui_scale,
+                               const gfx::Insets* overscan_insets);
+
+  // Tells if display rotation/ui scaling features are enabled.
+  bool IsDisplayRotationEnabled() const;
+  bool IsDisplayUIScalingEnabled() const;
+
   // Returns the current overscan insets for the specified |display_id|.
   // Returns an empty insets (0, 0, 0, 0) if no insets are specified for
   // the display.
@@ -97,8 +116,8 @@ class ASH_EXPORT DisplayManager : public aura::RootWindowObserver {
   // Updates the internal display data and notifies observers about the changes.
   void UpdateDisplays(const std::vector<DisplayInfo>& display_info_list);
 
-  // Create a root window for given |display|.
-  aura::RootWindow* CreateRootWindowForDisplay(const gfx::Display& display);
+  // Updates current displays using current |display_info_|.
+  void UpdateDisplays();
 
   // Obsoleted: Do not use in new code.
   // Returns the display at |index|. The display at 0 is
@@ -107,7 +126,17 @@ class ASH_EXPORT DisplayManager : public aura::RootWindowObserver {
 
   const gfx::Display* GetPrimaryDisplayCandidate() const;
 
+  // Returns the logical number of displays. This returns 1
+  // when displays are mirrored.
   size_t GetNumDisplays() const;
+
+  // Returns the number of connected displays. This returns 2
+  // when displays are mirrored.
+  size_t num_connected_displays() const { return num_connected_displays_; }
+
+  // Returns the mirroring status.
+  bool IsMirrored() const;
+  int64 mirrored_display_id() const { return mirrored_display_id_; }
 
   // Returns the display object nearest given |window|.
   const gfx::Display& GetDisplayNearestPoint(
@@ -121,11 +150,17 @@ class ASH_EXPORT DisplayManager : public aura::RootWindowObserver {
   const gfx::Display& GetDisplayMatching(
       const gfx::Rect& match_rect)const;
 
-  // Retuns the display info associated with |display|.
-  const DisplayInfo& GetDisplayInfo(const gfx::Display& display) const;
+  // Retuns the display info associated with |display_id|.
+  const DisplayInfo& GetDisplayInfo(int64 display_id) const;
 
-  // Returns the human-readable name for the display specified by |display|.
-  std::string GetDisplayNameFor(const gfx::Display& display);
+  // Returns the human-readable name for the display |id|.
+  std::string GetDisplayNameForId(int64 id);
+
+  // Returns the display id that is capable of UI scaling. On device,
+  // this returns internal display's ID if its device scale factor is 2,
+  // or invalid ID if such internal display doesn't exist. On linux
+  // desktop, this returns the first display ID.
+  int64 GetDisplayIdForUIScaling() const;
 
   // RootWindowObserver overrides:
   virtual void OnRootWindowResized(const aura::RootWindow* root,
@@ -144,6 +179,10 @@ class ASH_EXPORT DisplayManager : public aura::RootWindowObserver {
 
   typedef std::vector<gfx::Display> DisplayList;
 
+  void set_change_display_upon_host_resize(bool value) {
+    change_display_upon_host_resize_ = value;
+  }
+
   void Init();
   void CycleDisplayImpl();
   void ScaleDisplayImpl();
@@ -154,33 +193,36 @@ class ASH_EXPORT DisplayManager : public aura::RootWindowObserver {
   // Refer to |CreateDisplayFromSpec| API for the format of |spec|.
   void AddDisplayFromSpec(const std::string& spec);
 
-  // Checks if the mouse pointer is on one of displays, and moves to
-  // the center of the nearest display if it's outside of all displays.
-  void EnsurePointerInDisplays();
-
   // Inserts and update the DisplayInfo according to the overscan
   // state. Note that The DisplayInfo stored in the |internal_display_info_|
   // can be different from |new_info| (due to overscan state), so
   // you must use |GetDisplayInfo| to get the correct DisplayInfo for
   // a display.
-  void InsertAndUpdateDisplayInfo(const DisplayInfo& new_info,
-                                  bool can_overscan);
+  void InsertAndUpdateDisplayInfo(const DisplayInfo& new_info);
 
   // Creates a display object from the DisplayInfo for |display_id|.
   gfx::Display CreateDisplayFromDisplayInfoById(int64 display_id);
 
   int64 first_display_id_;
 
+  int64 mirrored_display_id_;
+
+  // List of current active dispays.
   DisplayList displays_;
 
-  // An internal display info cache used when the internal display is
-  // disconnectd.
-  scoped_ptr<DisplayInfo> internal_display_info_;
+  int num_connected_displays_;
 
   bool force_bounds_changed_;
 
   // The mapping from the display ID to its internal data.
   std::map<int64, DisplayInfo> display_info_;
+
+  // When set to true, the host window's resize event updates
+  // the display's size. This is set to true when running on
+  // desktop environment (for debugging) so that resizing the host
+  // window wil update the display properly. This is set to false
+  // on device as well as during the unit tests.
+  bool change_display_upon_host_resize_;
 
   DISALLOW_COPY_AND_ASSIGN(DisplayManager);
 };

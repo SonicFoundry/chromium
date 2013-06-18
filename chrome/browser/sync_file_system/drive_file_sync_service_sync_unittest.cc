@@ -59,11 +59,13 @@ class DriveFileSyncServiceSyncTest : public testing::Test {
   }
 
   virtual void SetUp() OVERRIDE {
+    SetEnableSyncDirectoryOperation(true);
     RegisterSyncableFileSystem(DriveFileSyncService::kServiceName);
   }
 
   virtual void TearDown() OVERRIDE {
     RevokeSyncableFileSystem(DriveFileSyncService::kServiceName);
+    SetEnableSyncDirectoryOperation(false);
   }
 
  protected:
@@ -82,7 +84,14 @@ class DriveFileSyncServiceSyncTest : public testing::Test {
     return SyncEvent(
         "SyncEvent: Add or Update remote file [" + title + "]",
         base::Bind(&DriveFileSyncServiceSyncTest::AddOrUpdateResource,
-                   base::Unretained(this), title));
+                   base::Unretained(this), title, SYNC_FILE_TYPE_FILE));
+  }
+
+  SyncEvent CreateRemoteDirectoryAddEvent(const std::string& title) {
+    return SyncEvent(
+        "SyncEvent: Add remote directory [" + title + "]",
+        base::Bind(&DriveFileSyncServiceSyncTest::AddOrUpdateResource,
+                   base::Unretained(this), title, SYNC_FILE_TYPE_DIRECTORY));
   }
 
   SyncEvent CreateRemoteFileDeleteEvent(const std::string& title) {
@@ -173,31 +182,34 @@ class DriveFileSyncServiceSyncTest : public testing::Test {
         base_dir_,
         scoped_ptr<DriveFileSyncClientInterface>(fake_sync_client_),
         scoped_ptr<DriveMetadataStore>(metadata_store_)).Pass();
+    sync_service_->SetRemoteChangeProcessor(fake_remote_processor_.get());
   }
 
   void TearDownForTestCase() {
-    scoped_ptr<DriveFileSyncClientInterface> sync_client =
-        DriveFileSyncService::DestroyAndPassSyncClientForTesting(
-            sync_service_.Pass());
-    message_loop_.RunUntilIdle();
     metadata_store_ = NULL;
     fake_sync_client_ = NULL;
     sync_service_.reset();
     fake_remote_processor_.reset();
+    message_loop_.RunUntilIdle();
   }
 
-  void AddOrUpdateResource(const std::string& title) {
+  void AddOrUpdateResource(const std::string& title,
+                           SyncFileType type) {
     typedef ResourceIdByTitle::iterator iterator;
     std::pair<iterator, bool> inserted =
         resources_.insert(std::make_pair(title, std::string()));
-    if (inserted.second)
-      inserted.first->second = StringPrintf("%" PRId64, ++resource_count_);
+    if (inserted.second) {
+      inserted.first->second =
+          base::StringPrintf("%" PRId64, ++resource_count_);
+    }
     std::string resource_id = inserted.first->second;
+    std::string md5_checksum;
+    if (type == SYNC_FILE_TYPE_FILE)
+      md5_checksum = base::StringPrintf("%" PRIx64, base::RandUint64());
 
     fake_sync_client_->PushRemoteChange(
-        kParentResourceId, kAppId, title, resource_id,
-        StringPrintf("%" PRIx64, base::RandUint64()),
-        false /* deleted */);
+        kParentResourceId, kAppId, title, resource_id, md5_checksum,
+        type, false /* deleted */);
     message_loop_.RunUntilIdle();
   }
 
@@ -209,7 +221,8 @@ class DriveFileSyncServiceSyncTest : public testing::Test {
     resources_.erase(found);
     fake_sync_client_->PushRemoteChange(
         kParentResourceId, kAppId,
-        title, resource_id, std::string(), true /* deleted */);
+        title, resource_id, std::string(),
+        SYNC_FILE_TYPE_UNKNOWN, true /* deleted */);
     message_loop_.RunUntilIdle();
   }
 
@@ -234,6 +247,7 @@ class DriveFileSyncServiceSyncTest : public testing::Test {
         base_dir_,
         sync_client.Pass(),
         scoped_ptr<DriveMetadataStore>(metadata_store_)).Pass();
+    sync_service_->SetRemoteChangeProcessor(fake_remote_processor_.get());
   }
 
   void FetchRemoteChange() {
@@ -246,7 +260,6 @@ class DriveFileSyncServiceSyncTest : public testing::Test {
     bool done = false;
     SyncStatusCode status = SYNC_STATUS_UNKNOWN;
     sync_service_->ProcessRemoteChange(
-        fake_remote_processor_.get(),
         base::Bind(&DidProcessRemoteChange, &done, &status));
     message_loop_.RunUntilIdle();
     EXPECT_TRUE(done);
@@ -283,7 +296,8 @@ class DriveFileSyncServiceSyncTest : public testing::Test {
       EXPECT_FALSE(metadata.resource_id().empty());
       EXPECT_FALSE(metadata.conflicted());
       EXPECT_FALSE(metadata.to_be_fetched());
-      EXPECT_FALSE(metadata.md5_checksum().empty());
+      EXPECT_TRUE(metadata.type() == DriveMetadata::RESOURCE_TYPE_FOLDER ||
+                  !metadata.md5_checksum().empty());
 
       RemoteResourceMap::const_iterator found =
           remote_resources.find(metadata.resource_id());
@@ -372,6 +386,42 @@ TEST_F(DriveFileSyncServiceSyncTest, SquashedFileAddTest) {
     CreateRemoteFileAddOrUpdateEvent(kFile1),
     CreateFetchEvent(),
     CreateRemoteFileDeleteEvent(kFile1),
+  };
+  RunTest(CreateTestCase(sync_event));
+}
+
+TEST_F(DriveFileSyncServiceSyncTest, RelaunchTestWithSquashedDeletion) {
+  std::string kFile1 = "file title 1";
+  std::string kFile2 = "file title 2";
+  SyncEvent sync_event[] = {
+    CreateRemoteFileAddOrUpdateEvent(kFile1),
+    CreateFetchEvent(),
+    CreateProcessRemoteChangeEvent(),
+
+    CreateRemoteFileDeleteEvent(kFile1),
+    CreateRemoteFileAddOrUpdateEvent(kFile2),
+    CreateRemoteFileAddOrUpdateEvent(kFile1),
+
+    CreateFetchEvent(),
+    CreateProcessRemoteChangeEvent(),
+    CreateRelaunchEvent(),
+  };
+  RunTest(CreateTestCase(sync_event));
+}
+
+TEST_F(DriveFileSyncServiceSyncTest, CreateDirectoryTest) {
+  std::string kDir = "dir title";
+  SyncEvent sync_event[] = {
+    CreateRemoteDirectoryAddEvent(kDir),
+  };
+  RunTest(CreateTestCase(sync_event));
+}
+
+TEST_F(DriveFileSyncServiceSyncTest, DeleteDirectoryTest) {
+  std::string kDir = "dir title";
+  SyncEvent sync_event[] = {
+    CreateRemoteDirectoryAddEvent(kDir),
+    CreateRemoteFileDeleteEvent(kDir),
   };
   RunTest(CreateTestCase(sync_event));
 }

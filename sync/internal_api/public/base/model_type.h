@@ -49,11 +49,6 @@ enum ModelType {
   // can be represented in the protocol using a specific Message type in the
   // EntitySpecifics protocol buffer.
   //
-  // WARNING: Modifying the order of these types or inserting a new type above
-  // these will affect numerous histograms that rely on the enum values being
-  // consistent. When adding a new type, add it to the end of the user model
-  // types section, but before the proxy types.
-  //
   // A bookmark folder or a bookmark URL object.
   BOOKMARKS,
   FIRST_USER_MODEL_TYPE = BOOKMARKS,  // Declared 2nd, for debugger prettiness.
@@ -95,6 +90,11 @@ enum ModelType {
   FAVICON_IMAGES,
   // Favicon tracking information.
   FAVICON_TRACKING,
+  // These preferences are synced before other user types and are never
+  // encrypted.
+  PRIORITY_PREFERENCES,
+  // Managed user settings.
+  MANAGED_USER_SETTINGS,
 
   // ---- Proxy types ----
   // Proxy types are excluded from the sync protocol, but are still considered
@@ -118,10 +118,7 @@ enum ModelType {
   DEVICE_INFO,
   // Flags to enable experimental features.
   EXPERIMENTS,
-  // These preferences are never encrypted so that they can be applied before
-  // the encryption system is fully initialized.
-  PRIORITY_PREFERENCES,
-  LAST_CONTROL_MODEL_TYPE = PRIORITY_PREFERENCES,
+  LAST_CONTROL_MODEL_TYPE = EXPERIMENTS,
 
   LAST_REAL_MODEL_TYPE = LAST_CONTROL_MODEL_TYPE,
 
@@ -163,10 +160,6 @@ SYNC_EXPORT_PRIVATE ModelType GetModelType(
 SYNC_EXPORT ModelType GetModelTypeFromSpecifics(
     const sync_pb::EntitySpecifics& specifics);
 
-// If this returns false, we shouldn't bother maintaining a position
-// value (sibling ordering) for this item.
-bool ShouldMaintainPosition(ModelType model_type);
-
 // Protocol types are those types that have actual protocol buffer
 // representations. This distinguishes them from Proxy types, which have no
 // protocol representation and are never sent to the server.
@@ -183,6 +176,10 @@ SYNC_EXPORT bool IsUserSelectableType(ModelType model_type);
 
 // This is the subset of UserTypes() that can be encrypted.
 SYNC_EXPORT_PRIVATE ModelTypeSet EncryptableUserTypes();
+
+// This is the subset of UserTypes() that have priority over other types.  These
+// types are synced before other user types and are never encrypted.
+SYNC_EXPORT ModelTypeSet PriorityUserTypes();
 
 // Proxy types are placeholder types for handling implicitly enabling real
 // types. They do not exist at the server, and are simply used for
@@ -244,6 +241,11 @@ FullModelTypeSet ToFullModelTypeSet(ModelTypeSet in);
 // the name of |model_type|.
 SYNC_EXPORT const char* ModelTypeToString(ModelType model_type);
 
+// Some histograms take an integer parameter that represents a model type.
+// The mapping from ModelType to integer is defined here.  It should match
+// the mapping from integer to labels defined in histograms.xml.
+SYNC_EXPORT int ModelTypeToHistogramInt(ModelType model_type);
+
 // Handles all model types, and not just real ones.
 //
 // Caller takes ownership of returned value.
@@ -276,8 +278,9 @@ bool RealModelTypeToNotificationType(ModelType model_type,
 // Converts a notification type to a real model type.  Returns true
 // iff |notification_type| was the notification type of a real model
 // type and |model_type| was filled in.
-bool NotificationTypeToRealModelType(const std::string& notification_type,
-                                     ModelType* model_type);
+SYNC_EXPORT bool NotificationTypeToRealModelType(
+    const std::string& notification_type,
+    ModelType* model_type);
 
 // Returns true if |model_type| is a real datatype
 SYNC_EXPORT bool IsRealDataType(ModelType model_type);

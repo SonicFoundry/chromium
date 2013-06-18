@@ -5,9 +5,9 @@
 #include "chrome/browser/managed_mode/managed_mode.h"
 
 #include "base/command_line.h"
+#include "base/prefs/pref_change_registrar.h"
 #include "base/prefs/pref_registry_simple.h"
 #include "base/prefs/pref_service.h"
-#include "base/prefs/public/pref_change_registrar.h"
 #include "base/sequenced_task_runner.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/managed_mode/managed_mode_site_list.h"
@@ -26,6 +26,7 @@
 #include "grit/generated_resources.h"
 
 using content::BrowserThread;
+using content::RecordAction;
 using content::UserMetricsAction;
 
 // static
@@ -47,18 +48,20 @@ void ManagedMode::InitImpl(Profile* profile) {
   DCHECK(g_browser_process);
   DCHECK(g_browser_process->local_state());
 
+  CommandLine* command_line = CommandLine::ForCurrentProcess();
+
+  if (command_line->HasSwitch(switches::kEnableManagedUsers)) {
+    RecordAction(UserMetricsAction("ManagedMode_StartupEnableManagedSwitch"));
+  }
+
   Profile* original_profile = profile->GetOriginalProfile();
   // Set the value directly in the PrefService instead of using
   // CommandLinePrefStore so we can change it at runtime.
-  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kNoManaged)) {
+  if (command_line->HasSwitch(switches::kNoManaged)) {
     SetInManagedMode(NULL);
-    content::RecordAction(
-        UserMetricsAction("ManagedMode_StartupNoManagedSwitch"));
   } else if (IsInManagedModeImpl() ||
-      CommandLine::ForCurrentProcess()->HasSwitch(switches::kManaged)) {
+        command_line->HasSwitch(switches::kManaged)) {
     SetInManagedMode(original_profile);
-    content::RecordAction(
-        UserMetricsAction("ManagedMode_StartupManagedSwitch"));
   }
 }
 

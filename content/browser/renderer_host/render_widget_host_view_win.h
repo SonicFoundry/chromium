@@ -101,7 +101,6 @@ class RenderWidgetHostViewWin
     MSG_WM_CREATE(OnCreate)
     MSG_WM_ACTIVATE(OnActivate)
     MSG_WM_DESTROY(OnDestroy)
-    MSG_WM_PAINT(OnPaint)
     MSG_WM_NCPAINT(OnNCPaint)
     MSG_WM_NCHITTEST(OnNCHitTest)
     MSG_WM_ERASEBKGND(OnEraseBkgnd)
@@ -113,6 +112,8 @@ class RenderWidgetHostViewWin
     MSG_WM_INPUTLANGCHANGE(OnInputLangChange)
     MSG_WM_THEMECHANGED(OnThemeChanged)
     MSG_WM_NOTIFY(OnNotify)
+    MESSAGE_HANDLER(WM_PAINT, OnPaint);
+    MESSAGE_HANDLER(WM_TIMER, OnTimer);
     MESSAGE_HANDLER(WM_IME_SETCONTEXT, OnImeSetContext)
     MESSAGE_HANDLER(WM_IME_STARTCOMPOSITION, OnImeStartComposition)
     MESSAGE_HANDLER(WM_IME_COMPOSITION, OnImeComposition)
@@ -165,6 +166,7 @@ class RenderWidgetHostViewWin
   virtual bool IsShowing() OVERRIDE;
   virtual gfx::Rect GetViewBounds() const OVERRIDE;
   virtual void SetBackground(const SkBitmap& background) OVERRIDE;
+  void SetLayeredWindow(HWND layered);
 
   // Implementation of RenderWidgetHostViewPort.
   virtual void InitAsPopup(RenderWidgetHostView* parent_host_view,
@@ -195,6 +197,8 @@ class RenderWidgetHostViewWin
       const std::vector<gfx::Rect>& copy_rects) OVERRIDE;
   virtual void RenderViewGone(base::TerminationStatus status,
                               int error_code) OVERRIDE;
+  virtual bool CanSubscribeFrame() const OVERRIDE;
+
   // called by WebContentsImpl before DestroyWindow
   virtual void WillWmDestroy() OVERRIDE;
   virtual void Destroy() OVERRIDE;
@@ -250,6 +254,7 @@ class RenderWidgetHostViewWin
   virtual void AccessibilitySetTextSelection(
       int acc_obj_id, int start_offset, int end_offset) OVERRIDE;
   virtual gfx::Point GetLastTouchEventLocation() const OVERRIDE;
+  virtual void FatalAccessibilityTreeError() OVERRIDE;
 
   // Overridden from ui::GestureEventHelper.
   virtual bool DispatchLongPressGestureEvent(ui::GestureEvent* event) OVERRIDE;
@@ -280,6 +285,7 @@ class RenderWidgetHostViewWin
   virtual bool ChangeTextDirectionAndLayoutAlignment(
       base::i18n::TextDirection direction) OVERRIDE;
   virtual void ExtendSelectionAndDelete(size_t before, size_t after) OVERRIDE;
+  virtual void EnsureCaretInRect(const gfx::Rect& rect) OVERRIDE;
 
  protected:
   friend class RenderWidgetHostView;
@@ -293,7 +299,8 @@ class RenderWidgetHostViewWin
   LRESULT OnCreate(CREATESTRUCT* create_struct);
   void OnActivate(UINT, BOOL, HWND);
   void OnDestroy();
-  void OnPaint(HDC unused_dc);
+  LRESULT OnPaint(
+      UINT message, WPARAM wparam, LPARAM lparam, BOOL& handled);
   void OnNCPaint(HRGN update_region);
   LRESULT OnNCHitTest(const CPoint& pt);
   LRESULT OnEraseBkgnd(HDC dc);
@@ -316,6 +323,8 @@ class RenderWidgetHostViewWin
   LRESULT OnImeRequest(
       UINT message, WPARAM wparam, LPARAM lparam, BOOL& handled);
   LRESULT OnMouseEvent(
+      UINT message, WPARAM wparam, LPARAM lparam, BOOL& handled);
+  LRESULT OnTimer(
       UINT message, WPARAM wparam, LPARAM lparam, BOOL& handled);
   LRESULT OnKeyEvent(
       UINT message, WPARAM wparam, LPARAM lparam, BOOL& handled);
@@ -436,6 +445,10 @@ class RenderWidgetHostViewWin
   // is responsible for managing input scope). Currently input scope will only
   // take effect on Vista+.
   void UpdateInputScopeIfNecessary(ui::TextInputType text_input_type);
+
+  // Create a BrowserAccessibilityManager with an empty document if it
+  // doesn't already exist.
+  void CreateBrowserAccessibilityManagerIfNeeded();
 
   // The associated Model.  While |this| is being Destroyed,
   // |render_widget_host_| is NULL and the Windows message loop is run one last
@@ -582,7 +595,15 @@ class RenderWidgetHostViewWin
   // Are touch events currently enabled?
   bool touch_events_enabled_;
 
+  // Transparency with proper click-through hit-testing requires layered painting
+  HWND layered_parent_;
+  bool is_layered_window_;
+  bool update_layered_window_;
+
   scoped_ptr<ui::GestureRecognizer> gesture_recognizer_;
+
+  // The OS-provided default IAccessible instance for our hwnd.
+  base::win::ScopedComPtr<IAccessible> window_iaccessible_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderWidgetHostViewWin);
 };

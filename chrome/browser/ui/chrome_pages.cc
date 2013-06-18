@@ -42,8 +42,8 @@ void OpenBookmarkManagerWithHash(Browser* browser,
   NavigateParams params(GetSingletonTabNavigateParams(
       browser,
       GURL(kChromeUIBookmarksURL).Resolve(
-      StringPrintf("/#%s%s", action.c_str(),
-      base::Int64ToString(node_id).c_str()))));
+          base::StringPrintf("/#%s%s", action.c_str(),
+              base::Int64ToString(node_id).c_str()))));
   params.path_behavior = NavigateParams::IGNORE_AND_NAVIGATE;
   ShowSingletonTabOverwritingNTP(browser, params);
 }
@@ -56,13 +56,6 @@ void NavigateToSingletonTab(Browser* browser, const GURL& url) {
 
 }  // namespace
 
-void ShowAppLauncherPage(Browser* browser) {
-  content::RecordAction(UserMetricsAction("ShowAppLauncherPage"));
-  ShowSingletonTabOverwritingNTP(
-      browser,
-      GetSingletonTabNavigateParams(browser, GURL(kChromeUIAppsURL)));
-}
-
 void ShowBookmarkManager(Browser* browser) {
   content::RecordAction(UserMetricsAction("ShowBookmarkManager"));
   content::RecordAction(UserMetricsAction("ShowBookmarks"));
@@ -72,7 +65,7 @@ void ShowBookmarkManager(Browser* browser) {
 }
 
 void ShowBookmarkManagerForNode(Browser* browser, int64 node_id) {
-  OpenBookmarkManagerWithHash(browser, "", node_id);
+  OpenBookmarkManagerWithHash(browser, std::string(), node_id);
 }
 
 void ShowHistory(Browser* browser) {
@@ -87,8 +80,9 @@ void ShowDownloads(Browser* browser) {
   content::RecordAction(UserMetricsAction("ShowDownloads"));
   if (browser->window()) {
     DownloadShelf* shelf = browser->window()->GetDownloadShelf();
+    // The downloads page is always shown in response to a user action.
     if (shelf->IsShowing())
-      shelf->Close();
+      shelf->Close(DownloadShelf::USER_ACTION);
   }
   ShowSingletonTabOverwritingNTP(
       browser,
@@ -198,7 +192,7 @@ void ShowSearchEngineSettings(Browser* browser) {
 
 void ShowBrowserSignin(Browser* browser, SyncPromoUI::Source source) {
   Profile* original_profile = browser->profile()->GetOriginalProfile();
-  SigninManager* manager =
+  SigninManagerBase* manager =
       SigninManagerFactory::GetForProfile(original_profile);
   DCHECK(manager->IsSigninAllowed());
   // If we're signed in, just show settings.

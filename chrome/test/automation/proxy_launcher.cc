@@ -39,6 +39,41 @@ namespace {
 // Passed as value of kTestType.
 const char kUITestType[] = "ui";
 
+// Copies the contents of the given source directory to the given dest
+// directory. This is somewhat different than CopyDirectory in base which will
+// copies "source/" to "dest/source/". This version will copy "source/*" to
+// "dest/*", overwriting existing files as necessary.
+//
+// This also kicks the files out of the memory cache for the startup tests.
+// TODO(brettw) bug 237904: This is the wrong place for this code. It means all
+// startup tests other than the "cold" ones run more slowly than necessary.
+bool CopyDirectoryContentsNoCache(const base::FilePath& source,
+                                  const base::FilePath& dest) {
+  file_util::FileEnumerator en(source, false,
+      file_util::FileEnumerator::FILES |
+      file_util::FileEnumerator::DIRECTORIES);
+  for (base::FilePath cur = en.Next(); !cur.empty(); cur = en.Next()) {
+    file_util::FileEnumerator::FindInfo info;
+    en.GetFindInfo(&info);
+    if (file_util::FileEnumerator::IsDirectory(info)) {
+      if (!file_util::CopyDirectory(cur, dest, true))
+        return false;
+    } else {
+      if (!file_util::CopyFile(cur, dest.Append(cur.BaseName())))
+        return false;
+    }
+  }
+
+  // Kick out the profile files, this must happen after SetUp which creates the
+  // profile. It might be nicer to use EvictFileFromSystemCacheWrapper from
+  // UITest which will retry on failure.
+  file_util::FileEnumerator kickout(dest, true,
+                                    file_util::FileEnumerator::FILES);
+  for (base::FilePath cur = kickout.Next(); !cur.empty(); cur = kickout.Next())
+    base::EvictFileFromSystemCacheWithRetry(cur);
+  return true;
+}
+
 // We want to have a current history database when we start the browser so
 // things like the NTP will have thumbnails.  This method updates the dates
 // in the history to be more recent.
@@ -55,7 +90,7 @@ void UpdateHistoryDates(const base::FilePath& user_data_dir) {
   ASSERT_TRUE(db.Open(history));
   base::Time yesterday = base::Time::Now() - base::TimeDelta::FromDays(1);
   std::string yesterday_str = base::Int64ToString(yesterday.ToInternalValue());
-  std::string query = StringPrintf(
+  std::string query = base::StringPrintf(
       "UPDATE segment_usage "
       "SET time_slot = %s "
       "WHERE id IN (SELECT id FROM segment_usage WHERE time_slot > 0);",
@@ -86,8 +121,6 @@ ProxyLauncher::ProxyLauncher()
                             switches::kFullMemoryCrashReport)),
       show_error_dialogs_(CommandLine::ForCurrentProcess()->HasSwitch(
                               switches::kEnableErrorDialogs)),
-      dump_histograms_on_exit_(CommandLine::ForCurrentProcess()->HasSwitch(
-                                   switches::kDumpHistogramsOnExit)),
       enable_dcheck_(CommandLine::ForCurrentProcess()->HasSwitch(
                          switches::kEnableDCHECK)),
       silent_dump_on_dcheck_(CommandLine::ForCurrentProcess()->HasSwitch(
@@ -155,8 +188,9 @@ void ProxyLauncher::CloseBrowserAndServer() {
   // the UI tests in single-process mode.
   // TODO(jhughes): figure out why this is necessary at all, and fix it
   AssertAppNotRunning(
-      StringPrintf("Unable to quit all browser processes. Original PID %d",
-                   process_id_));
+      base::StringPrintf(
+          "Unable to quit all browser processes. Original PID %d",
+          process_id_));
 
   DisconnectFromRunningBrowser();
 }
@@ -185,8 +219,8 @@ bool ProxyLauncher::LaunchBrowser(const LaunchState& state) {
 
   if (!state.template_user_data.empty()) {
     // Recursively copy the template directory to the user_data_dir.
-    if (!file_util::CopyRecursiveDirNoCache(
-            state.template_user_data, user_data_dir())) {
+    if (!CopyDirectoryContentsNoCache(state.template_user_data,
+                                      user_data_dir())) {
       LOG(ERROR) << "Failed to copy user data directory template.";
       return false;
     }
@@ -261,6 +295,8 @@ void ProxyLauncher::QuitBrowser() {
     NOTREACHED() << "Invalid shutdown type " << shutdown_type_;
   }
 
+  ChromeProcessList processes = GetRunningChromeProcesses(process_id_);
+
   // Now, drop the automation IPC channel so that the automation provider in
   // the browser notices and drops its reference to the browser process.
   if (automation_proxy_.get())
@@ -274,6 +310,9 @@ void ProxyLauncher::QuitBrowser() {
   EXPECT_EQ(0, exit_code);  // Expect a clean shutdown.
 
   browser_quit_time_ = base::TimeTicks::Now() - quit_start;
+
+  // Ensure no child processes are left dangling.
+  TerminateAllChromeProcesses(processes);
 }
 
 void ProxyLauncher::TerminateBrowser() {
@@ -290,6 +329,8 @@ void ProxyLauncher::TerminateBrowser() {
   ASSERT_TRUE(browser->TerminateSession());
 #endif  // defined(OS_WIN)
 
+  ChromeProcessList processes = GetRunningChromeProcesses(process_id_);
+
   // Now, drop the automation IPC channel so that the automation provider in
   // the browser notices and drops its reference to the browser process.
   if (automation_proxy_.get())
@@ -305,6 +346,9 @@ void ProxyLauncher::TerminateBrowser() {
   EXPECT_EQ(0, exit_code);  // Expect a clean shutdown.
 
   browser_quit_time_ = base::TimeTicks::Now() - quit_start;
+
+  // Ensure no child processes are left dangling.
+  TerminateAllChromeProcesses(processes);
 }
 
 void ProxyLauncher::AssertAppNotRunning(const std::string& error_message) {
@@ -315,7 +359,7 @@ void ProxyLauncher::AssertAppNotRunning(const std::string& error_message) {
     final_error_message += " Leftover PIDs: [";
     for (ChromeProcessList::const_iterator it = processes.begin();
          it != processes.end(); ++it) {
-      final_error_message += StringPrintf(" %d", *it);
+      final_error_message += base::StringPrintf(" %d", *it);
     }
     final_error_message += " ]";
   }
@@ -334,9 +378,6 @@ bool ProxyLauncher::WaitForBrowserProcessToQuit(
   // chance of making it through.
   if (!automation_proxy_->channel_disconnected_on_failure())
     success = base::WaitForExitCodeWithTimeout(process_, exit_code, timeout);
-
-  if (!success)
-    TerminateAllChromeProcesses(process_id_);
 
   base::CloseProcessHandle(process_);
   process_ = base::kNullProcessHandle;
@@ -409,9 +450,6 @@ void ProxyLauncher::PrepareTestCommandline(CommandLine* command_line,
   if (!CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kEnableErrorDialogs))
     command_line->AppendSwitch(switches::kEnableLogging);
-
-  if (dump_histograms_on_exit_)
-    command_line->AppendSwitch(switches::kDumpHistogramsOnExit);
 
 #ifdef WAIT_FOR_DEBUGGER_ON_OPEN
   command_line->AppendSwitch(switches::kDebugOnStart);

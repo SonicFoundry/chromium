@@ -13,27 +13,25 @@
 #include "content/common/gpu/gpu_messages.h"
 #include "content/renderer/render_thread_impl.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebGraphicsContext3D.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebStreamTextureClient.h"
 #include "ui/gfx/size.h"
 
 namespace {
 
-static void DeleteStreamTextureHost(content::StreamTextureHost* host) {
-  delete host;
-}
-
 // Implementation of the StreamTextureProxy class. This class listens to all
-// the stream texture updates and forward them to the WebStreamTextureClient.
+// the stream texture updates and forward them to the
+// cc::VideoFrameProvider::Client.
 class StreamTextureProxyImpl : public webkit_media::StreamTextureProxy,
                                public content::StreamTextureHost::Listener {
  public:
   explicit StreamTextureProxyImpl(content::StreamTextureHost* host);
-  virtual ~StreamTextureProxyImpl();
+  virtual ~StreamTextureProxyImpl() {}
 
   // webkit_media::StreamTextureProxy implementation:
-  virtual bool Initialize(int stream_id, int width, int height) OVERRIDE;
-  virtual bool IsInitialized() OVERRIDE { return initialized_; }
-  virtual void SetClient(WebKit::WebStreamTextureClient* client) OVERRIDE;
+  virtual void BindToCurrentThread(
+      int stream_id, int width, int height) OVERRIDE;
+  virtual bool IsBoundToThread() OVERRIDE { return !!loop_.get(); }
+  virtual void SetClient(cc::VideoFrameProvider::Client* client) OVERRIDE;
+  virtual void Release() OVERRIDE;
 
   // StreamTextureHost::Listener implementation:
   virtual void OnFrameAvailable() OVERRIDE;
@@ -44,8 +42,7 @@ class StreamTextureProxyImpl : public webkit_media::StreamTextureProxy,
   scoped_refptr<base::MessageLoopProxy> loop_;
 
   base::Lock client_lock_;
-  WebKit::WebStreamTextureClient* client_;
-  bool initialized_;
+  cc::VideoFrameProvider::Client* client_;
 
   DISALLOW_COPY_AND_ASSIGN(StreamTextureProxyImpl);
 };
@@ -53,43 +50,40 @@ class StreamTextureProxyImpl : public webkit_media::StreamTextureProxy,
 StreamTextureProxyImpl::StreamTextureProxyImpl(
     content::StreamTextureHost* host)
     : host_(host),
-      client_(NULL),
-      initialized_(false) {
+      client_(NULL) {
   DCHECK(host);
   host->SetListener(this);
 }
 
-StreamTextureProxyImpl::~StreamTextureProxyImpl() {
+void StreamTextureProxyImpl::Release() {
   SetClient(NULL);
-  // The StreamTextureHost instance needs to be deleted on the thread
-  // it receives messages on (where it uses a WeakPtr).
-  if (loop_.get()) {
-    loop_->PostTask(FROM_HERE, base::Bind(&DeleteStreamTextureHost,
-                                          host_.release()));
-  }
+  if (loop_ && loop_ != base::MessageLoopProxy::current())
+    loop_->DeleteSoon(FROM_HERE, this);
+  else
+    delete this;
 }
 
-void StreamTextureProxyImpl::SetClient(WebKit::WebStreamTextureClient* client) {
+void StreamTextureProxyImpl::SetClient(cc::VideoFrameProvider::Client* client) {
   base::AutoLock lock(client_lock_);
   client_ = client;
 }
 
-bool StreamTextureProxyImpl::Initialize(int stream_id, int width, int height) {
+void StreamTextureProxyImpl::BindToCurrentThread(
+    int stream_id, int width, int height) {
   loop_ = base::MessageLoopProxy::current();
-  initialized_ = true;
-  return host_->Initialize(stream_id, gfx::Size(width, height));
+  host_->Initialize(stream_id, gfx::Size(width, height));
 }
 
 void StreamTextureProxyImpl::OnFrameAvailable() {
   base::AutoLock lock(client_lock_);
   if (client_)
-    client_->didReceiveFrame();
+    client_->DidReceiveFrame();
 }
 
 void StreamTextureProxyImpl::OnMatrixChanged(const float matrix[16]) {
   base::AutoLock lock(client_lock_);
   if (client_)
-    client_->didUpdateMatrix(matrix);
+    client_->DidUpdateMatrix(matrix);
 }
 
 }  // anonymous namespace
@@ -119,8 +113,7 @@ webkit_media::StreamTextureProxy* StreamTextureFactoryImpl::CreateProxy() {
 void StreamTextureFactoryImpl::EstablishPeer(int stream_id, int player_id) {
   DCHECK(channel_.get());
   channel_->Send(new GpuChannelMsg_EstablishStreamTexture(
-      stream_id, SurfaceTexturePeer::SET_VIDEO_SURFACE_TEXTURE,
-      view_id_, player_id));
+      stream_id, view_id_, player_id));
 }
 
 unsigned StreamTextureFactoryImpl::CreateStreamTexture(unsigned* texture_id) {

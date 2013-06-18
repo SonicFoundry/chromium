@@ -13,11 +13,31 @@ ROOT_DIR = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def pop_gtest_output(args):
-  """Extracts --gtest_output from the args if present."""
-  for index, arg in enumerate(args):
-    if arg.startswith('--gtest_output='):
-      return args.pop(index)
+def pop_known_arguments(args):
+  """Extracts known arguments from the args if present."""
+  rest = []
+  run_test_cases_extra_args = []
+  for arg in args:
+    if arg.startswith(('--gtest_filter=', '--gtest_output=')):
+      run_test_cases_extra_args.append(arg)
+    elif arg == '--run-manual':
+      run_test_cases_extra_args.append(arg)
+    elif arg == '--gtest_print_time':
+      # Ignore.
+      pass
+    elif 'interactive_ui_tests' in arg:
+      # Run this test in a single thread. It is useful to run it under
+      # run_test_cases so automatic flaky test workaround is still used.
+      run_test_cases_extra_args.append('-j1')
+      rest.append(arg)
+    elif 'browser_tests' in arg:
+      # Test cases in this executable fire up *a lot* of child processes,
+      # causing huge memory bottleneck. So use less than N-cpus jobs.
+      run_test_cases_extra_args.append('--use-less-jobs')
+      rest.append(arg)
+    else:
+      rest.append(arg)
+  return run_test_cases_extra_args, rest
 
 
 def main():
@@ -51,15 +71,12 @@ def main():
   ]
   if options.timeout is not None:
     cmd.extend(['--timeout', str(options.timeout)])
-  gtest_output = pop_gtest_output(args)
-  if gtest_output:
-    # It is important that --gtest_output appears before the '--' so it is
-    # properly processed by run_test_cases.
-    cmd.append(gtest_output)
+
+  run_test_cases_extra_args, rest = pop_known_arguments(args)
 
   import run_test_cases  # pylint: disable=F0401
 
-  return run_test_cases.main(cmd + ['--'] + args)
+  return run_test_cases.main(cmd + run_test_cases_extra_args + ['--'] + rest)
 
 
 if __name__ == '__main__':

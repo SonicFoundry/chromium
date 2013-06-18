@@ -6,18 +6,21 @@
 #define CHROME_BROWSER_UI_PREFS_PREFS_TAB_HELPER_H_
 
 #include "base/compiler_specific.h"
-#include "base/prefs/public/pref_change_registrar.h"
+#include "base/prefs/pref_change_registrar.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_contents_user_data.h"
 
 class OverlayUserPrefStore;
-class PrefRegistrySyncable;
 class PrefService;
 class Profile;
 
 namespace content {
 class WebContents;
+}
+
+namespace user_prefs {
+class PrefRegistrySyncable;
 }
 
 // Per-tab class to handle user preferences.
@@ -27,7 +30,7 @@ class PrefsTabHelper : public content::NotificationObserver,
   virtual ~PrefsTabHelper();
 
   static void InitIncognitoUserPrefStore(OverlayUserPrefStore* pref_store);
-  static void RegisterUserPrefs(PrefRegistrySyncable* registry);
+  static void RegisterUserPrefs(user_prefs::PrefRegistrySyncable* registry);
   static void MigrateUserPrefs(PrefService* prefs);
 
  protected:

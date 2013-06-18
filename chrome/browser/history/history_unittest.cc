@@ -38,6 +38,7 @@
 #include "base/path_service.h"
 #include "base/string_util.h"
 #include "base/stringprintf.h"
+#include "base/threading/platform_thread.h"
 #include "base/time.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/browser/history/download_row.h"
@@ -65,6 +66,7 @@
 #include "sync/api/sync_error_factory.h"
 #include "sync/api/sync_merge_result.h"
 #include "sync/protocol/history_delete_directive_specifics.pb.h"
+#include "sync/protocol/sync.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/codec/jpeg_codec.h"
@@ -128,7 +130,8 @@ class HistoryBackendDBTest : public HistoryUnitTestBase {
     base::FilePath data_path;
     ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &data_path));
     data_path = data_path.AppendASCII("History");
-    data_path = data_path.AppendASCII(StringPrintf("history.%d.sql", version));
+    data_path =
+          data_path.AppendASCII(base::StringPrintf("history.%d.sql", version));
     ASSERT_NO_FATAL_FAILURE(
         ExecuteSQLScript(data_path, history_dir_.Append(
             chrome::kHistoryFilename)));
@@ -161,20 +164,19 @@ class HistoryBackendDBTest : public HistoryUnitTestBase {
     std::vector<GURL> url_chain;
     url_chain.push_back(GURL("foo-url"));
 
-    DownloadRow download(
-        base::FilePath(FILE_PATH_LITERAL("foo-path")),
-        base::FilePath(FILE_PATH_LITERAL("foo-path")),
-        url_chain,
-        GURL(""),
-        time,
-        time,
-        0,
-        512,
-        state,
-        content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-        content::DOWNLOAD_INTERRUPT_REASON_NONE,
-        0,
-        0);
+    DownloadRow download(base::FilePath(FILE_PATH_LITERAL("foo-path")),
+                         base::FilePath(FILE_PATH_LITERAL("foo-path")),
+                         url_chain,
+                         GURL(std::string()),
+                         time,
+                         time,
+                         0,
+                         512,
+                         state,
+                         content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+                         content::DOWNLOAD_INTERRUPT_REASON_NONE,
+                         0,
+                         0);
     return db_->CreateDownload(download);
   }
 
@@ -209,8 +211,6 @@ void BackendDelegate::BroadcastNotifications(int type,
   // The backend passes ownership of the details pointer to us.
   delete details;
 }
-
-namespace {
 
 TEST_F(HistoryBackendDBTest, ClearBrowsingData_Downloads) {
   CreateBackendAndDatabase();
@@ -316,7 +316,7 @@ TEST_F(HistoryBackendDBTest, MigrateDownloadsReasonPathsAndDangerType) {
     int64 db_handle = 0;
     // Null path.
     s.BindInt64(0, ++db_handle);
-    s.BindString(1, "");
+    s.BindString(1, std::string());
     s.BindString(2, "http://whatever.com/index.html");
     s.BindInt64(3, now.ToTimeT());
     s.BindInt64(4, 100);
@@ -456,6 +456,118 @@ TEST_F(HistoryBackendDBTest, ConfirmDownloadRowCreateAndDelete) {
         "Select Count(*) from downloads_url_chains"));
     EXPECT_TRUE(statement1.Step());
     EXPECT_EQ(1, statement1.ColumnInt(0));
+  }
+}
+
+TEST_F(HistoryBackendDBTest, DownloadNukeRecordsMissingURLs) {
+  CreateBackendAndDatabase();
+  base::Time now(base::Time::Now());
+  std::vector<GURL> url_chain;
+  DownloadRow download(base::FilePath(FILE_PATH_LITERAL("foo-path")),
+                       base::FilePath(FILE_PATH_LITERAL("foo-path")),
+                       url_chain,
+                       GURL(std::string()),
+                       now,
+                       now,
+                       0,
+                       512,
+                       DownloadItem::COMPLETE,
+                       content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+                       content::DOWNLOAD_INTERRUPT_REASON_NONE,
+                       0,
+                       0);
+
+  // Creating records without any urls should fail.
+  EXPECT_EQ(DownloadDatabase::kUninitializedHandle,
+            db_->CreateDownload(download));
+
+  download.url_chain.push_back(GURL("foo-url"));
+  EXPECT_EQ(1, db_->CreateDownload(download));
+
+  // Pretend that the URLs were dropped.
+  DeleteBackend();
+  {
+    sql::Connection db;
+    ASSERT_TRUE(db.Open(history_dir_.Append(chrome::kHistoryFilename)));
+    sql::Statement statement(db.GetUniqueStatement(
+        "DELETE FROM downloads_url_chains WHERE id=1"));
+    ASSERT_TRUE(statement.Run());
+  }
+  CreateBackendAndDatabase();
+  std::vector<DownloadRow> downloads;
+  db_->QueryDownloads(&downloads);
+  EXPECT_EQ(0U, downloads.size());
+
+  // QueryDownloads should have nuked the corrupt record.
+  DeleteBackend();
+  {
+    sql::Connection db;
+    ASSERT_TRUE(db.Open(history_dir_.Append(chrome::kHistoryFilename)));
+    {
+      sql::Statement statement(db.GetUniqueStatement(
+            "SELECT count(*) from downloads"));
+      ASSERT_TRUE(statement.Step());
+      EXPECT_EQ(0, statement.ColumnInt(0));
+    }
+  }
+}
+
+TEST_F(HistoryBackendDBTest, ConfirmDownloadInProgressCleanup) {
+  // Create the DB.
+  CreateBackendAndDatabase();
+
+  base::Time now(base::Time::Now());
+
+  // Put an IN_PROGRESS download in the DB.
+  AddDownload(DownloadItem::IN_PROGRESS, now);
+
+  // Confirm that they made it into the DB unchanged.
+  DeleteBackend();
+  {
+    sql::Connection db;
+    ASSERT_TRUE(db.Open(history_dir_.Append(chrome::kHistoryFilename)));
+    sql::Statement statement(db.GetUniqueStatement(
+        "Select Count(*) from downloads"));
+    EXPECT_TRUE(statement.Step());
+    EXPECT_EQ(1, statement.ColumnInt(0));
+
+    sql::Statement statement1(db.GetUniqueStatement(
+        "Select state, interrupt_reason from downloads"));
+    EXPECT_TRUE(statement1.Step());
+    EXPECT_EQ(DownloadDatabase::kStateInProgress, statement1.ColumnInt(0));
+    EXPECT_EQ(content::DOWNLOAD_INTERRUPT_REASON_NONE, statement1.ColumnInt(1));
+    EXPECT_FALSE(statement1.Step());
+  }
+
+  // Read in the DB through query downloads, then test that the
+  // right transformation was returned.
+  CreateBackendAndDatabase();
+  std::vector<DownloadRow> results;
+  db_->QueryDownloads(&results);
+  ASSERT_EQ(1u, results.size());
+  EXPECT_EQ(content::DownloadItem::INTERRUPTED, results[0].state);
+  EXPECT_EQ(content::DOWNLOAD_INTERRUPT_REASON_CRASH,
+            results[0].interrupt_reason);
+
+  // Allow the update to propagate, shut down the DB, and confirm that
+  // the query updated the on disk database as well.
+  MessageLoop::current()->RunUntilIdle();
+  DeleteBackend();
+  {
+    sql::Connection db;
+    ASSERT_TRUE(db.Open(history_dir_.Append(chrome::kHistoryFilename)));
+    sql::Statement statement(db.GetUniqueStatement(
+        "Select Count(*) from downloads"));
+    EXPECT_TRUE(statement.Step());
+    EXPECT_EQ(1, statement.ColumnInt(0));
+
+    sql::Statement statement1(db.GetUniqueStatement(
+        "Select state, interrupt_reason from downloads"));
+    EXPECT_TRUE(statement1.Step());
+    EXPECT_EQ(DownloadDatabase::kStateInterrupted, statement1.ColumnInt(0));
+    EXPECT_EQ(content::DOWNLOAD_INTERRUPT_REASON_CRASH,
+              statement1.ColumnInt(1));
+    EXPECT_FALSE(statement1.Step());
   }
 }
 
@@ -1242,107 +1354,6 @@ TEST_F(HistoryTest, HistoryDBTaskCanceled) {
   ASSERT_FALSE(task->done_invoked);
 }
 
-// Create a delete directive for a few specific history entries,
-// including ones that don't exist.  The expected entries should be
-// deleted.
-TEST_F(HistoryTest, ProcessGlobalIdDeleteDirective) {
-  ASSERT_TRUE(history_service_.get());
-  const GURL test_url("http://www.google.com/");
-  for (int64 i = 1; i <= 10; ++i) {
-    base::Time t =
-        base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(i);
-    history_service_->AddPage(test_url, t, NULL, 0, GURL(),
-                              history::RedirectList(),
-                              content::PAGE_TRANSITION_LINK,
-                              history::SOURCE_BROWSED, false);
-  }
-
-  EXPECT_TRUE(QueryURL(history_service_.get(), test_url));
-  EXPECT_EQ(10, query_url_row_.visit_count());
-
-  sync_pb::HistoryDeleteDirectiveSpecifics delete_directive;
-  sync_pb::GlobalIdDirective* global_id_directive =
-      delete_directive.mutable_global_id_directive();
-  global_id_directive->add_global_id(
-      (base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(0))
-      .ToInternalValue());
-  global_id_directive->add_global_id(
-      (base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(2))
-      .ToInternalValue());
-  global_id_directive->add_global_id(
-      (base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(5))
-      .ToInternalValue());
-  global_id_directive->add_global_id(
-      (base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(10))
-      .ToInternalValue());
-  global_id_directive->add_global_id(
-      (base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(20))
-      .ToInternalValue());
-
-  history_service_->ProcessDeleteDirectiveForTest(delete_directive);
-
-  EXPECT_TRUE(QueryURL(history_service_.get(), test_url));
-  EXPECT_EQ(7, query_url_row_.visit_count());
-}
-
-// Create a delete directive for a given time range.  The expected
-// entries should be deleted.
-TEST_F(HistoryTest, ProcessTimeRangeDeleteDirective) {
-  ASSERT_TRUE(history_service_.get());
-  const GURL test_url("http://www.google.com/");
-  for (int64 i = 1; i <= 10; ++i) {
-    base::Time t =
-        base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(i);
-    history_service_->AddPage(test_url, t, NULL, 0, GURL(),
-                              history::RedirectList(),
-                              content::PAGE_TRANSITION_LINK,
-                              history::SOURCE_BROWSED, false);
-  }
-
-  EXPECT_TRUE(QueryURL(history_service_.get(), test_url));
-  EXPECT_EQ(10, query_url_row_.visit_count());
-
-  sync_pb::HistoryDeleteDirectiveSpecifics delete_directive;
-  sync_pb::TimeRangeDirective* time_range_directive =
-      delete_directive.mutable_time_range_directive();
-  time_range_directive->set_start_time_usec(2);
-  time_range_directive->set_end_time_usec(9);
-
-  history_service_->ProcessDeleteDirectiveForTest(delete_directive);
-
-  EXPECT_TRUE(QueryURL(history_service_.get(), test_url));
-  EXPECT_EQ(2, query_url_row_.visit_count());
-}
-
-// Create a local delete directive and process it while sync is
-// offline.  The expected entries should be deleted, and an error
-// should be returned.
-TEST_F(HistoryTest, ProcessLocalDeleteDirectiveSyncOffline) {
-  ASSERT_TRUE(history_service_.get());
-  const GURL test_url("http://www.google.com/");
-  for (int64 i = 1; i <= 10; ++i) {
-    base::Time t =
-        base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(i);
-    history_service_->AddPage(test_url, t, NULL, 0, GURL(),
-                              history::RedirectList(),
-                              content::PAGE_TRANSITION_LINK,
-                              history::SOURCE_BROWSED, false);
-  }
-
-  sync_pb::HistoryDeleteDirectiveSpecifics delete_directive;
-  sync_pb::GlobalIdDirective* global_id_directive =
-      delete_directive.mutable_global_id_directive();
-  global_id_directive->add_global_id(
-      (base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(1))
-      .ToInternalValue());
-
-  EXPECT_TRUE(
-      history_service_->ProcessLocalDeleteDirective(delete_directive).IsSet());
-
-  EXPECT_TRUE(QueryURL(history_service_.get(), test_url));
-  EXPECT_EQ(9, query_url_row_.visit_count());
-}
-
 // Dummy SyncChangeProcessor used to help review what SyncChanges are pushed
 // back up to Sync.
 //
@@ -1399,9 +1410,8 @@ class SyncChangeProcessorDelegate : public syncer::SyncChangeProcessor {
 };
 
 // Create a local delete directive and process it while sync is
-// online, and then when offline.  The expected entries should be
-// deleted, the delete directive should be sent to sync, no error
-// should be returned for the first time, and an error should be
+// online, and then when offline. The delete directive should be sent to sync,
+// no error should be returned for the first time, and an error should be
 // returned for the second time.
 TEST_F(HistoryTest, ProcessLocalDeleteDirectiveSyncOnline) {
   ASSERT_TRUE(history_service_.get());
@@ -1432,17 +1442,183 @@ TEST_F(HistoryTest, ProcessLocalDeleteDirectiveSyncOnline) {
           scoped_ptr<syncer::SyncChangeProcessor>(
               new SyncChangeProcessorDelegate(&change_processor)),
           scoped_ptr<syncer::SyncErrorFactory>()).error().IsSet());
-  EXPECT_FALSE(
-      history_service_->ProcessLocalDeleteDirective(delete_directive).IsSet());
-  EXPECT_EQ(1u, change_processor.GetChanges().size());
 
-  EXPECT_TRUE(QueryURL(history_service_.get(), test_url));
-  EXPECT_EQ(9, query_url_row_.visit_count());
+  syncer::SyncError err =
+      history_service_->ProcessLocalDeleteDirective(delete_directive);
+  EXPECT_FALSE(err.IsSet());
+  EXPECT_EQ(1u, change_processor.GetChanges().size());
 
   history_service_->StopSyncing(syncer::HISTORY_DELETE_DIRECTIVES);
-  EXPECT_TRUE(
-      history_service_->ProcessLocalDeleteDirective(delete_directive).IsSet());
+  err = history_service_->ProcessLocalDeleteDirective(delete_directive);
+  EXPECT_TRUE(err.IsSet());
   EXPECT_EQ(1u, change_processor.GetChanges().size());
+}
+
+// Closure function that runs periodically to check result of delete directive
+// processing. Stop when timeout or processing ends indicated by the creation
+// of sync changes.
+void CheckDirectiveProcessingResult(
+    Time timeout, const TestChangeProcessor* change_processor,
+    uint32 num_changes) {
+  if (base::Time::Now() > timeout ||
+      change_processor->GetChanges().size() >= num_changes) {
+    return;
+  }
+
+  base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(100));
+  MessageLoop::current()->PostTask(
+      FROM_HERE,
+      base::Bind(&CheckDirectiveProcessingResult, timeout,
+                 change_processor, num_changes));
+}
+
+// Create a delete directive for a few specific history entries,
+// including ones that don't exist. The expected entries should be
+// deleted.
+TEST_F(HistoryTest, ProcessGlobalIdDeleteDirective) {
+  ASSERT_TRUE(history_service_.get());
+  const GURL test_url("http://www.google.com/");
+  for (int64 i = 1; i <= 20; i++) {
+    base::Time t =
+        base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(i);
+    history_service_->AddPage(test_url, t, NULL, 0, GURL(),
+                              history::RedirectList(),
+                              content::PAGE_TRANSITION_LINK,
+                              history::SOURCE_BROWSED, false);
+  }
+
+  EXPECT_TRUE(QueryURL(history_service_.get(), test_url));
+  EXPECT_EQ(20, query_url_row_.visit_count());
+
+  syncer::SyncDataList directives;
+  // 1st directive.
+  sync_pb::EntitySpecifics entity_specs;
+  sync_pb::GlobalIdDirective* global_id_directive =
+      entity_specs.mutable_history_delete_directive()
+          ->mutable_global_id_directive();
+  global_id_directive->add_global_id(
+      (base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(6))
+      .ToInternalValue());
+  global_id_directive->set_start_time_usec(3);
+  global_id_directive->set_end_time_usec(10);
+  directives.push_back(
+      syncer::SyncData::CreateRemoteData(1, entity_specs));
+
+  // 2nd directive.
+  global_id_directive->Clear();
+  global_id_directive->add_global_id(
+      (base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(17))
+      .ToInternalValue());
+  global_id_directive->set_start_time_usec(13);
+  global_id_directive->set_end_time_usec(19);
+  directives.push_back(
+      syncer::SyncData::CreateRemoteData(2, entity_specs));
+
+  TestChangeProcessor change_processor;
+  EXPECT_FALSE(
+      history_service_->MergeDataAndStartSyncing(
+          syncer::HISTORY_DELETE_DIRECTIVES,
+          directives,
+          scoped_ptr<syncer::SyncChangeProcessor>(
+              new SyncChangeProcessorDelegate(&change_processor)),
+          scoped_ptr<syncer::SyncErrorFactory>()).error().IsSet());
+
+  // Inject a task to check status and keep message loop filled before directive
+  // processing finishes.
+  MessageLoop::current()->PostTask(
+      FROM_HERE,
+      base::Bind(&CheckDirectiveProcessingResult,
+                 base::Time::Now() + base::TimeDelta::FromSeconds(10),
+                 &change_processor, 2));
+  MessageLoop::current()->RunUntilIdle();
+  EXPECT_TRUE(QueryURL(history_service_.get(), test_url));
+  ASSERT_EQ(5, query_url_row_.visit_count());
+  EXPECT_EQ(base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(1),
+            query_url_visits_[0].visit_time);
+  EXPECT_EQ(base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(2),
+            query_url_visits_[1].visit_time);
+  EXPECT_EQ(base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(11),
+            query_url_visits_[2].visit_time);
+  EXPECT_EQ(base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(12),
+            query_url_visits_[3].visit_time);
+  EXPECT_EQ(base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(20),
+            query_url_visits_[4].visit_time);
+
+  // Expect two sync changes for deleting processed directives.
+  const syncer::SyncChangeList& sync_changes = change_processor.GetChanges();
+  ASSERT_EQ(2u, sync_changes.size());
+  EXPECT_EQ(syncer::SyncChange::ACTION_DELETE, sync_changes[0].change_type());
+  EXPECT_EQ(1, sync_changes[0].sync_data().GetRemoteId());
+  EXPECT_EQ(syncer::SyncChange::ACTION_DELETE, sync_changes[1].change_type());
+  EXPECT_EQ(2, sync_changes[1].sync_data().GetRemoteId());
+}
+
+// Create delete directives for time ranges.  The expected entries should be
+// deleted.
+TEST_F(HistoryTest, ProcessTimeRangeDeleteDirective) {
+  ASSERT_TRUE(history_service_.get());
+  const GURL test_url("http://www.google.com/");
+  for (int64 i = 1; i <= 10; ++i) {
+    base::Time t =
+        base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(i);
+    history_service_->AddPage(test_url, t, NULL, 0, GURL(),
+                              history::RedirectList(),
+                              content::PAGE_TRANSITION_LINK,
+                              history::SOURCE_BROWSED, false);
+  }
+
+  EXPECT_TRUE(QueryURL(history_service_.get(), test_url));
+  EXPECT_EQ(10, query_url_row_.visit_count());
+
+  syncer::SyncDataList directives;
+  // 1st directive.
+  sync_pb::EntitySpecifics entity_specs;
+  sync_pb::TimeRangeDirective* time_range_directive =
+      entity_specs.mutable_history_delete_directive()
+          ->mutable_time_range_directive();
+  time_range_directive->set_start_time_usec(2);
+  time_range_directive->set_end_time_usec(5);
+  directives.push_back(syncer::SyncData::CreateRemoteData(1, entity_specs));
+
+  // 2nd directive.
+  time_range_directive->Clear();
+  time_range_directive->set_start_time_usec(8);
+  time_range_directive->set_end_time_usec(10);
+  directives.push_back(syncer::SyncData::CreateRemoteData(2, entity_specs));
+
+  TestChangeProcessor change_processor;
+  EXPECT_FALSE(
+      history_service_->MergeDataAndStartSyncing(
+          syncer::HISTORY_DELETE_DIRECTIVES,
+          directives,
+          scoped_ptr<syncer::SyncChangeProcessor>(
+              new SyncChangeProcessorDelegate(&change_processor)),
+          scoped_ptr<syncer::SyncErrorFactory>()).error().IsSet());
+
+  // Inject a task to check status and keep message loop filled before
+  // directive processing finishes.
+  MessageLoop::current()->PostTask(
+      FROM_HERE,
+      base::Bind(&CheckDirectiveProcessingResult,
+                 base::Time::Now() + base::TimeDelta::FromSeconds(10),
+                 &change_processor, 2));
+  MessageLoop::current()->RunUntilIdle();
+  EXPECT_TRUE(QueryURL(history_service_.get(), test_url));
+  ASSERT_EQ(3, query_url_row_.visit_count());
+  EXPECT_EQ(base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(1),
+            query_url_visits_[0].visit_time);
+  EXPECT_EQ(base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(6),
+            query_url_visits_[1].visit_time);
+  EXPECT_EQ(base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(7),
+            query_url_visits_[2].visit_time);
+
+  // Expect two sync changes for deleting processed directives.
+  const syncer::SyncChangeList& sync_changes = change_processor.GetChanges();
+  ASSERT_EQ(2u, sync_changes.size());
+  EXPECT_EQ(syncer::SyncChange::ACTION_DELETE, sync_changes[0].change_type());
+  EXPECT_EQ(1, sync_changes[0].sync_data().GetRemoteId());
+  EXPECT_EQ(syncer::SyncChange::ACTION_DELETE, sync_changes[1].change_type());
+  EXPECT_EQ(2, sync_changes[1].sync_data().GetRemoteId());
 }
 
 TEST_F(HistoryBackendDBTest, MigratePresentations) {
@@ -1513,7 +1689,5 @@ TEST_F(HistoryBackendDBTest, MigratePresentations) {
   EXPECT_EQ(title, results[0]->GetTitle());
   STLDeleteElements(&results);
 }
-
-}  // namespace
 
 }  // namespace history

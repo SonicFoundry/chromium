@@ -14,11 +14,17 @@
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/memory/weak_ptr.h"
+#include "base/sequenced_task_runner.h"
 #include "base/string16.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "chrome/browser/storage_monitor/storage_info.h"
 #include "chrome/browser/storage_monitor/storage_monitor.h"
 
 namespace chrome {
+
+namespace test {
+class TestVolumeMountWatcherWin;
+}
 
 // This class watches the volume mount points and sends notifications to
 // StorageMonitor about the device attach/detach events.
@@ -36,19 +42,10 @@ class VolumeMountWatcherWin {
   void Init();
 
   // Gets the information about the device mounted at |device_path|. On success,
-  // returns true and fills in |location|, |unique_id|, |name|, |removable|, and
-  // |total_size_in_bytes|.
+  // returns true and fills in |info|.
   // Can block during startup while device info is still loading.
   virtual bool GetDeviceInfo(const base::FilePath& device_path,
-                             string16* location,
-                             std::string* unique_id,
-                             string16* name,
-                             bool* removable,
-                             uint64* total_size_in_bytes) const;
-
-  // Returns the partition size of the given mount location. Returns 0 if the
-  // location is unknown.
-  uint64 GetStorageSize(const base::FilePath::StringType& mount_point) const;
+                             StorageInfo* info) const;
 
   // Processes DEV_BROADCAST_VOLUME messages and triggers a
   // notification if appropriate.
@@ -59,58 +56,48 @@ class VolumeMountWatcherWin {
   void SetNotifications(StorageMonitor::Receiver* notifications);
 
  protected:
-  struct MountPointInfo {
-    std::string device_id;
-    string16 location;
-    std::string unique_id;
-    string16 name;
-    bool removable;
-    uint64 total_size_in_bytes;
-  };
+  typedef base::Callback<bool(const base::FilePath&,
+                              StorageInfo*)> GetDeviceDetailsCallbackType;
+
+  typedef base::Callback<std::vector<base::FilePath>(void)>
+      GetAttachedDevicesCallbackType;
 
   // Handles mass storage device attach event on UI thread.
-  void HandleDeviceAttachEventOnUIThread(const base::FilePath& device_path,
-                                         const MountPointInfo& info);
+  void HandleDeviceAttachEventOnUIThread(
+      const base::FilePath& device_path,
+      const StorageInfo& info);
 
   // Handles mass storage device detach event on UI thread.
   void HandleDeviceDetachEventOnUIThread(const string16& device_location);
 
-  static void VolumeMountWatcherWin::FindExistingDevicesAndAdd(
-      base::Callback<std::vector<base::FilePath>(void)>
-          get_attached_devices_callback,
-      base::WeakPtr<chrome::VolumeMountWatcherWin> volume_watcher);
-
   // UI thread delegate to set up adding storage devices.
   void AddDevicesOnUIThread(std::vector<base::FilePath> removable_devices);
 
-  static void VolumeMountWatcherWin::RetrieveInfoForDeviceAndAdd(
+  // Runs |get_device_details_callback| for |device_path| on a worker thread.
+  // |volume_watcher| points back to the VolumeMountWatcherWin that called it.
+  static void RetrieveInfoForDeviceAndAdd(
       const base::FilePath& device_path,
-      base::Callback<bool(const base::FilePath&, string16*,
-                          std::string*, string16*,
-                          bool*, uint64*)> get_device_details_callback,
+      const GetDeviceDetailsCallbackType& get_device_details_callback,
       base::WeakPtr<chrome::VolumeMountWatcherWin> volume_watcher);
 
   // Mark that a device we started a metadata check for has completed.
   virtual void DeviceCheckComplete(const base::FilePath& device_path);
 
+  virtual GetAttachedDevicesCallbackType GetAttachedDevicesCallback() const;
+  virtual GetDeviceDetailsCallbackType GetDeviceDetailsCallback() const;
+
   // Worker pool used to collect device information. Used because some
   // devices freeze workers trying to get device info, resulting in
   // shutdown hangs.
   scoped_refptr<base::SequencedWorkerPool> device_info_worker_pool_;
-
-  // These closures can be overridden for testing to remove calling Windows API
-  // functions.
-  base::Callback<std::vector<base::FilePath>(void)>
-      get_attached_devices_callback_;
-  base::Callback<
-      bool(const base::FilePath&, string16*,
-           std::string*, string16*, bool*, uint64*)>
-          get_device_details_callback_;
+  scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
  private:
+  friend class test::TestVolumeMountWatcherWin;
+
   // Key: Mass storage device mount point.
   // Value: Mass storage device metadata.
-  typedef std::map<string16, MountPointInfo> MountPointDeviceMetadataMap;
+  typedef std::map<string16, StorageInfo> MountPointDeviceMetadataMap;
 
   // Maintain a set of device attribute check calls in-flight. Only accessed
   // on the UI thread. This is to try and prevent the same device from

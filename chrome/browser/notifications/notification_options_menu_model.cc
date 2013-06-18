@@ -46,7 +46,7 @@ const int kCornerLowerRight = 14;
 const int kCornerDefault = 20;
 
 CornerSelectionMenuModel::CornerSelectionMenuModel(Balloon* balloon)
-    : ALLOW_THIS_IN_INITIALIZER_LIST(ui::SimpleMenuModel(this)),
+    : ui::SimpleMenuModel(this),
       balloon_(balloon) {
   AddRadioItem(kCornerDefault,
                l10n_util::GetStringUTF16(IDS_NOTIFICATION_POSITION_DEFAULT),
@@ -107,7 +107,7 @@ bool CornerSelectionMenuModel::GetAcceleratorForCommandId(
   return false;
 }
 
-void CornerSelectionMenuModel::ExecuteCommand(int command_id) {
+void CornerSelectionMenuModel::ExecuteCommand(int command_id, int event_flags) {
   // TODO(dimich): MessageCenter does not use this preference (yet?)
   if (NotificationUIManager::DelegatesToMessageCenter())
     return;
@@ -131,7 +131,7 @@ void CornerSelectionMenuModel::ExecuteCommand(int command_id) {
 }
 
 NotificationOptionsMenuModel::NotificationOptionsMenuModel(Balloon* balloon)
-    : ALLOW_THIS_IN_INITIALIZER_LIST(ui::SimpleMenuModel(this)),
+    : ui::SimpleMenuModel(this),
       balloon_(balloon) {
   const Notification& notification = balloon->notification();
   const GURL& origin = notification.origin_url();
@@ -235,7 +235,8 @@ bool NotificationOptionsMenuModel::GetAcceleratorForCommandId(
   return false;
 }
 
-void NotificationOptionsMenuModel::ExecuteCommand(int command_id) {
+void NotificationOptionsMenuModel::ExecuteCommand(int command_id,
+                                                  int event_flags) {
   DesktopNotificationService* service =
       DesktopNotificationServiceFactory::GetForProfile(balloon_->profile());
   ExtensionService* extension_service =

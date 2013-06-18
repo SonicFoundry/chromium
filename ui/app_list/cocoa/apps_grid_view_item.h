@@ -8,6 +8,8 @@
 #import <Cocoa/Cocoa.h>
 
 #include "base/memory/scoped_ptr.h"
+#include "ui/app_list/app_list_export.h"
+#import "ui/base/cocoa/tracking_area.h"
 
 namespace app_list {
 class AppListItemModel;
@@ -16,10 +18,16 @@ class ItemModelObserverBridge;
 
 // AppsGridViewItem is the controller for an NSButton representing an app item
 // on an NSCollectionView controlled by an AppsGridController.
+APP_LIST_EXPORT
 @interface AppsGridViewItem : NSCollectionViewItem {
  @private
   scoped_ptr<app_list::ItemModelObserverBridge> observerBridge_;
+
+  // Used to highlight the background on hover.
+  ui::ScopedCrTrackingArea trackingArea_;
 }
+
+- (id)initWithSize:(NSSize)tileSize;
 
 - (void)setModel:(app_list::AppListItemModel*)itemModel;
 

@@ -58,7 +58,7 @@ MATCHER_P(HasValidDelay, value, "") {
 // Used to terminate a loop from a different thread than the loop belongs to.
 // |loop| should be a MessageLoopProxy.
 ACTION_P(QuitLoop, loop) {
-  loop->PostTask(FROM_HERE, MessageLoop::QuitClosure());
+  loop->PostTask(FROM_HERE, base::MessageLoop::QuitClosure());
 }
 
 class MockAudioSourceCallback : public AudioOutputStream::AudioSourceCallback {
@@ -68,7 +68,7 @@ class MockAudioSourceCallback : public AudioOutputStream::AudioSourceCallback {
   MOCK_METHOD3(OnMoreIOData, int(AudioBus* source,
                                  AudioBus* dest,
                                  AudioBuffersState buffers_state));
-  MOCK_METHOD2(OnError, void(AudioOutputStream* stream, int code));
+  MOCK_METHOD1(OnError, void(AudioOutputStream* stream));
 };
 
 // This audio source implementation should be used for manual tests only since
@@ -146,13 +146,13 @@ class ReadFromFileAudioSource : public AudioOutputStream::AudioSourceCallback {
     return 0;
   }
 
-  virtual void OnError(AudioOutputStream* stream, int code) {}
+  virtual void OnError(AudioOutputStream* stream) {}
 
   int file_size() { return file_->GetDataSize(); }
 
  private:
   scoped_refptr<DecoderBuffer> file_;
-  scoped_array<int> delta_times_;
+  scoped_ptr<int[]> delta_times_;
   int pos_;
   base::Time previous_call_time_;
   FILE* text_file_;
@@ -297,7 +297,7 @@ TEST(WASAPIAudioOutputStreamTest, OpenStartAndClose) {
   AudioOutputStream* aos = CreateDefaultAudioOutputStream(audio_manager.get());
   EXPECT_TRUE(aos->Open());
   MockAudioSourceCallback source;
-  EXPECT_CALL(source, OnError(aos, _))
+  EXPECT_CALL(source, OnError(aos))
       .Times(0);
   aos->Start(&source);
   aos->Close();
@@ -311,7 +311,7 @@ TEST(WASAPIAudioOutputStreamTest, OpenStartStopAndClose) {
   AudioOutputStream* aos = CreateDefaultAudioOutputStream(audio_manager.get());
   EXPECT_TRUE(aos->Open());
   MockAudioSourceCallback source;
-  EXPECT_CALL(source, OnError(aos, _))
+  EXPECT_CALL(source, OnError(aos))
       .Times(0);
   aos->Start(&source);
   aos->Stop();
@@ -401,7 +401,7 @@ TEST(WASAPIAudioOutputStreamTest, ValidPacketSize) {
   if (!CanRunAudioTests(audio_manager.get()))
     return;
 
-  MessageLoopForUI loop;
+  base::MessageLoopForUI loop;
   MockAudioSourceCallback source;
 
   // Create default WASAPI output stream which plays out in stereo using
@@ -424,7 +424,7 @@ TEST(WASAPIAudioOutputStreamTest, ValidPacketSize) {
           Return(aosw.samples_per_packet())));
 
   aos->Start(&source);
-  loop.PostDelayedTask(FROM_HERE, MessageLoop::QuitClosure(),
+  loop.PostDelayedTask(FROM_HERE, base::MessageLoop::QuitClosure(),
                        TestTimeouts::action_timeout());
   loop.Run();
   aos->Stop();
@@ -626,7 +626,7 @@ TEST(WASAPIAudioOutputStreamTest, ExclusiveModeMinBufferSizeAt48kHz) {
   if (!CanRunAudioTests(audio_manager.get()))
     return;
 
-  MessageLoopForUI loop;
+  base::MessageLoopForUI loop;
   MockAudioSourceCallback source;
 
   // Create exclusive-mode WASAPI output stream which plays out in stereo
@@ -650,7 +650,7 @@ TEST(WASAPIAudioOutputStreamTest, ExclusiveModeMinBufferSizeAt48kHz) {
       .WillRepeatedly(Return(aosw.samples_per_packet()));
 
   aos->Start(&source);
-  loop.PostDelayedTask(FROM_HERE, MessageLoop::QuitClosure(),
+  loop.PostDelayedTask(FROM_HERE, base::MessageLoop::QuitClosure(),
                        TestTimeouts::action_timeout());
   loop.Run();
   aos->Stop();
@@ -667,7 +667,7 @@ TEST(WASAPIAudioOutputStreamTest, ExclusiveModeMinBufferSizeAt44kHz) {
   if (!CanRunAudioTests(audio_manager.get()))
     return;
 
-  MessageLoopForUI loop;
+  base::MessageLoopForUI loop;
   MockAudioSourceCallback source;
 
   // Create exclusive-mode WASAPI output stream which plays out in stereo
@@ -691,7 +691,7 @@ TEST(WASAPIAudioOutputStreamTest, ExclusiveModeMinBufferSizeAt44kHz) {
     .WillRepeatedly(Return(aosw.samples_per_packet()));
 
   aos->Start(&source);
-  loop.PostDelayedTask(FROM_HERE, MessageLoop::QuitClosure(),
+  loop.PostDelayedTask(FROM_HERE, base::MessageLoop::QuitClosure(),
                         TestTimeouts::action_timeout());
   loop.Run();
   aos->Stop();

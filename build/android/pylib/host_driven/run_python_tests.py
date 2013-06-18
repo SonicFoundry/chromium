@@ -11,8 +11,8 @@ import types
 
 from pylib import android_commands
 from pylib import constants
-from pylib.base.test_result import TestResults
-from pylib.instrumentation import apk_info
+from pylib.base import base_test_result
+from pylib.instrumentation import test_package
 from pylib.instrumentation import test_runner
 
 import python_test_base
@@ -71,23 +71,23 @@ def DispatchPythonTests(options):
   logging.debug('All available tests: ' + str(test_names))
 
   available_tests = test_collection.GetAvailableTests(
-      options.annotation, options.test_filter)
+      options.annotations, options.test_filter)
 
   if not available_tests:
     logging.warning('No Python tests to run with current args.')
-    return TestResults()
+    return base_test_result.TestRunResults()
 
-  available_tests *= options.number_of_runs
   test_names = [t.qualified_name for t in available_tests]
   logging.debug('Final list of tests to run: ' + str(test_names))
 
   # Copy files to each device before running any tests.
   for device_id in attached_devices:
     logging.debug('Pushing files to device %s', device_id)
-    apks = [apk_info.ApkInfo(options.test_apk_path, options.test_apk_jar_path)]
-    test_files_copier = test_runner.TestRunner(options, device_id, None, False,
-                                               0, apks, [])
-    test_files_copier.CopyTestFilesOnce()
+    test_pkg = test_package.TestPackage(options.test_apk_path,
+                                        options.test_apk_jar_path)
+    test_files_copier = test_runner.TestRunner(
+        options, device_id, 0, test_pkg, [])
+    test_files_copier.PushDependencies()
 
   # Actually run the tests.
   if len(attached_devices) > 1 and options.wait_for_debugger:

@@ -28,8 +28,6 @@
 #include "base/time.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
-#include "chrome/browser/api/infobars/simple_alert_infobar_delegate.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/background/background_contents_service.h"
@@ -43,6 +41,7 @@
 #include "chrome/browser/content_settings/host_content_settings_map.h"
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/custom_handlers/protocol_handler_registry.h"
+#include "chrome/browser/custom_handlers/protocol_handler_registry_factory.h"
 #include "chrome/browser/custom_handlers/register_protocol_handler_infobar_delegate.h"
 #include "chrome/browser/devtools/devtools_toggle_action.h"
 #include "chrome/browser/devtools/devtools_window.h"
@@ -59,7 +58,10 @@
 #include "chrome/browser/file_select_helper.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/google/google_url_tracker.h"
+#include "chrome/browser/infobars/infobar_service.h"
+#include "chrome/browser/infobars/simple_alert_infobar_delegate.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/media/media_capture_devices_dispatcher.h"
 #include "chrome/browser/net/url_fixer_upper.h"
 #include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/browser/pepper_broker_infobar_delegate.h"
@@ -70,6 +72,7 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/repost_form_warning_controller.h"
+#include "chrome/browser/search/search.h"
 #include "chrome/browser/sessions/session_service.h"
 #include "chrome/browser/sessions/session_service_factory.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
@@ -113,10 +116,7 @@
 #include "chrome/browser/ui/global_error/global_error.h"
 #include "chrome/browser/ui/global_error/global_error_service.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
-#include "chrome/browser/ui/media_stream_infobar_delegate.h"
 #include "chrome/browser/ui/omnibox/location_bar.h"
-#include "chrome/browser/ui/screen_capture_infobar_delegate.h"
-#include "chrome/browser/ui/search/search.h"
 #include "chrome/browser/ui/search/search_delegate.h"
 #include "chrome/browser/ui/search/search_model.h"
 #include "chrome/browser/ui/search_engines/search_engine_tab_helper.h"
@@ -149,6 +149,7 @@
 #include "chrome/common/profiling.h"
 #include "chrome/common/search_types.h"
 #include "chrome/common/startup_metric_utils.h"
+#include "chrome/common/url_constants.h"
 #include "chrome/common/web_apps.h"
 #include "content/public/browser/color_chooser.h"
 #include "content/public/browser/devtools_manager.h"
@@ -189,16 +190,16 @@
 
 #if defined(OS_WIN)
 #include "base/win/metro.h"
-#include "chrome/browser/autofill/autofill_ie_toolbar_import_win.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/ssl/ssl_error_info.h"
 #include "chrome/browser/task_manager/task_manager.h"
 #include "chrome/browser/ui/view_ids.h"
+#include "components/autofill/browser/autofill_ie_toolbar_import_win.h"
 #include "ui/base/win/shell.h"
 #endif  // OS_WIN
 
 #if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/drive/drive_file_system_util.h"
+#include "chrome/browser/chromeos/drive/file_system_util.h"
 #endif
 
 #if defined(USE_ASH)
@@ -330,9 +331,7 @@ Browser::Browser(const CreateParams& params)
     : type_(params.type),
       profile_(params.profile),
       window_(NULL),
-      ALLOW_THIS_IN_INITIALIZER_LIST(
-          tab_strip_model_delegate_(
-            new chrome::BrowserTabStripModelDelegate(this))),
+      tab_strip_model_delegate_(new chrome::BrowserTabStripModelDelegate(this)),
       tab_strip_model_(new TabStripModel(tab_strip_model_delegate_.get(),
                                          params.profile)),
       app_name_(params.app_name),
@@ -343,35 +342,25 @@ Browser::Browser(const CreateParams& params)
       initial_show_state_(params.initial_show_state),
       is_session_restore_(params.is_session_restore),
       host_desktop_type_(params.host_desktop_type),
-      ALLOW_THIS_IN_INITIALIZER_LIST(
-          unload_controller_(new chrome::UnloadController(this))),
+      unload_controller_(new chrome::UnloadController(this)),
       weak_factory_(this),
-      ALLOW_THIS_IN_INITIALIZER_LIST(
-          content_setting_bubble_model_delegate_(
-              new BrowserContentSettingBubbleModelDelegate(this))),
-      ALLOW_THIS_IN_INITIALIZER_LIST(
-          toolbar_model_delegate_(
-              new BrowserToolbarModelDelegate(this))),
-      ALLOW_THIS_IN_INITIALIZER_LIST(
-          tab_restore_service_delegate_(
-              new BrowserTabRestoreServiceDelegate(this))),
-      ALLOW_THIS_IN_INITIALIZER_LIST(
-          synced_window_delegate_(
-              new BrowserSyncedWindowDelegate(this))),
+      content_setting_bubble_model_delegate_(
+          new BrowserContentSettingBubbleModelDelegate(this)),
+      toolbar_model_delegate_(new BrowserToolbarModelDelegate(this)),
+      tab_restore_service_delegate_(new BrowserTabRestoreServiceDelegate(this)),
+      synced_window_delegate_(new BrowserSyncedWindowDelegate(this)),
       bookmark_bar_state_(BookmarkBar::HIDDEN),
-      ALLOW_THIS_IN_INITIALIZER_LIST(
-          command_controller_(new chrome::BrowserCommandController(
-              this, g_browser_process->profile_manager()))),
+      command_controller_(new chrome::BrowserCommandController(
+          this, g_browser_process->profile_manager())),
       window_has_shown_(false) {
   if (!app_name_.empty())
     chrome::RegisterAppPrefs(app_name_, profile_);
   tab_strip_model_->AddObserver(this);
 
   toolbar_model_.reset(new ToolbarModelImpl(toolbar_model_delegate_.get()));
-  search_model_.reset(new chrome::search::SearchModel(NULL));
+  search_model_.reset(new SearchModel());
   search_delegate_.reset(
-      new chrome::search::SearchDelegate(search_model_.get(),
-                                         toolbar_model_.get()));
+      new SearchDelegate(search_model_.get(), toolbar_model_.get()));
 
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_LOADED,
                  content::Source<Profile>(profile_->GetOriginalProfile()));
@@ -410,12 +399,11 @@ Browser::Browser(const CreateParams& params)
                              profile_->GetPrefs());
 
   if (is_type_tabbed())
-    instant_controller_.reset(new chrome::BrowserInstantController(this));
+    instant_controller_.reset(new BrowserInstantController(this));
 
   UpdateBookmarkBarState(BOOKMARK_BAR_STATE_CHANGE_INIT);
 
-  base::FilePath profile_path = profile_->GetPath();
-  ProfileMetrics::LogProfileLaunch(profile_path);
+  ProfileMetrics::LogProfileLaunch(profile_);
 
   window_ = params.window ? params.window : CreateBrowserWindow(this);
 
@@ -424,16 +412,11 @@ Browser::Browser(const CreateParams& params)
   // Set the app user model id for this application to that of the application
   // name.  See http://crbug.com/7028.
   ui::win::SetAppIdForWindow(
-      is_app() && !is_type_panel() ?
+      is_app() ?
       ShellIntegration::GetAppModelIdForProfile(UTF8ToWide(app_name_),
                                                 profile_->GetPath()) :
       ShellIntegration::GetChromiumModelIdForProfile(profile_->GetPath()),
       window()->GetNativeWindow());
-
-  if (is_type_panel()) {
-    ui::win::SetAppIconForWindow(ShellIntegration::GetChromiumIconLocation(),
-                                 window()->GetNativeWindow());
-  }
 #endif
 
   // Create the extension window controller before sending notifications.
@@ -451,7 +434,8 @@ Browser::Browser(const CreateParams& params)
   if (first_run::ShouldDoPersonalDataManagerFirstRun()) {
 #if defined(OS_WIN)
     // Notify PDM that this is a first run.
-    ImportAutofillDataWin(PersonalDataManagerFactory::GetForProfile(profile_));
+    ImportAutofillDataWin(
+        autofill::PersonalDataManagerFactory::GetForProfile(profile_));
 #endif  // defined(OS_WIN)
   }
 
@@ -619,10 +603,8 @@ void Browser::OnWindowClosing() {
   bool should_quit_if_last_browser =
       browser_shutdown::IsTryingToQuit() || !chrome::WillKeepAlive();
 
-  if (should_quit_if_last_browser &&
-      BrowserList::GetInstance(host_desktop_type_)->size() == 1) {
+  if (should_quit_if_last_browser && chrome::ShouldStartShutdown(this))
     browser_shutdown::OnShutdownStarting(browser_shutdown::WINDOW_CLOSE);
-  }
 
   // Don't use GetForProfileIfExisting here, we want to force creation of the
   // session service so that user can restore what was open.
@@ -655,8 +637,16 @@ void Browser::OnWindowActivated() {
   // On some platforms we want to automatically reload tabs that are
   // killed when the user selects them.
   WebContents* contents = tab_strip_model_->GetActiveWebContents();
-  if (contents && ShouldReloadCrashedTab(contents))
+  if (contents && ShouldReloadCrashedTab(contents)) {
     chrome::Reload(this, CURRENT_TAB);
+    // The reload above will change the toolbar reload button into a stop
+    // button. If the user activated the window with a mouse press on the
+    // reload button itself, the reload will stop on mouse release and the page
+    // will be blank. Disable the stop command temporarily. It will be
+    // re-enabled as the page loads.
+    command_controller_->command_updater()->UpdateCommandEnabled(IDC_STOP,
+                                                                 false);
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -811,9 +801,13 @@ void Browser::OpenFile() {
   ui::SelectFileDialog::FileTypeInfo file_types;
   file_types.support_drive = true;
   select_file_dialog_->SelectFile(ui::SelectFileDialog::SELECT_OPEN_FILE,
-                                  string16(), directory,
-                                  &file_types, 0, FILE_PATH_LITERAL(""),
-                                  parent_window, NULL);
+                                  string16(),
+                                  directory,
+                                  &file_types,
+                                  0,
+                                  base::FilePath::StringType(),
+                                  parent_window,
+                                  NULL);
 }
 
 void Browser::UpdateDownloadShelfVisibility(bool visible) {
@@ -867,13 +861,13 @@ void Browser::RegisterProtocolHandlerHelper(WebContents* web_contents,
   ProtocolHandler handler =
       ProtocolHandler::CreateProtocolHandler(protocol, url, title);
 
-  ProtocolHandlerRegistry* registry = profile->GetProtocolHandlerRegistry();
-  TabSpecificContentSettings* tab_content_settings =
-      TabSpecificContentSettings::FromWebContents(web_contents);
-
+  ProtocolHandlerRegistry* registry =
+      ProtocolHandlerRegistryFactory::GetForProfile(profile);
   if (registry->SilentlyHandleRegisterHandlerRequest(handler))
     return;
 
+  TabSpecificContentSettings* tab_content_settings =
+      TabSpecificContentSettings::FromWebContents(web_contents);
   if (!user_gesture && window) {
     tab_content_settings->set_pending_protocol_handler(handler);
     tab_content_settings->set_previous_protocol_handler(
@@ -973,8 +967,13 @@ void Browser::TabInsertedAt(WebContents* contents,
 
   SessionService* session_service =
       SessionServiceFactory::GetForProfile(profile_);
-  if (session_service)
+  if (session_service) {
     session_service->TabInserted(contents);
+    int new_active_index = tab_strip_model_->active_index();
+    if (index < new_active_index)
+      session_service->SetSelectedTabInWindow(session_id(),
+                                              new_active_index);
+  }
 }
 
 void Browser::TabClosingAt(TabStripModel* tab_strip_model,
@@ -995,6 +994,16 @@ void Browser::TabClosingAt(TabStripModel* tab_strip_model,
 }
 
 void Browser::TabDetachedAt(WebContents* contents, int index) {
+  // TabDetachedAt is called before TabStripModel has updated the
+  // active index.
+  int old_active_index = tab_strip_model_->active_index();
+  if (index < old_active_index && !tab_strip_model_->closing_all()) {
+    SessionService* session_service =
+        SessionServiceFactory::GetForProfileIfExisting(profile_);
+    if (session_service)
+      session_service->SetSelectedTabInWindow(session_id(),
+                                              old_active_index - 1);
+  }
   TabDetachedAtImpl(contents, index, DETACH_TYPE_DETACH);
 }
 
@@ -1013,11 +1022,14 @@ void Browser::TabDeactivated(WebContents* contents) {
 void Browser::ActiveTabChanged(WebContents* old_contents,
                                WebContents* new_contents,
                                int index,
-                               bool user_gesture) {
+                               int reason) {
+  content::RecordAction(UserMetricsAction("ActiveTabChanged"));
+
   // On some platforms we want to automatically reload tabs that are
   // killed when the user selects them.
   bool did_reload = false;
-  if (user_gesture && ShouldReloadCrashedTab(new_contents)) {
+  if ((reason & CHANGE_REASON_USER_GESTURE) &&
+      ShouldReloadCrashedTab(new_contents)) {
     LOG(WARNING) << "Reloading killed tab at " << index;
     static int reload_count = 0;
     UMA_HISTOGRAM_CUSTOM_COUNTS(
@@ -1040,7 +1052,7 @@ void Browser::ActiveTabChanged(WebContents* old_contents,
     ProcessPendingUIUpdates();
 
   // Propagate the profile to the location bar.
-  UpdateToolbar(true);
+  UpdateToolbar((reason & CHANGE_REASON_REPLACED) == 0);
 
   // Propagate tab state to toolbar, tab-strip, etc.
   UpdateSearchState(new_contents);
@@ -1148,10 +1160,20 @@ void Browser::TabStripEmpty() {
 
 bool Browser::CanOverscrollContent() const {
 #if defined(USE_AURA)
-  bool overscroll_enabled = !CommandLine::ForCurrentProcess()->
-      HasSwitch(switches::kDisableOverscrollHistoryNavigation);
-  return overscroll_enabled ? !is_app() && !is_devtools() && is_type_tabbed() :
-                              false;
+  bool overscroll_enabled = CommandLine::ForCurrentProcess()->
+      GetSwitchValueASCII(switches::kOverscrollHistoryNavigation) != "0";
+  if (!overscroll_enabled)
+    return false;
+  if (is_app() || is_devtools() || !is_type_tabbed())
+    return false;
+
+  // The detached bookmark bar has appearance of floating above the
+  // web-contents. This does not play nicely with overscroll navigation
+  // gestures. So disable overscroll navigation when the bookmark bar is in the
+  // detached state.
+  if (bookmark_bar_state_ == BookmarkBar::DETACHED)
+    return false;
+  return true;
 #else
   return false;
 #endif
@@ -1223,18 +1245,25 @@ void Browser::ShowFirstRunBubble() {
   window()->GetLocationBar()->ShowFirstRunBubble();
 }
 
-void Browser::MaybeUpdateBookmarkBarStateForInstantOverlay(
-    const chrome::search::Mode& mode) {
-  // This is invoked by a platform-specific implementation of
-  // |InstantOverlayController| to update bookmark bar state according to
-  // Instant overlay state.
-  // ModeChanged() updates bookmark bar state for all mode transitions except
-  // when new mode is |SEARCH_SUGGESTIONS|, because that needs to be done when
-  // the suggestions are ready.
-  if (mode.is_search_suggestions() &&
-      bookmark_bar_state_ == BookmarkBar::SHOW) {
-    UpdateBookmarkBarState(BOOKMARK_BAR_STATE_CHANGE_TAB_STATE);
+void Browser::ShowDownload(content::DownloadItem* download) {
+  if (!window())
+    return;
+
+  // If the download occurs in a new tab, and it's not a save page
+  // download (started before initial navigation completed) close it.
+  WebContents* source = download->GetWebContents();
+  if (source && source->GetController().IsInitialNavigation() &&
+      tab_strip_model_->count() > 1 && !download->IsSavePackageDownload()) {
+    CloseContents(source);
   }
+
+  // Some (app downloads) are not supposed to appear on the shelf.
+  if (!DownloadItemModel(download).ShouldShowInShelf())
+    return;
+
+  // GetDownloadShelf creates the download shelf if it was not yet created.
+  DownloadShelf* shelf = window()->GetDownloadShelf();
+  shelf->AddDownload(download);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1243,18 +1272,11 @@ void Browser::MaybeUpdateBookmarkBarStateForInstantOverlay(
 WebContents* Browser::OpenURLFromTab(WebContents* source,
                                      const OpenURLParams& params) {
   chrome::NavigateParams nav_params(this, params.url, params.transition);
+  FillNavigateParamsFromOpenURLParams(&nav_params, params);
   nav_params.source_contents = source;
-  nav_params.referrer = params.referrer;
-  nav_params.extra_headers = params.extra_headers;
-  nav_params.disposition = params.disposition;
   nav_params.tabstrip_add_types = TabStripModel::ADD_NONE;
   nav_params.window_action = chrome::NavigateParams::SHOW_WINDOW;
   nav_params.user_gesture = true;
-  nav_params.override_encoding = params.override_encoding;
-  nav_params.is_renderer_initiated = params.is_renderer_initiated;
-  nav_params.transferred_global_request_id =
-      params.transferred_global_request_id;
-  nav_params.is_cross_site_redirect = params.is_cross_site_redirect;
   chrome::Navigate(&nav_params);
 
   return nav_params.target_contents;
@@ -1324,8 +1346,7 @@ void Browser::MoveContents(WebContents* source, const gfx::Rect& pos) {
 }
 
 bool Browser::IsPopupOrPanel(const WebContents* source) const {
-  // A non-tabbed BROWSER is an unconstrained popup.
-  return is_type_popup() || is_type_panel();
+  return is_type_popup();
 }
 
 void Browser::UpdateTargetURL(WebContents* source, int32 page_id,
@@ -1380,7 +1401,20 @@ void Browser::BeforeUnloadFired(WebContents* web_contents,
 }
 
 bool Browser::ShouldFocusLocationBarByDefault(WebContents* source) {
-  return chrome::search::IsInstantNTP(source);
+  const content::NavigationEntry* entry =
+      source->GetController().GetActiveEntry();
+  if (entry) {
+    GURL url = entry->GetURL();
+    GURL virtual_url = entry->GetVirtualURL();
+    if ((url.SchemeIs(chrome::kChromeUIScheme) &&
+        url.host() == chrome::kChromeUINewTabHost) ||
+        (virtual_url.SchemeIs(chrome::kChromeUIScheme) &&
+        virtual_url.host() == chrome::kChromeUINewTabHost)) {
+      return true;
+    }
+  }
+
+  return chrome::NavEntryIsInstantNTP(source, entry);
 }
 
 void Browser::SetFocusToLocationBar(bool select_all) {
@@ -1400,32 +1434,6 @@ void Browser::RenderWidgetShowing() {
 
 int Browser::GetExtraRenderViewHeight() const {
   return window_->GetExtraRenderViewHeight();
-}
-
-void Browser::OnStartDownload(WebContents* source,
-                              content::DownloadItem* download) {
-  if (!DownloadItemModel(download).ShouldShowInShelf())
-    return;
-
-  WebContents* constrained = GetConstrainingWebContents(source);
-  if (constrained != source) {
-    // Download in a constrained popup is shown in the tab that opened it.
-    constrained->GetDelegate()->OnStartDownload(constrained, download);
-    return;
-  }
-
-  if (!window())
-    return;
-
-  // GetDownloadShelf creates the download shelf if it was not yet created.
-  DownloadShelf* shelf = window()->GetDownloadShelf();
-  shelf->AddDownload(download);
-
-  // If the download occurs in a new tab, and it's not a save page
-  // download (started before initial navigation completed), close it.
-  if (source->GetController().IsInitialNavigation() &&
-      tab_strip_model_->count() > 1 && !download->IsSavePackageDownload())
-    CloseContents(source);
 }
 
 void Browser::ViewSourceForTab(WebContents* source, const GURL& page_url) {
@@ -1462,6 +1470,7 @@ bool Browser::ShouldCreateWebContents(
 
 void Browser::WebContentsCreated(WebContents* source_contents,
                                  int64 source_frame_id,
+                                 const string16& frame_name,
                                  const GURL& target_url,
                                  WebContents* new_contents) {
   // Adopt the WebContents now, so all observers are in place, as the network
@@ -1616,17 +1625,17 @@ void Browser::RequestMediaAccessPermission(
     content::WebContents* web_contents,
     const content::MediaStreamRequest& request,
     const content::MediaResponseCallback& callback) {
-  // The case when microphone access is requested together with screen capturing
-  // is not supported yet. Just check requested video type to decide which
-  // infobar to show.
-  //
-  // TODO(sergeyu): Add support for video stream with microphone, e.g. refactor
-  // MediaStreamDevicesController to use a single infobar for both permissions,
-  // or maybe show two infobars.
-  if (request.video_type == content::MEDIA_SCREEN_VIDEO_CAPTURE)
-    ScreenCaptureInfoBarDelegate::Create(web_contents, request, callback);
-  else
-    MediaStreamInfoBarDelegate::Create(web_contents, request, callback);
+  const extensions::Extension* extension = NULL;
+  GURL origin(request.security_origin);
+  if (origin.SchemeIs(extensions::kExtensionScheme)) {
+    ExtensionService* extensions_service =
+        extensions::ExtensionSystem::Get(profile_)->extension_service();
+    extension = extensions_service->extensions()->GetByID(origin.host());
+    DCHECK(extension);
+  }
+
+  MediaCaptureDevicesDispatcher::GetInstance()->ProcessMediaAccessRequest(
+      web_contents, request, callback, extension);
 }
 
 bool Browser::RequestPpapiBrokerPermission(
@@ -1679,14 +1688,8 @@ void Browser::SetWebContentsBlocked(content::WebContents* web_contents,
     web_contents->GetView()->Focus();
 }
 
-bool Browser::GetDialogTopCenter(gfx::Point* point) {
-  int y = 0;
-  if (window_->GetConstrainedWindowTopY(&y)) {
-    *point = gfx::Point(window_->GetBounds().width() / 2, y);
-    return true;
-  }
-
-  return false;
+WebContentsModalDialogHost* Browser::GetWebContentsModalDialogHost() {
+  return window_->GetWebContentsModalDialogHost();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1725,25 +1728,22 @@ void Browser::FileSelected(const base::FilePath& path, int index,
   FileSelectedWithExtraInfo(ui::SelectedFileInfo(path, path), index, params);
 }
 
-void Browser::FileSelectedWithExtraInfo(
-    const ui::SelectedFileInfo& file_info,
-    int index,
-    void* params) {
+void Browser::FileSelectedWithExtraInfo(const ui::SelectedFileInfo& file_info,
+                                        int index,
+                                        void* params) {
   profile_->set_last_selected_directory(file_info.file_path.DirName());
 
-  const base::FilePath& path = file_info.local_path;
-  GURL file_url = net::FilePathToFileURL(path);
+  GURL url = net::FilePathToFileURL(file_info.local_path);
 
 #if defined(OS_CHROMEOS)
-  drive::util::ModifyDriveFileResourceUrl(profile_, path, &file_url);
+  drive::util::MaybeSetDriveURL(profile_, file_info.file_path, &url);
 #endif
 
-  if (file_url.is_empty())
+  if (url.is_empty())
     return;
 
   OpenURL(OpenURLParams(
-      file_url, Referrer(), CURRENT_TAB, content::PAGE_TRANSITION_TYPED,
-      false));
+      url, Referrer(), CURRENT_TAB, content::PAGE_TRANSITION_TYPED, false));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1757,13 +1757,13 @@ void Browser::Observe(int type,
       if (window()->GetLocationBar())
         window()->GetLocationBar()->UpdatePageActions();
 
+      const extensions::UnloadedExtensionInfo* extension_info =
+          content::Details<extensions::UnloadedExtensionInfo>(details).ptr();
+
       // Close any tabs from the unloaded extension, unless it's terminated,
       // in which case let the sad tabs remain.
-      if (content::Details<extensions::UnloadedExtensionInfo>(
-            details)->reason != extension_misc::UNLOAD_REASON_TERMINATE) {
-        const Extension* extension =
-            content::Details<extensions::UnloadedExtensionInfo>(
-                details)->extension;
+      if (extension_info->reason != extension_misc::UNLOAD_REASON_TERMINATE) {
+        const Extension* extension = extension_info->extension;
         // Iterate backwards as we may remove items while iterating.
         for (int i = tab_strip_model_->count() - 1; i >= 0; --i) {
           WebContents* web_contents = tab_strip_model_->GetWebContentsAt(i);
@@ -1796,7 +1796,7 @@ void Browser::Observe(int type,
       // During window creation on Windows we may end up calling into
       // SHAppBarMessage, which internally spawns a nested message loop. This
       // makes it possible for us to end up here before window creation has
-      // completed,at which point window_ is NULL. See 94752 for details.
+      // completed, at which point window_ is NULL. See 94752 for details.
       if (window() && window()->GetLocationBar())
         window()->GetLocationBar()->UpdatePageActions();
       break;
@@ -1822,22 +1822,10 @@ void Browser::Observe(int type,
   }
 }
 
-void Browser::ModeChanged(const chrome::search::Mode& old_mode,
-                          const chrome::search::Mode& new_mode) {
-  // If new mode is |SEARCH_SUGGESTIONS|, don't update bookmark bar state now;
-  // wait till the Instant overlay is ready to show suggestions before hiding
-  // the bookmark bar (in MaybeUpdateBookmarkBarStateForInstantOverlay()).
-  // TODO(kuan): but for now, only delay updating bookmark bar state if origin
-  // is |DEFAULT|; other origins require more complex logic to be implemented
-  // to prevent jankiness caused by hiding bookmark bar, so just hide the
-  // bookmark bar immediately and tolerate the jankiness for a while.
-  // For other mode transitions, update bookmark bar state accordingly.
-  if (new_mode.is_search_suggestions() &&
-      new_mode.is_origin_default() &&
-      bookmark_bar_state_ == BookmarkBar::SHOW) {
-    return;
-  }
-  UpdateBookmarkBarState(BOOKMARK_BAR_STATE_CHANGE_TAB_STATE);
+void Browser::ModelChanged(const SearchModel::State& old_state,
+                           const SearchModel::State& new_state) {
+  if (SearchModel::ShouldChangeTopBarsVisibility(old_state, new_state))
+    UpdateBookmarkBarState(BOOKMARK_BAR_STATE_CHANGE_TAB_STATE);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1861,7 +1849,7 @@ void Browser::UpdateToolbar(bool should_restore_state) {
 }
 
 void Browser::UpdateSearchState(WebContents* contents) {
-  if (chrome::search::IsInstantExtendedAPIEnabled(profile_))
+  if (chrome::IsInstantExtendedAPIEnabled())
     search_delegate_->OnTabActivated(contents);
 }
 
@@ -1971,6 +1959,11 @@ void Browser::ProcessPendingUIUpdates() {
           tab_strip_model_->GetIndexOfWebContents(contents),
           TabStripModelObserver::ALL);
     }
+
+    // Update the bookmark bar. It may happen that the tab is crashed, and if
+    // so, the bookmark bar should be hidden.
+    if (flags & content::INVALIDATE_TYPE_TAB)
+      UpdateBookmarkBarState(BOOKMARK_BAR_STATE_CHANGE_TAB_STATE);
 
     // We don't need to process INVALIDATE_STATE, since that's not visible.
   }
@@ -2147,21 +2140,31 @@ void Browser::UpdateBookmarkBarState(BookmarkBarStateChangeReason reason) {
       state = BookmarkBar::HIDDEN;
   }
 
-  // Don't allow the bookmark bar to be shown in suggestions mode.
+  // Bookmark bar may need to be hidden for |SEARCH_SUGGESTIONS| and
+  // |SEARCH_RESULTS| modes as per SearchBox API or Instant overlay or if it's
+  // detached when origin is not |NTP|.
+  // TODO(sail): remove conditional MACOSX flag when bookmark bar is actually
+  // hidden on mac; for now, mac keeps the bookmark bar shown but changes its
+  // z-order to stack it below contents.
 #if !defined(OS_MACOSX)
-  if (search_model_->mode().is_search_suggestions())
+  if (search_model_->mode().is_search() &&
+      ((state == BookmarkBar::DETACHED &&
+        !search_model_->mode().is_origin_ntp()) ||
+      !search_model_->top_bars_visible())) {
     state = BookmarkBar::HIDDEN;
-#endif
+  }
+#else
+  // TODO(sail): remove this when the above block is enabled for mac.
+  if (state == BookmarkBar::DETACHED && search_model_->mode().is_search() &&
+      !search_model_->mode().is_origin_ntp()) {
+    state = BookmarkBar::HIDDEN;
+  }
+#endif  // !defined(OS_MACOSX)
 
   if (state == bookmark_bar_state_)
     return;
 
   bookmark_bar_state_ = state;
-
-  // Inform NTP page of change in bookmark bar state, so that it can adjust the
-  // theme image top offset if necessary.
-  if (instant_controller_)
-    instant_controller_->UpdateThemeInfo(true);
 
   if (!window_)
     return;  // This is called from the constructor when window_ is NULL.

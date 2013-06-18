@@ -23,6 +23,7 @@
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
+#include "chrome/browser/ui/global_error/global_error.h"
 #include "chrome/browser/ui/global_error/global_error_service.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
 #include "chrome/browser/ui/gtk/accelerators_gtk.h"
@@ -103,7 +104,7 @@ BrowserToolbarGtk::BrowserToolbarGtk(Browser* browser, BrowserWindowGtk* window)
       window_(window),
       zoom_callback_(base::Bind(&BrowserToolbarGtk::OnZoomLevelChanged,
                                 base::Unretained(this))) {
-  wrench_menu_model_.reset(new WrenchMenuModel(this, browser_, false, false));
+  wrench_menu_model_.reset(new WrenchMenuModel(this, browser_, false));
 
   chrome::AddCommandObserver(browser_, IDC_BACK, this);
   chrome::AddCommandObserver(browser_, IDC_FORWARD, this);
@@ -229,8 +230,7 @@ void BrowserToolbarGtk::Init(GtkWindow* top_level_window) {
 
   gtk_widget_set_tooltip_text(
       wrench_button,
-      l10n_util::GetStringFUTF8(IDS_APPMENU_TOOLTIP,
-          l10n_util::GetStringUTF16(IDS_PRODUCT_NAME)).c_str());
+      l10n_util::GetStringUTF8(IDS_APPMENU_TOOLTIP).c_str());
   g_signal_connect(wrench_button, "button-press-event",
                    G_CALLBACK(OnMenuButtonPressEventThunk), this);
   gtk_widget_set_can_focus(wrench_button, FALSE);
@@ -442,7 +442,8 @@ bool BrowserToolbarGtk::IsWrenchMenuShowing() const {
 
 // BrowserToolbarGtk, private --------------------------------------------------
 
-void BrowserToolbarGtk::OnZoomLevelChanged(const std::string& host) {
+void BrowserToolbarGtk::OnZoomLevelChanged(
+    const HostZoomMap::ZoomLevelChange& change) {
   // Since BrowserToolbarGtk create a new |wrench_menu_model_| in
   // RebuildWrenchMenu(), the ordering of the observers of HostZoomMap
   // can change, and result in subtle bugs like http://crbug.com/118823.
@@ -670,7 +671,7 @@ bool BrowserToolbarGtk::ShouldOnlyShowLocation() const {
 }
 
 void BrowserToolbarGtk::RebuildWrenchMenu() {
-  wrench_menu_model_.reset(new WrenchMenuModel(this, browser_, false, false));
+  wrench_menu_model_.reset(new WrenchMenuModel(this, browser_, false));
   wrench_menu_.reset(new MenuGtk(this, wrench_menu_model_.get()));
   // The bookmark menu model needs to be able to force the wrench menu to close.
   wrench_menu_model_->bookmark_sub_menu_model()->SetMenuGtk(wrench_menu_.get());
@@ -685,8 +686,21 @@ gboolean BrowserToolbarGtk::OnWrenchMenuButtonExpose(GtkWidget* sender,
     resource_id = UpgradeDetector::GetInstance()->GetIconResourceID(
             UpgradeDetector::UPGRADE_ICON_TYPE_BADGE);
   } else {
-    resource_id = GlobalErrorServiceFactory::GetForProfile(
-        browser_->profile())->GetFirstBadgeResourceID();
+    GlobalError* error = GlobalErrorServiceFactory::GetForProfile(
+        browser_->profile())->GetHighestSeverityGlobalErrorWithWrenchMenuItem();
+    if (error) {
+      switch (error->GetSeverity()) {
+        case GlobalError::SEVERITY_LOW:
+          resource_id = IDR_UPDATE_BADGE;
+          break;
+        case GlobalError::SEVERITY_MEDIUM:
+          resource_id = IDR_UPDATE_BADGE4;
+          break;
+        case GlobalError::SEVERITY_HIGH:
+          resource_id = IDR_UPDATE_BADGE3;
+          break;
+      }
+    }
   }
 
   if (!resource_id)

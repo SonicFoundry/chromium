@@ -10,11 +10,11 @@
 #include "base/message_loop.h"
 #include "base/metrics/histogram.h"
 #include "base/prefs/pref_service.h"
-#include "chrome/browser/api/infobars/confirm_infobar_delegate.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
 #include "chrome/browser/autocomplete/autocomplete_log.h"
 #include "chrome/browser/autocomplete/autocomplete_match.h"
 #include "chrome/browser/autocomplete/autocomplete_result.h"
+#include "chrome/browser/infobars/confirm_infobar_delegate.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url.h"
 #include "chrome/browser/search_engines/template_url_service.h"
@@ -40,8 +40,6 @@
 
 using content::NavigationController;
 using content::NavigationEntry;
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(OmniboxSearchHint);
 
 
 // HintInfoBarDelegate ---------------------------------------------------------
@@ -136,7 +134,7 @@ HintInfoBarDelegate::HintInfoBarDelegate(OmniboxSearchHint* omnibox_hint,
       omnibox_hint_(omnibox_hint),
       action_taken_(false),
       should_expire_(false),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+      weak_factory_(this) {
   // We want the info-bar to stick-around for few seconds and then be hidden
   // on the next navigation after that.
   MessageLoop::current()->PostDelayedTask(
@@ -195,6 +193,8 @@ bool HintInfoBarDelegate::ShouldExpireInternal(
 
 
 // OmniboxSearchHint ----------------------------------------------------------
+
+DEFINE_WEB_CONTENTS_USER_DATA_KEY(OmniboxSearchHint);
 
 OmniboxSearchHint::OmniboxSearchHint(content::WebContents* web_contents)
     : web_contents_(web_contents) {

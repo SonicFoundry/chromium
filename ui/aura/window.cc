@@ -23,6 +23,7 @@
 #include "ui/aura/layout_manager.h"
 #include "ui/aura/root_window.h"
 #include "ui/aura/window_delegate.h"
+#include "ui/aura/window_destruction_observer.h"
 #include "ui/aura/window_observer.h"
 #include "ui/base/animation/multi_animation.h"
 #include "ui/compositor/compositor.h"
@@ -108,7 +109,6 @@ Window::~Window() {
   DCHECK(transient_children_.empty());
 
   FOR_EACH_OBSERVER(WindowObserver, observers_, OnWindowDestroyed(this));
-  FOR_EACH_OBSERVER(WindowObserver, observers_, OnUnobservingWindow(this));
 
   // Clear properties.
   for (std::map<const void*, Value>::const_iterator iter = prop_map_.begin();
@@ -265,7 +265,7 @@ void Window::SetTransform(const gfx::Transform& transform) {
 }
 
 void Window::SetLayoutManager(LayoutManager* layout_manager) {
-  if (layout_manager == layout_manager_.get())
+  if (layout_manager == layout_manager_)
     return;
   layout_manager_.reset(layout_manager);
   if (!layout_manager)
@@ -363,7 +363,7 @@ void Window::AddChild(Window* child) {
   layer_->Add(child->layer_);
 
   children_.push_back(child);
-  if (layout_manager_.get())
+  if (layout_manager_)
     layout_manager_->OnWindowAddedToLayout(child);
   FOR_EACH_OBSERVER(WindowObserver, observers_, OnWindowAdded(child));
   child->OnParentChanged();
@@ -470,7 +470,7 @@ gfx::NativeCursor Window::GetCursor(const gfx::Point& point) const {
 }
 
 void Window::SetEventFilter(ui::EventHandler* event_filter) {
-  if (event_filter_.get())
+  if (event_filter_)
     RemovePreTargetHandler(event_filter_.get());
   event_filter_.reset(event_filter);
   if (event_filter)
@@ -478,12 +478,10 @@ void Window::SetEventFilter(ui::EventHandler* event_filter) {
 }
 
 void Window::AddObserver(WindowObserver* observer) {
-  observer->OnObservingWindow(this);
   observers_.AddObserver(observer);
 }
 
 void Window::RemoveObserver(WindowObserver* observer) {
-  observer->OnUnobservingWindow(this);
   observers_.RemoveObserver(observer);
 }
 
@@ -631,7 +629,7 @@ void Window::OnDeviceScaleFactorChanged(float device_scale_factor) {
 
 #ifndef NDEBUG
 std::string Window::GetDebugInfo() const {
-  return StringPrintf(
+  return base::StringPrintf(
       "%s<%d> bounds(%d, %d, %d, %d) %s %s opacity=%.1f",
       name().empty() ? "Unknown" : name().c_str(), id(),
       bounds().x(), bounds().y(), bounds().width(), bounds().height(),
@@ -714,22 +712,21 @@ void Window::SetVisible(bool visible) {
                     OnWindowVisibilityChanging(this, visible));
 
   RootWindow* root_window = GetRootWindow();
-  if (client::GetVisibilityClient(root_window)) {
-    client::GetVisibilityClient(root_window)->UpdateLayerVisibility(
-        this, visible);
-  } else {
+  client::VisibilityClient* visibility_client =
+      client::GetVisibilityClient(this);
+  if (visibility_client)
+    visibility_client->UpdateLayerVisibility(this, visible);
+  else
     layer_->SetVisible(visible);
-  }
   visible_ = visible;
   SchedulePaint();
-  if (parent_ && parent_->layout_manager_.get())
+  if (parent_ && parent_->layout_manager_)
     parent_->layout_manager_->OnChildWindowVisibilityChanged(this, visible);
 
   if (delegate_)
     delegate_->OnWindowTargetVisibilityChanged(visible);
 
-  FOR_EACH_OBSERVER(WindowObserver, observers_,
-                    OnWindowVisibilityChanged(this, visible));
+  NotifyWindowVisibilityChanged(this, visible);
 
   if (root_window)
     root_window->OnWindowVisibilityChanged(this, visible);
@@ -801,7 +798,7 @@ Window* Window::GetWindowForPoint(const gfx::Point& local_point,
 }
 
 void Window::RemoveChildImpl(Window* child, Window* new_parent) {
-  if (layout_manager_.get())
+  if (layout_manager_)
     layout_manager_->OnWillRemoveWindowFromLayout(child);
   FOR_EACH_OBSERVER(WindowObserver, observers_, OnWillRemoveWindow(child));
   RootWindow* root_window = child->GetRootWindow();
@@ -814,13 +811,13 @@ void Window::RemoveChildImpl(Window* child, Window* new_parent) {
   // We should only remove the child's layer if the child still owns that layer.
   // Someone else may have acquired ownership of it via AcquireLayer() and may
   // expect the hierarchy to go unchanged as the Window is destroyed.
-  if (child->layer_owner_.get())
+  if (child->layer_owner_)
     layer_->Remove(child->layer_);
   Windows::iterator i = std::find(children_.begin(), children_.end(), child);
   DCHECK(i != children_.end());
   children_.erase(i);
   child->OnParentChanged();
-  if (layout_manager_.get())
+  if (layout_manager_)
     layout_manager_->OnWindowRemovedFromLayout(child);
 }
 
@@ -984,9 +981,59 @@ void Window::NotifyWindowHierarchyChangeAtReceiver(
   }
 }
 
+void Window::NotifyWindowVisibilityChanged(aura::Window* target,
+                                           bool visible) {
+  if (!NotifyWindowVisibilityChangedDown(target, visible)) {
+    return; // |this| has been deleted.
+  }
+  NotifyWindowVisibilityChangedUp(target, visible);
+}
+
+bool Window::NotifyWindowVisibilityChangedAtReceiver(aura::Window* target,
+                                                     bool visible) {
+  // |this| may be deleted during a call to OnWindowVisibilityChanged
+  // on one of the observers. We create an local observer for that. In
+  // that case we exit without further access to any members.
+  WindowDestructionObserver destruction_observer(this);
+  FOR_EACH_OBSERVER(WindowObserver, observers_,
+                    OnWindowVisibilityChanged(target, visible));
+  return !destruction_observer.destroyed();
+}
+
+bool Window::NotifyWindowVisibilityChangedDown(aura::Window* target,
+                                               bool visible) {
+  if (!NotifyWindowVisibilityChangedAtReceiver(target, visible))
+    return false; // |this| was deleted.
+  std::set<const Window*> child_already_processed;
+  bool child_destroyed = false;
+  do {
+    child_destroyed = false;
+    for (Window::Windows::const_iterator it = children_.begin();
+         it != children_.end(); ++it) {
+      if (!child_already_processed.insert(*it).second)
+        continue;
+      if (!(*it)->NotifyWindowVisibilityChangedDown(target, visible)) {
+        // |*it| was deleted, |it| is invalid and |children_| has changed.
+        // We exit the current for-loop and enter a new one.
+        child_destroyed = true;
+        break;
+      }
+    }
+  } while (child_destroyed);
+  return true;
+}
+
+void Window::NotifyWindowVisibilityChangedUp(aura::Window* target,
+                                             bool visible) {
+  for (Window* window = this; window; window = window->parent()) {
+    bool ret = window->NotifyWindowVisibilityChangedAtReceiver(target, visible);
+    DCHECK(ret);
+  }
+}
+
 void Window::OnLayerBoundsChanged(const gfx::Rect& old_bounds,
                                   bool contained_mouse) {
-  if (layout_manager_.get())
+  if (layout_manager_)
     layout_manager_->OnWindowResized();
   if (delegate_)
     delegate_->OnBoundsChanged(old_bounds, bounds());

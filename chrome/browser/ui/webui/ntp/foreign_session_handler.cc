@@ -16,7 +16,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_restore.h"
@@ -29,6 +28,7 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/common/time_format.h"
 #include "chrome/common/url_constants.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/url_data_source.h"
@@ -58,9 +58,11 @@ ForeignSessionHandler::ForeignSessionHandler() {
 }
 
 // static
-void ForeignSessionHandler::RegisterUserPrefs(PrefRegistrySyncable* registry) {
-  registry->RegisterDictionaryPref(prefs::kNtpCollapsedForeignSessions,
-                                   PrefRegistrySyncable::UNSYNCABLE_PREF);
+void ForeignSessionHandler::RegisterUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterDictionaryPref(
+      prefs::kNtpCollapsedForeignSessions,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 // static
@@ -127,7 +129,7 @@ bool ForeignSessionHandler::SessionTabToValue(
 
   int selected_index = std::min(tab.current_navigation_index,
                                 static_cast<int>(tab.navigations.size() - 1));
-  const TabNavigation& current_navigation =
+  const ::sessions::SerializedNavigationEntry& current_navigation =
       tab.navigations.at(selected_index);
   GURL tab_url = current_navigation.virtual_url();
   if (tab_url == GURL(chrome::kChromeUINewTabURL))

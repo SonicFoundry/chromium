@@ -15,7 +15,9 @@
 #include "media/audio/audio_parameters.h"
 #include "media/audio/shared_memory_util.h"
 
+namespace base {
 class MessageLoop;
+}
 
 namespace media {
 class AudioBus;
@@ -38,7 +40,8 @@ class MEDIA_EXPORT AudioDeviceThread {
    public:
     Callback(const AudioParameters& audio_parameters,
              base::SharedMemoryHandle memory,
-             int memory_length);
+             int memory_length,
+             int total_segments);
     virtual ~Callback();
 
     // One time initialization for the callback object on the audio thread.
@@ -61,6 +64,8 @@ class MEDIA_EXPORT AudioDeviceThread {
 
     base::SharedMemory shared_memory_;
     const int memory_length_;
+    const int total_segments_;
+    int segment_length_;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(Callback);
@@ -83,7 +88,7 @@ class MEDIA_EXPORT AudioDeviceThread {
   // in order to join the worker thread and close the thread handle later via a
   // posted task.
   // If set to NULL, function will wait for the thread to exit before returning.
-  void Stop(MessageLoop* loop_for_join);
+  void Stop(base::MessageLoop* loop_for_join);
 
   // Returns true if the thread is stopped or stopping.
   bool IsStopped();

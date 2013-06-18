@@ -6,9 +6,20 @@
 
 #include "base/observer_list.h"
 #include "base/utf_string_conversions.h"
+#include "grit/ui_strings.h"
+#include "ui/base/l10n/l10n_util.h"
+#include "ui/message_center/message_center.h"
 #include "ui/message_center/message_center_tray_delegate.h"
 
 namespace message_center {
+namespace {
+
+// Menu commands
+const int kToggleQuietMode = 0;
+const int kEnableQuietModeHour = 1;
+const int kEnableQuietModeDay = 2;
+
+}
 
 MessageCenterTray::MessageCenterTray(
     MessageCenterTrayDelegate* delegate,
@@ -53,12 +64,8 @@ void MessageCenterTray::ToggleMessageCenterBubble() {
 }
 
 void MessageCenterTray::ShowPopupBubble() {
-  if (message_center_visible_) {
-    // We don't want to show popups if the user is already looking at the
-    // message center.  Instead, update it.
-    delegate_->UpdateMessageCenter();
+  if (message_center_visible_)
     return;
-  }
 
   if (popups_visible_) {
     delegate_->UpdatePopups();
@@ -84,23 +91,96 @@ bool MessageCenterTray::HidePopupBubble() {
   return true;
 }
 
-void MessageCenterTray::OnMessageCenterChanged(bool new_notification) {
+ui::MenuModel* MessageCenterTray::CreateQuietModeMenu() {
+  ui::SimpleMenuModel* menu = new ui::SimpleMenuModel(this);
+
+  menu->AddCheckItem(kToggleQuietMode,
+                     l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_QUIET_MODE));
+  menu->AddItem(kEnableQuietModeHour,
+                l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_QUIET_MODE_1HOUR));
+  menu->AddItem(kEnableQuietModeDay,
+                l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_QUIET_MODE_1DAY));
+  return menu;
+}
+
+void MessageCenterTray::OnNotificationAdded(
+    const std::string& notification_id) {
+  OnMessageCenterChanged();
+}
+
+void MessageCenterTray::OnNotificationRemoved(
+    const std::string& notification_id,
+    bool by_user) {
+  OnMessageCenterChanged();
+}
+
+void MessageCenterTray::OnNotificationUpdated(
+    const std::string& notification_id) {
+  OnMessageCenterChanged();
+}
+
+void MessageCenterTray::OnNotificationClicked(
+    const std::string& notification_id) {
+  if (popups_visible_)
+    OnMessageCenterChanged();
+}
+
+void MessageCenterTray::OnNotificationButtonClicked(
+    const std::string& notification_id,
+    int button_index) {
+  if (popups_visible_)
+    OnMessageCenterChanged();
+}
+
+void MessageCenterTray::OnNotificationDisplayed(
+    const std::string& notification_id) {
+  NotifyMessageCenterTrayChanged();
+}
+
+void MessageCenterTray::OnMessageCenterChanged() {
   if (message_center_visible_) {
     if (message_center_->NotificationCount() == 0)
       HideMessageCenterBubble();
-    else
-      delegate_->UpdateMessageCenter();
   }
   if (popups_visible_) {
-    if (message_center_->NotificationCount() == 0)
-      HidePopupBubble();
-    else
+    if (message_center_->HasPopupNotifications())
       delegate_->UpdatePopups();
+    else
+      HidePopupBubble();
+  } else if (message_center_->HasPopupNotifications()) {
+    ShowPopupBubble();
   }
 
-  if (new_notification)
-    ShowPopupBubble();
+  NotifyMessageCenterTrayChanged();
+}
 
+bool MessageCenterTray::IsCommandIdChecked(int command_id) const {
+  if (command_id != kToggleQuietMode)
+    return false;
+  return message_center()->IsQuietMode();
+}
+
+bool MessageCenterTray::IsCommandIdEnabled(int command_id) const {
+  return true;
+}
+
+bool MessageCenterTray::GetAcceleratorForCommandId(
+    int command_id,
+    ui::Accelerator* accelerator) {
+  return false;
+}
+
+void MessageCenterTray::ExecuteCommand(int command_id, int event_flags) {
+  if (command_id == kToggleQuietMode) {
+    bool in_quiet_mode = message_center()->IsQuietMode();
+    message_center()->SetQuietMode(!in_quiet_mode);
+    NotifyMessageCenterTrayChanged();
+    return;
+  }
+  base::TimeDelta expires_in = command_id == kEnableQuietModeDay ?
+      base::TimeDelta::FromDays(1):
+      base::TimeDelta::FromHours(1);
+  message_center()->EnterQuietModeWithExpire(expires_in);
   NotifyMessageCenterTrayChanged();
 }
 

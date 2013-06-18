@@ -5,42 +5,37 @@
 #include "android_webview/browser/browser_view_renderer_impl.h"
 
 #include <android/bitmap.h>
-#include <sys/system_properties.h>
 
+#include "android_webview/browser/in_process_renderer/in_process_view_renderer.h"
+#include "android_webview/common/aw_switches.h"
 #include "android_webview/common/renderer_picture_map.h"
 #include "android_webview/public/browser/draw_gl.h"
 #include "android_webview/public/browser/draw_sw.h"
 #include "base/android/jni_android.h"
+#include "base/command_line.h"
 #include "base/debug/trace_event.h"
 #include "base/logging.h"
-#include "cc/layer.h"
+#include "cc/layers/layer.h"
 #include "content/public/browser/android/content_view_core.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkDevice.h"
 #include "third_party/skia/include/core/SkGraphics.h"
-#include "ui/gfx/size.h"
+#include "ui/gfx/size_conversions.h"
 #include "ui/gfx/transform.h"
+#include "ui/gfx/vector2d_f.h"
 #include "ui/gl/gl_bindings.h"
-
-// TODO(leandrogracia): remove when crbug.com/164140 is closed.
-// Borrowed from gl2ext.h. Cannot be included due to conflicts with
-// gl_bindings.h and the EGL library methods (eglGetCurrentContext).
-#ifndef GL_TEXTURE_EXTERNAL_OES
-#define GL_TEXTURE_EXTERNAL_OES 0x8D65
-#endif
-
-#ifndef GL_TEXTURE_BINDING_EXTERNAL_OES
-#define GL_TEXTURE_BINDING_EXTERNAL_OES 0x8D67
-#endif
 
 using base::android::AttachCurrentThread;
 using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 using content::Compositor;
 using content::ContentViewCore;
+
+namespace android_webview {
 
 namespace {
 
@@ -99,15 +94,54 @@ static bool RasterizeIntoBitmap(JNIEnv* env,
   return succeeded;
 }
 
+const void* kUserDataKey = &kUserDataKey;
+
 }  // namespace
 
-namespace android_webview {
+class BrowserViewRendererImpl::UserData : public content::WebContents::Data {
+ public:
+  UserData(BrowserViewRendererImpl* ptr) : instance_(ptr) {}
+  virtual ~UserData() {
+    instance_->WebContentsGone();
+  }
+
+  static BrowserViewRendererImpl* GetInstance(content::WebContents* contents) {
+    if (!contents)
+      return NULL;
+    UserData* data = reinterpret_cast<UserData*>(
+        contents->GetUserData(kUserDataKey));
+    return data ? data->instance_ : NULL;
+  }
+
+ private:
+  BrowserViewRendererImpl* instance_;
+};
 
 // static
 BrowserViewRendererImpl* BrowserViewRendererImpl::Create(
     BrowserViewRenderer::Client* client,
     JavaHelper* java_helper) {
+  if (CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kMergeUIAndRendererCompositorThreads)) {
+    return new InProcessViewRenderer(client, java_helper);
+  }
+
   return new BrowserViewRendererImpl(client, java_helper);
+}
+
+// static
+BrowserViewRendererImpl* BrowserViewRendererImpl::FromWebContents(
+    content::WebContents* contents) {
+  return UserData::GetInstance(contents);
+}
+
+// static
+BrowserViewRendererImpl* BrowserViewRendererImpl::FromId(int render_process_id,
+                                                         int render_view_id) {
+  const content::RenderViewHost* rvh =
+      content::RenderViewHost::FromID(render_process_id, render_view_id);
+  if (!rvh) return NULL;
+  return FromWebContents(content::WebContents::FromRenderViewHost(rvh));
 }
 
 BrowserViewRendererImpl::BrowserViewRendererImpl(
@@ -115,28 +149,42 @@ BrowserViewRendererImpl::BrowserViewRendererImpl(
     JavaHelper* java_helper)
     : client_(client),
       java_helper_(java_helper),
-      ALLOW_THIS_IN_INITIALIZER_LIST(compositor_(Compositor::Create(this))),
-      view_clip_layer_(cc::Layer::create()),
-      transform_layer_(cc::Layer::create()),
-      scissor_clip_layer_(cc::Layer::create()),
+      view_renderer_host_(new ViewRendererHost(NULL, this)),
+      compositor_(Compositor::Create(this)),
+      view_clip_layer_(cc::Layer::Create()),
+      transform_layer_(cc::Layer::Create()),
+      scissor_clip_layer_(cc::Layer::Create()),
+      view_attached_(false),
       view_visible_(false),
       compositor_visible_(false),
       is_composite_pending_(false),
       dpi_scale_(1.0f),
+      page_scale_(1.0f),
       on_new_picture_mode_(kOnNewPictureDisabled),
       last_frame_context_(NULL),
-      web_contents_(NULL) {
+      web_contents_(NULL),
+      update_frame_info_callback_(
+          base::Bind(&BrowserViewRendererImpl::OnFrameInfoUpdated,
+                     base::Unretained(this))),
+      prevent_client_invalidate_(false) {
+
   DCHECK(java_helper);
 
   // Define the view hierarchy.
-  transform_layer_->addChild(view_clip_layer_);
-  scissor_clip_layer_->addChild(transform_layer_);
+  transform_layer_->AddChild(view_clip_layer_);
+  scissor_clip_layer_->AddChild(transform_layer_);
   compositor_->SetRootLayer(scissor_clip_layer_);
 
   RendererPictureMap::CreateInstance();
 }
 
 BrowserViewRendererImpl::~BrowserViewRendererImpl() {
+  SetContents(NULL);
+}
+
+void BrowserViewRendererImpl::BindSynchronousCompositor(
+    content::SynchronousCompositor* compositor) {
+  NOTREACHED();  // Must be handled by the InProcessViewRenderer
 }
 
 // static
@@ -150,16 +198,35 @@ void BrowserViewRendererImpl::SetAwDrawSWFunctionTable(
 }
 
 void BrowserViewRendererImpl::SetContents(ContentViewCore* content_view_core) {
-  dpi_scale_ = content_view_core->GetDpiScale();
-  web_contents_ = content_view_core->GetWebContents();
-  if (!view_renderer_host_)
-    view_renderer_host_.reset(new ViewRendererHost(web_contents_, this));
-  else
-    view_renderer_host_->Observe(web_contents_);
+  // First remove association from the prior ContentViewCore / WebContents.
+  if (web_contents_) {
+    ContentViewCore* previous_content_view_core =
+        ContentViewCore::FromWebContents(web_contents_);
+    if (previous_content_view_core) {
+      previous_content_view_core->RemoveFrameInfoCallback(
+          update_frame_info_callback_);
+    }
+    web_contents_->SetUserData(kUserDataKey, NULL);
+    DCHECK(!web_contents_);  // WebContentsGone should have been called.
+  }
 
-  view_clip_layer_->removeAllChildren();
-  view_clip_layer_->addChild(content_view_core->GetLayer());
+  if (!content_view_core)
+    return;
+
+  web_contents_ = content_view_core->GetWebContents();
+  web_contents_->SetUserData(kUserDataKey, new UserData(this));
+  view_renderer_host_->Observe(web_contents_);
+
+  content_view_core->AddFrameInfoCallback(update_frame_info_callback_);
+  dpi_scale_ = content_view_core->GetDpiScale();
+
+  view_clip_layer_->RemoveAllChildren();
+  view_clip_layer_->AddChild(content_view_core->GetLayer());
   Invalidate();
+}
+
+void BrowserViewRendererImpl::WebContentsGone() {
+  web_contents_ = NULL;
 }
 
 void BrowserViewRendererImpl::DrawGL(AwDrawGLInfo* draw_info) {
@@ -174,87 +241,6 @@ void BrowserViewRendererImpl::DrawGL(AwDrawGLInfo* draw_info) {
   SetCompositorVisibility(view_visible_);
   if (!compositor_visible_)
     return;
-
-  // TODO(leandrogracia): remove when crbug.com/164140 is closed.
-  // ---------------------------------------------------------------------------
-  GLint texture_external_oes_binding;
-  glGetIntegerv(GL_TEXTURE_BINDING_EXTERNAL_OES, &texture_external_oes_binding);
-
-  GLint vertex_array_buffer_binding;
-  glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &vertex_array_buffer_binding);
-
-  GLint index_array_buffer_binding;
-  glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &index_array_buffer_binding);
-
-  GLint pack_alignment;
-  glGetIntegerv(GL_PACK_ALIGNMENT, &pack_alignment);
-
-  GLint unpack_alignment;
-  glGetIntegerv(GL_UNPACK_ALIGNMENT, &unpack_alignment);
-
-  struct {
-    GLint enabled;
-    GLint size;
-    GLint type;
-    GLint normalized;
-    GLint stride;
-    GLvoid* pointer;
-  } vertex_attrib[3];
-
-  for (size_t i = 0; i < ARRAYSIZE_UNSAFE(vertex_attrib); ++i) {
-    glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_ENABLED,
-                        &vertex_attrib[i].enabled);
-    glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_SIZE,
-                        &vertex_attrib[i].size);
-    glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_TYPE,
-                        &vertex_attrib[i].type);
-    glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_NORMALIZED,
-                        &vertex_attrib[i].normalized);
-    glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_STRIDE,
-                        &vertex_attrib[i].stride);
-    glGetVertexAttribPointerv(i, GL_VERTEX_ATTRIB_ARRAY_POINTER,
-                        &vertex_attrib[i].pointer);
-  }
-
-  GLboolean depth_test;
-  glGetBooleanv(GL_DEPTH_TEST, &depth_test);
-
-  GLboolean cull_face;
-  glGetBooleanv(GL_CULL_FACE, &cull_face);
-
-  GLboolean color_mask[4];
-  glGetBooleanv(GL_COLOR_WRITEMASK, color_mask);
-
-  GLboolean blend_enabled;
-  glGetBooleanv(GL_BLEND, &blend_enabled);
-
-  GLint blend_src_rgb;
-  glGetIntegerv(GL_BLEND_SRC_RGB, &blend_src_rgb);
-
-  GLint blend_src_alpha;
-  glGetIntegerv(GL_BLEND_SRC_ALPHA, &blend_src_alpha);
-
-  GLint blend_dest_rgb;
-  glGetIntegerv(GL_BLEND_DST_RGB, &blend_dest_rgb);
-
-  GLint blend_dest_alpha;
-  glGetIntegerv(GL_BLEND_DST_ALPHA, &blend_dest_alpha);
-
-  GLint active_texture;
-  glGetIntegerv(GL_ACTIVE_TEXTURE, &active_texture);
-
-  GLint viewport[4];
-  glGetIntegerv(GL_VIEWPORT, viewport);
-
-  GLboolean scissor_test;
-  glGetBooleanv(GL_SCISSOR_TEST, &scissor_test);
-
-  GLint scissor_box[4];
-  glGetIntegerv(GL_SCISSOR_BOX, scissor_box);
-
-  GLint current_program;
-  glGetIntegerv(GL_CURRENT_PROGRAM, &current_program);
-  // ---------------------------------------------------------------------------
 
   // We need to watch if the current Android context has changed and enforce
   // a clean-up in the compositor.
@@ -272,17 +258,26 @@ void BrowserViewRendererImpl::DrawGL(AwDrawGLInfo* draw_info) {
 
   compositor_->SetWindowBounds(gfx::Size(draw_info->width, draw_info->height));
 
+  // We need to trigger a compositor invalidate because otherwise, if nothing
+  // has changed since last draw the compositor will early out (Android may
+  // trigger a draw at anytime). However, we don't want to trigger a client
+  // (i.e. Android View system) invalidate as a result of this (otherwise we'll
+  // end up in a loop of DrawGL calls).
+  prevent_client_invalidate_ = true;
+  compositor_->SetNeedsRedraw();
+  prevent_client_invalidate_ = false;
+
   if (draw_info->is_layer) {
     // When rendering into a separate layer no view clipping, transform,
     // scissoring or background transparency need to be handled.
     // The Android framework will composite us afterwards.
     compositor_->SetHasTransparentBackground(false);
-    view_clip_layer_->setMasksToBounds(false);
-    transform_layer_->setTransform(gfx::Transform());
-    scissor_clip_layer_->setMasksToBounds(false);
-    scissor_clip_layer_->setPosition(gfx::PointF());
-    scissor_clip_layer_->setBounds(gfx::Size());
-    scissor_clip_layer_->setSublayerTransform(gfx::Transform());
+    view_clip_layer_->SetMasksToBounds(false);
+    transform_layer_->SetTransform(gfx::Transform());
+    scissor_clip_layer_->SetMasksToBounds(false);
+    scissor_clip_layer_->SetPosition(gfx::PointF());
+    scissor_clip_layer_->SetBounds(gfx::Size());
+    scissor_clip_layer_->SetSublayerTransform(gfx::Transform());
 
   } else {
     compositor_->SetHasTransparentBackground(true);
@@ -291,9 +286,9 @@ void BrowserViewRendererImpl::DrawGL(AwDrawGLInfo* draw_info) {
                         draw_info->clip_right - draw_info->clip_left,
                         draw_info->clip_bottom - draw_info->clip_top);
 
-    scissor_clip_layer_->setPosition(clip_rect.origin());
-    scissor_clip_layer_->setBounds(clip_rect.size());
-    scissor_clip_layer_->setMasksToBounds(true);
+    scissor_clip_layer_->SetPosition(clip_rect.origin());
+    scissor_clip_layer_->SetBounds(clip_rect.size());
+    scissor_clip_layer_->SetMasksToBounds(true);
 
     // The compositor clipping architecture enforces us to have the clip layer
     // as an ancestor of the area we want to clip, but this makes the transform
@@ -301,7 +296,7 @@ void BrowserViewRendererImpl::DrawGL(AwDrawGLInfo* draw_info) {
     // position offset needs to be undone before applying the transform.
     gfx::Transform undo_clip_position;
     undo_clip_position.Translate(-clip_rect.x(), -clip_rect.y());
-    scissor_clip_layer_->setSublayerTransform(undo_clip_position);
+    scissor_clip_layer_->SetSublayerTransform(undo_clip_position);
 
     gfx::Transform transform;
     transform.matrix().setColMajorf(draw_info->transform);
@@ -312,74 +307,18 @@ void BrowserViewRendererImpl::DrawGL(AwDrawGLInfo* draw_info) {
     // or override the translation in the compositor, not the one coming from
     // the Android View System, as it could be out of bounds for overscrolling.
     transform.Translate(hw_rendering_scroll_.x(), hw_rendering_scroll_.y());
-    transform_layer_->setTransform(transform);
+    transform_layer_->SetTransform(transform);
 
-    view_clip_layer_->setMasksToBounds(true);
+    view_clip_layer_->SetMasksToBounds(true);
   }
 
   compositor_->Composite();
   is_composite_pending_ = false;
 
-  // TODO(leandrogracia): remove when crbug.com/164140 is closed.
-  // ---------------------------------------------------------------------------
-  char no_gl_restore_prop[PROP_VALUE_MAX];
-  __system_property_get("webview.chromium_no_gl_restore", no_gl_restore_prop);
-  if (!strcmp(no_gl_restore_prop, "true")) {
-    LOG(WARNING) << "Android GL functor not restoring the previous GL state.";
-  } else {
-    glBindTexture(GL_TEXTURE_EXTERNAL_OES, texture_external_oes_binding);
-    glBindBuffer(GL_ARRAY_BUFFER, vertex_array_buffer_binding);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_array_buffer_binding);
-
-    glPixelStorei(GL_PACK_ALIGNMENT, pack_alignment);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, unpack_alignment);
-
-    for (size_t i = 0; i < ARRAYSIZE_UNSAFE(vertex_attrib); ++i) {
-      glVertexAttribPointer(i, vertex_attrib[i].size,
-          vertex_attrib[i].type, vertex_attrib[i].normalized,
-          vertex_attrib[i].stride, vertex_attrib[i].pointer);
-
-      if (vertex_attrib[i].enabled)
-        glEnableVertexAttribArray(i);
-      else
-        glDisableVertexAttribArray(i);
-    }
-
-    if (depth_test)
-      glEnable(GL_DEPTH_TEST);
-    else
-      glDisable(GL_DEPTH_TEST);
-
-    if (cull_face)
-      glEnable(GL_CULL_FACE);
-    else
-      glDisable(GL_CULL_FACE);
-
-    glColorMask(color_mask[0], color_mask[1], color_mask[2], color_mask[3]);
-
-    if (blend_enabled)
-      glEnable(GL_BLEND);
-    else
-      glDisable(GL_BLEND);
-
-    glBlendFuncSeparate(blend_src_rgb, blend_dest_rgb,
-                        blend_src_alpha, blend_dest_alpha);
-
-    glActiveTexture(active_texture);
-
-    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-
-    if (scissor_test)
-      glEnable(GL_SCISSOR_TEST);
-    else
-      glDisable(GL_SCISSOR_TEST);
-
-    glScissor(scissor_box[0], scissor_box[1], scissor_box[2],
-              scissor_box[3]);
-
-    glUseProgram(current_program);
-  }
-  // ---------------------------------------------------------------------------
+  // The GL functor must ensure these are set to zero before returning.
+  // Not setting them leads to graphical artifacts that can affect other apps.
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 }
 
 void BrowserViewRendererImpl::SetScrollForHWFrame(int x, int y) {
@@ -448,6 +387,8 @@ bool BrowserViewRendererImpl::DrawSW(jobject java_canvas,
 }
 
 ScopedJavaLocalRef<jobject> BrowserViewRendererImpl::CapturePicture() {
+  // TODO(joth): reimplement this in terms of a call to RenderPicture (vitual
+  // method) passing in a recordingt canvas, rather than using the picture map.
   skia::RefPtr<SkPicture> picture = GetLastCapturedPicture();
   if (!picture || !g_sw_draw_functions)
     return ScopedJavaLocalRef<jobject>();
@@ -500,17 +441,31 @@ void BrowserViewRendererImpl::OnVisibilityChanged(bool view_visible,
 
 void BrowserViewRendererImpl::OnSizeChanged(int width, int height) {
   view_size_ = gfx::Size(width, height);
-  view_clip_layer_->setBounds(view_size_);
+  view_clip_layer_->SetBounds(view_size_);
 }
 
 void BrowserViewRendererImpl::OnAttachedToWindow(int width, int height) {
+  view_attached_ = true;
   view_size_ = gfx::Size(width, height);
-  view_clip_layer_->setBounds(view_size_);
+  view_clip_layer_->SetBounds(view_size_);
 }
 
 void BrowserViewRendererImpl::OnDetachedFromWindow() {
+  view_attached_ = false;
   view_visible_ = false;
   SetCompositorVisibility(false);
+}
+
+bool BrowserViewRendererImpl::IsAttachedToWindow() {
+  return view_attached_;
+}
+
+bool BrowserViewRendererImpl::IsViewVisible() {
+  return view_visible_;
+}
+
+gfx::Rect BrowserViewRendererImpl::GetScreenRect() {
+  return gfx::Rect(client_->GetLocationOnScreen(), view_size_);
 }
 
 void BrowserViewRendererImpl::ScheduleComposite() {
@@ -520,7 +475,9 @@ void BrowserViewRendererImpl::ScheduleComposite() {
     return;
 
   is_composite_pending_ = true;
-  Invalidate();
+
+  if (!prevent_client_invalidate_)
+    Invalidate();
 }
 
 skia::RefPtr<SkPicture> BrowserViewRendererImpl::GetLastCapturedPicture() {
@@ -532,7 +489,6 @@ skia::RefPtr<SkPicture> BrowserViewRendererImpl::GetLastCapturedPicture() {
 
   // If not available or not in listener mode get it synchronously.
   if (!picture) {
-    DCHECK(view_renderer_host_);
     view_renderer_host_->CapturePictureSync();
     picture = RendererPictureMap::GetInstance()->GetRendererPicture(
         web_contents_->GetRoutingID());
@@ -555,6 +511,17 @@ void BrowserViewRendererImpl::OnPictureUpdated(int process_id,
   // TODO(leandrogracia): delete when sw rendering uses Ubercompositor.
   // Invalidation should be provided by the compositor only.
   Invalidate();
+}
+
+void BrowserViewRendererImpl::OnPageScaleFactorChanged(
+    int process_id,
+    int render_view_id,
+    float page_scale_factor) {
+  CHECK_EQ(web_contents_->GetRenderProcessHost()->GetID(), process_id);
+  if (render_view_id != web_contents_->GetRoutingID())
+    return;
+
+  client_->OnPageScaleFactorChanged(page_scale_factor);
 }
 
 void BrowserViewRendererImpl::SetCompositorVisibility(bool visible) {
@@ -580,10 +547,20 @@ void BrowserViewRendererImpl::Invalidate() {
 }
 
 bool BrowserViewRendererImpl::RenderSW(SkCanvas* canvas) {
-  // TODO(leandrogracia): once Ubercompositor is ready and we support software
-  // rendering mode, we should avoid this as much as we can, ideally always.
-  // This includes finding a proper replacement for onDraw calls in hardware
-  // mode with software canvases. http://crbug.com/170086.
+  float content_scale = dpi_scale_ * page_scale_;
+  canvas->scale(content_scale, content_scale);
+
+  // Clear to white any parts of the view not covered by the scaled contents.
+  // TODO(leandrogracia): this should be automatically done by the SW rendering
+  // path once multiple layers are supported.
+  gfx::Size physical_content_size = gfx::ToCeiledSize(
+      gfx::ScaleSize(content_size_css_, content_scale));
+  if (physical_content_size.width() < view_size_.width() ||
+      physical_content_size.height() < view_size_.height())
+    canvas->clear(SK_ColorWHITE);
+
+  // TODO(leandrogracia): use the appropriate SW rendering path when available
+  // instead of abusing CapturePicture.
   return RenderPicture(canvas);
 }
 
@@ -592,11 +569,16 @@ bool BrowserViewRendererImpl::RenderPicture(SkCanvas* canvas) {
   if (!picture)
     return false;
 
-  // Correct device scale.
-  canvas->scale(dpi_scale_, dpi_scale_);
-
   picture->draw(canvas);
   return true;
+}
+
+void BrowserViewRendererImpl::OnFrameInfoUpdated(
+    const gfx::SizeF& content_size,
+    const gfx::Vector2dF& scroll_offset,
+    float page_scale_factor) {
+  page_scale_ = page_scale_factor;
+  content_size_css_ = content_size;
 }
 
 }  // namespace android_webview

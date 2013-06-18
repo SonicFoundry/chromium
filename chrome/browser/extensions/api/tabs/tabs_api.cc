@@ -27,13 +27,11 @@
 #include "chrome/browser/extensions/extension_host.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
-#include "chrome/browser/extensions/file_reader.h"
 #include "chrome/browser/extensions/script_executor.h"
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/extensions/window_controller.h"
 #include "chrome/browser/extensions/window_controller_list.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/translate/translate_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
@@ -46,7 +44,6 @@
 #include "chrome/browser/ui/extensions/shell_window.h"
 #include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/panels/panel_manager.h"
-#include "chrome/browser/ui/snapshot_tab_helper.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/window_sizer/window_sizer.h"
 #include "chrome/browser/web_applications/web_app.h"
@@ -61,10 +58,12 @@
 #include "chrome/common/extensions/extension_l10n_util.h"
 #include "chrome/common/extensions/extension_manifest_constants.h"
 #include "chrome/common/extensions/extension_messages.h"
+#include "chrome/common/extensions/incognito_handler.h"
 #include "chrome/common/extensions/message_bundle.h"
 #include "chrome/common/extensions/user_script.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_details.h"
@@ -74,6 +73,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
 #include "content/public/common/url_constants.h"
+#include "extensions/browser/file_reader.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/error_utils.h"
 #include "skia/ext/image_operations.h"
@@ -482,8 +482,9 @@ bool WindowsCreateFunction::RunImpl() {
 
   Profile* window_profile = profile();
   Browser::Type window_type = Browser::TYPE_TABBED;
+  bool create_panel = false;
 
-  // panel_create_mode only applies if window is TYPE_PANEL.
+  // panel_create_mode only applies if create_panel = true
   PanelManager::CreateMode panel_create_mode = PanelManager::CREATE_AS_DOCKED;
 
   gfx::Rect window_bounds;
@@ -521,7 +522,7 @@ bool WindowsCreateFunction::RunImpl() {
         use_panels = PanelManager::ShouldUsePanels(extension_id);
 #endif
         if (use_panels) {
-          window_type = Browser::TYPE_PANEL;
+          create_panel = true;
 #if !defined(OS_CHROMEOS)
           // Non-ChromeOS has both docked and detached panel types.
           if (type_str == keys::kWindowTypeValueDetachedPanel)
@@ -537,9 +538,9 @@ bool WindowsCreateFunction::RunImpl() {
     }
 
     // Initialize default window bounds according to window type.
-    if (Browser::TYPE_TABBED == window_type ||
-        Browser::TYPE_POPUP == window_type ||
-        Browser::TYPE_PANEL == window_type) {
+    if (window_type == Browser::TYPE_TABBED ||
+        window_type == Browser::TYPE_POPUP ||
+        create_panel) {
       // Try to position the new browser relative to its originating
       // browser window. The call offsets the bounds by kWindowTilePixels
       // (defined in WindowSizer to be 10).
@@ -555,8 +556,7 @@ bool WindowsCreateFunction::RunImpl() {
                                                       &show_state);
     }
 
-    if (Browser::TYPE_PANEL == window_type &&
-        PanelManager::CREATE_AS_DETACHED == panel_create_mode) {
+    if (create_panel && PanelManager::CREATE_AS_DETACHED == panel_create_mode) {
       window_bounds.set_origin(
           PanelManager::GetInstance()->GetDefaultDetachedPanelOrigin());
     }
@@ -594,7 +594,7 @@ bool WindowsCreateFunction::RunImpl() {
     }
   }
 
-  if (window_type == Browser::TYPE_PANEL) {
+  if (create_panel) {
     if (urls.empty())
       urls.push_back(GURL(chrome::kChromeUINewTabURL));
 
@@ -603,8 +603,7 @@ bool WindowsCreateFunction::RunImpl() {
       ShellWindow::CreateParams create_params;
       create_params.window_type = ShellWindow::WINDOW_TYPE_V1_PANEL;
       create_params.bounds = window_bounds;
-      create_params.minimum_size = window_bounds.size();
-      create_params.maximum_size = window_bounds.size();
+      create_params.focused = saw_focus_key && focused;
       ShellWindow* shell_window =
           new ShellWindow(window_profile, GetExtension());
       AshPanelContents* ash_panel_contents = new AshPanelContents(shell_window);
@@ -639,6 +638,8 @@ bool WindowsCreateFunction::RunImpl() {
 
   // Create a new BrowserWindow.
   chrome::HostDesktopType host_desktop_type = chrome::GetActiveDesktop();
+  if (create_panel)
+    window_type = Browser::TYPE_POPUP;
   Browser::CreateParams create_params(window_type, window_profile,
                                       host_desktop_type);
   if (extension_id.empty()) {
@@ -660,7 +661,7 @@ bool WindowsCreateFunction::RunImpl() {
   for (std::vector<GURL>::iterator i = urls.begin(); i != urls.end(); ++i) {
     WebContents* tab = chrome::AddSelectedTabWithURL(
         new_window, *i, content::PAGE_TRANSITION_LINK);
-    if (window_type == Browser::TYPE_PANEL) {
+    if (create_panel) {
       extensions::TabHelper::FromWebContents(tab)->
           SetExtensionAppIconById(extension_id);
     }
@@ -669,13 +670,14 @@ bool WindowsCreateFunction::RunImpl() {
     TabStripModel* target_tab_strip = new_window->tab_strip_model();
     target_tab_strip->InsertWebContentsAt(urls.size(), contents,
                                           TabStripModel::ADD_NONE);
-  } else if (urls.empty()) {
+  } else if (urls.empty() && window_type != Browser::TYPE_POPUP) {
+    // Don't create a new tab when it is intended to create an empty popup.
     chrome::NewTab(new_window);
   }
   chrome::SelectNumberedTab(new_window, 0);
 
   // Unlike other window types, Panels do not take focus by default.
-  if (!saw_focus_key && window_type == Browser::TYPE_PANEL)
+  if (!saw_focus_key && create_panel)
     focused = false;
 
   if (focused)
@@ -1098,7 +1100,7 @@ bool TabsCreateFunction::RunImpl() {
   // We can't load extension URLs into incognito windows unless the extension
   // uses split mode. Special case to fall back to a tabbed window.
   if (url.SchemeIs(extensions::kExtensionScheme) &&
-      !GetExtension()->incognito_split_mode() &&
+      !extensions::IncognitoInfo::IsSplitMode(GetExtension()) &&
       browser->profile()->IsOffTheRecord()) {
     Profile* profile = browser->profile()->GetOriginalProfile();
     chrome::HostDesktopType desktop_type = browser->host_desktop_type();
@@ -1169,12 +1171,21 @@ bool TabsDuplicateFunction::RunImpl() {
   if (!has_callback())
     return true;
 
-  int new_index = tab_strip->GetIndexOfWebContents(new_contents);
+  // Duplicated tab may not be in the same window as the original, so find
+  // the window and the tab.
+  TabStripModel* new_tab_strip = NULL;
+  int new_tab_index = -1;
+  ExtensionTabUtil::GetTabStripModel(new_contents,
+                                     &new_tab_strip,
+                                     &new_tab_index);
+  if (!new_tab_strip || new_tab_index == -1) {
+    return false;
+  }
 
   // Return data about the newly created tab.
   SetResult(ExtensionTabUtil::CreateTabValue(
       new_contents,
-      tab_strip, new_index, GetExtension()));
+      new_tab_strip, new_tab_index, GetExtension()));
 
   return true;
 }
@@ -1717,13 +1728,21 @@ bool TabsCaptureVisibleTabFunction::RunImpl() {
     }
   }
 
-  // captureVisibleTab() can return an image containing sensitive information
-  // that the browser would otherwise protect.  Ensure the extension has
-  // permission to do this.
-  if (!GetExtension()->CanCaptureVisiblePage(
-        web_contents->GetURL(),
-        SessionID::IdForTab(web_contents),
-        &error_)) {
+  // Use the last committed URL rather than the active URL for permissions
+  // checking, since the visible page won't be updated until it has been
+  // committed. A canonical example of this is interstitials, which show the
+  // URL of the new/loading page (active) but would capture the content of the
+  // old page (last committed).
+  //
+  // TODO(creis): Use WebContents::GetLastCommittedURL instead.
+  // http://crbug.com/237908.
+  NavigationEntry* last_committed_entry =
+      web_contents->GetController().GetLastCommittedEntry();
+  GURL last_committed_url = last_committed_entry ?
+      last_committed_entry->GetURL() : GURL();
+  if (!GetExtension()->CanCaptureVisiblePage(last_committed_url,
+                                             SessionID::IdForTab(web_contents),
+                                             &error_)) {
     return false;
   }
 
@@ -1752,41 +1771,42 @@ void TabsCaptureVisibleTabFunction::CopyFromBackingStoreComplete(
 
   WebContents* web_contents = NULL;
   if (!GetTabToCapture(&web_contents)) {
-    error_ = keys::kInternalVisibleTabCaptureError;
-    SendResponse(false);
+    SendInternalError();
     return;
   }
 
   // Ask the renderer for a snapshot of the tab.
-  registrar_.Add(this,
-                 chrome::NOTIFICATION_TAB_SNAPSHOT_TAKEN,
-                 content::Source<WebContents>(web_contents));
-  AddRef();  // Balanced in TabsCaptureVisibleTabFunction::Observe().
-  SnapshotTabHelper::FromWebContents(web_contents)->CaptureSnapshot();
+  content::RenderWidgetHost* render_widget_host =
+      web_contents->GetRenderViewHost();
+  if (!render_widget_host) {
+    SendInternalError();
+    return;
+  }
+
+  render_widget_host->GetSnapshotFromRenderer(
+      gfx::Rect(),
+      base::Bind(
+          &TabsCaptureVisibleTabFunction::GetSnapshotFromRendererComplete,
+          this));
 }
 
 // If a backing store was not available in
 // TabsCaptureVisibleTabFunction::RunImpl, than the renderer was asked for a
-// snapshot.  Listen for a notification that the snapshot is available.
-void TabsCaptureVisibleTabFunction::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
-  DCHECK(type == chrome::NOTIFICATION_TAB_SNAPSHOT_TAKEN);
-
-  const SkBitmap *screen_capture =
-      content::Details<const SkBitmap>(details).ptr();
-  const bool error = screen_capture->empty();
-
-  if (error) {
-    error_ = keys::kInternalVisibleTabCaptureError;
-    SendResponse(false);
+// snapshot.
+void TabsCaptureVisibleTabFunction::GetSnapshotFromRendererComplete(
+    bool succeeded,
+    const SkBitmap& bitmap) {
+  if (!succeeded) {
+    SendInternalError();
   } else {
     VLOG(1) << "captureVisibleTab() got image from renderer.";
-    SendResultFromBitmap(*screen_capture);
+    SendResultFromBitmap(bitmap);
   }
+}
 
-  Release();  // Balanced in TabsCaptureVisibleTabFunction::RunImpl().
+void TabsCaptureVisibleTabFunction::SendInternalError() {
+  error_ = keys::kInternalVisibleTabCaptureError;
+  SendResponse(false);
 }
 
 // Turn a bitmap of the screen into an image, set that image as the result,
@@ -1838,9 +1858,11 @@ void TabsCaptureVisibleTabFunction::SendResultFromBitmap(
 }
 
 void TabsCaptureVisibleTabFunction::RegisterUserPrefs(
-    PrefRegistrySyncable* registry) {
-  registry->RegisterBooleanPref(prefs::kDisableScreenshots, false,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
+    user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterBooleanPref(
+      prefs::kDisableScreenshots,
+      false,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 bool TabsDetectLanguageFunction::RunImpl() {
@@ -2093,15 +2115,10 @@ void ExecuteCodeInTabFunction::DidLoadAndLocalizeFile(bool success,
     if (!Execute(data))
       SendResponse(false);
   } else {
-#if defined(OS_POSIX)
     // TODO(viettrungluu): bug: there's no particular reason the path should be
     // UTF-8, in which case this may fail.
     error_ = ErrorUtils::FormatErrorMessage(keys::kLoadFileError,
-        resource_.relative_path().value());
-#elif defined(OS_WIN)
-    error_ = ErrorUtils::FormatErrorMessage(keys::kLoadFileError,
-        WideToUTF8(resource_.relative_path().value()));
-#endif  // OS_WIN
+        resource_.relative_path().AsUTF8Unsafe());
     SendResponse(false);
   }
 }

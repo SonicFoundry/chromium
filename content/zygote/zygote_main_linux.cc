@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/zygote/zygote_main.h"
+
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -37,8 +39,9 @@
 #include "crypto/nss_util.h"
 #include "sandbox/linux/services/libc_urandom_override.h"
 #include "sandbox/linux/suid/client/setuid_sandbox_client.h"
-#include "skia/ext/SkFontHost_fontconfig_control.h"
 #include "third_party/icu/public/i18n/unicode/timezone.h"
+#include "third_party/libjingle/overrides/init_webrtc.h"
+#include "third_party/skia/include/ports/SkFontConfigInterface.h"
 
 #if defined(OS_LINUX)
 #include <sys/epoll.h>
@@ -279,6 +282,9 @@ static void PreSandboxInit() {
   // Ensure access to the Pepper plugins before the sandbox is turned on.
   PepperPluginRegistry::PreloadModules();
 #endif
+#if defined(ENABLE_WEBRTC)
+  InitializeWebRtcModule();
+#endif
 }
 
 #if !defined(CHROMIUM_SELINUX)
@@ -368,8 +374,8 @@ static bool EnterSandbox(sandbox::SetuidSandboxClient* setuid_sandbox,
     return false;
 
   PreSandboxInit();
-  SkiaFontConfigSetImplementation(
-      new FontConfigIPC(Zygote::kMagicSandboxIPCDescriptor));
+  SkFontConfigInterface::SetGlobal(
+      new FontConfigIPC(Zygote::kMagicSandboxIPCDescriptor))->unref();
 
   if (setuid_sandbox->IsSuidSandboxChild()) {
     // Use the SUID sandbox.  This still allows the seccomp sandbox to
@@ -438,8 +444,8 @@ static bool EnterSandbox(sandbox::SetuidSandboxClient* setuid_sandbox,
     return false;
 
   PreSandboxInit();
-  SkiaFontConfigSetImplementation(
-      new FontConfigIPC(Zygote::kMagicSandboxIPCDescriptor));
+  SkFontConfigInterface::SetGlobal(
+      new FontConfigIPC(Zygote::kMagicSandboxIPCDescriptor))->unref();
   return true;
 }
 
@@ -454,10 +460,7 @@ bool ZygoteMain(const MainFunctionParams& params,
 
   LinuxSandbox* linux_sandbox = LinuxSandbox::GetInstance();
   // This will pre-initialize the various sandboxes that need it.
-  // There need to be a corresponding call to PreinitializeSandboxFinish()
-  // for each new process, this will be done in the Zygote child, once we know
-  // our process type.
-  linux_sandbox->PreinitializeSandboxBegin();
+  linux_sandbox->PreinitializeSandbox();
 
   sandbox::SetuidSandboxClient* setuid_sandbox =
       linux_sandbox->setuid_sandbox_client();

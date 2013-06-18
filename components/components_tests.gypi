@@ -12,8 +12,11 @@
           'sources': [
             'auto_login_parser/auto_login_parser_unittest.cc',
             'navigation_interception/intercept_navigation_resource_throttle_unittest.cc',
+            'sessions/serialized_navigation_entry_unittest.cc',
             'test/run_all_unittests.cc',
             'visitedlink/test/visitedlink_unittest.cc',
+            'webdata/encryptor/encryptor_password_mac_unittest.cc',
+            'webdata/encryptor/encryptor_unittest.cc',
           ],
           'include_dirs': [
             '..',
@@ -24,16 +27,24 @@
             '../testing/gtest.gyp:gtest',
 
             # Dependencies of auto_login_parser
-            'components.gyp:auto_login_parser',
+            'auto_login_parser',
+
+            # Dependencies of encryptor
+            'encryptor',
 
             # Dependencies of intercept_navigation_resource_throttle_unittest.cc
             '../content/content.gyp:test_support_content',
             '../skia/skia.gyp:skia',
             'navigation_interception',
 
+            # Dependencies of sessions
+            '../third_party/protobuf/protobuf.gyp:protobuf_lite',
+            'sessions',
+            'sessions_test_support',
+
             # Dependencies of visitedlink
-            'components.gyp:visitedlink_browser',
-            'components.gyp:visitedlink_renderer',
+            'visitedlink_browser',
+            'visitedlink_renderer',
             '../content/content_resources.gyp:content_resources',
           ],
           'conditions': [
@@ -47,10 +58,42 @@
                 '../base/allocator/allocator.gyp:allocator',
               ],
             }],
+            ['android_webview_build == 0', {
+              'dependencies': [
+                '../sync/sync.gyp:sync',
+              ],
+            }],
           ],
           # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
           'msvs_disabled_warnings': [4267, ],
-        }
+        },
+        {
+          'target_name': 'components_perftests',
+          'type': '<(gtest_target_type)',
+          'dependencies': [
+            '../base/base.gyp:base',
+            '../base/base.gyp:test_support_perf',
+            '../content/content.gyp:test_support_content',
+            '../testing/gtest.gyp:gtest',
+            '../ui/compositor/compositor.gyp:compositor',
+            'visitedlink_browser',
+          ],
+         'include_dirs': [
+           '..',
+         ],
+         'sources': [
+           'visitedlink/test/visitedlink_perftest.cc',
+         ],
+         'conditions': [
+           ['OS == "android" and gtest_target_type == "shared_library"', {
+             'dependencies': [
+               '../testing/android/native_test.gyp:native_test_native_code',
+             ],
+           }],
+         ],
+         # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+         'msvs_disabled_warnings': [ 4267, ],
+        },
       ],
       'conditions': [
         ['OS == "android" and gtest_target_type == "shared_library"', {

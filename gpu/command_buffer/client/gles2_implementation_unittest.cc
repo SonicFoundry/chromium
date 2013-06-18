@@ -535,7 +535,7 @@ TEST_F(GLES2ImplementationTest, GetBucketContents) {
   const uint32 kBucketId = GLES2Implementation::kResultBucketId;
   const uint32 kTestSize = MaxTransferBufferSize() + 32;
 
-  scoped_array<uint8> buf(new uint8 [kTestSize]);
+  scoped_ptr<uint8[]> buf(new uint8 [kTestSize]);
   uint8* expected_data = buf.get();
   for (uint32 ii = 0; ii < kTestSize; ++ii) {
     expected_data[ii] = ii * 3;
@@ -580,6 +580,67 @@ TEST_F(GLES2ImplementationTest, GetBucketContents) {
   EXPECT_EQ(0, memcmp(&expected, commands_, sizeof(expected)));
   ASSERT_EQ(kTestSize, data.size());
   EXPECT_EQ(0, memcmp(expected_data, &data[0], data.size()));
+}
+
+TEST_F(GLES2ImplementationTest, GetShaderPrecisionFormat) {
+  struct Cmds {
+    cmds::GetShaderPrecisionFormat cmd;
+  };
+  typedef cmds::GetShaderPrecisionFormat::Result Result;
+
+  // The first call for mediump should trigger a command buffer request.
+  GLint range1[2] = {0, 0};
+  GLint precision1 = 0;
+  Cmds expected1;
+  ExpectedMemoryInfo client_result1 = GetExpectedResultMemory(4);
+  expected1.cmd.Init(GL_FRAGMENT_SHADER, GL_MEDIUM_FLOAT,
+                     client_result1.id, client_result1.offset);
+  Result server_result1 = {true, 14, 14, 10};
+  EXPECT_CALL(*command_buffer(), OnFlush())
+      .WillOnce(SetMemory(client_result1.ptr, server_result1))
+      .RetiresOnSaturation();
+  gl_->GetShaderPrecisionFormat(GL_FRAGMENT_SHADER, GL_MEDIUM_FLOAT,
+                                range1, &precision1);
+  const void* commands2 = GetPut();
+  EXPECT_NE(commands_, commands2);
+  EXPECT_EQ(0, memcmp(&expected1, commands_, sizeof(expected1)));
+  EXPECT_EQ(range1[0], 14);
+  EXPECT_EQ(range1[1], 14);
+  EXPECT_EQ(precision1, 10);
+
+  // The second call for mediump should use the cached value and avoid
+  // triggering a command buffer request, so we do not expect a call to
+  // OnFlush() here. We do expect the results to be correct though.
+  GLint range2[2] = {0, 0};
+  GLint precision2 = 0;
+  gl_->GetShaderPrecisionFormat(GL_FRAGMENT_SHADER, GL_MEDIUM_FLOAT,
+                                range2, &precision2);
+  const void* commands3 = GetPut();
+  EXPECT_EQ(commands2, commands3);
+  EXPECT_EQ(range2[0], 14);
+  EXPECT_EQ(range2[1], 14);
+  EXPECT_EQ(precision2, 10);
+
+  // If we then make a request for highp, we should get another command
+  // buffer request since it hasn't been cached yet.
+  GLint range3[2] = {0, 0};
+  GLint precision3 = 0;
+  Cmds expected3;
+  ExpectedMemoryInfo result3 = GetExpectedResultMemory(4);
+  expected3.cmd.Init(GL_FRAGMENT_SHADER, GL_HIGH_FLOAT,
+                     result3.id, result3.offset);
+  Result result3_source = {true, 62, 62, 16};
+  EXPECT_CALL(*command_buffer(), OnFlush())
+      .WillOnce(SetMemory(result3.ptr, result3_source))
+      .RetiresOnSaturation();
+  gl_->GetShaderPrecisionFormat(GL_FRAGMENT_SHADER, GL_HIGH_FLOAT,
+                                range3, &precision3);
+  const void* commands4 = GetPut();
+  EXPECT_NE(commands3, commands4);
+  EXPECT_EQ(0, memcmp(&expected3, commands3, sizeof(expected3)));
+  EXPECT_EQ(range3[0], 62);
+  EXPECT_EQ(range3[1], 62);
+  EXPECT_EQ(precision3, 16);
 }
 
 TEST_F(GLES2ImplementationTest, ShaderSource) {
@@ -1379,7 +1440,7 @@ TEST_F(GLES2ImplementationTest, ReadPixels2Reads) {
       0, kHeight / 2, kWidth, kHeight / 2, kFormat, kType,
       mem2.id, mem2.offset, result2.id, result2.offset);
   expected.set_token2.Init(GetNextToken());
-  scoped_array<int8> buffer(new int8[kWidth * kHeight * kBytesPerPixel]);
+  scoped_ptr<int8[]> buffer(new int8[kWidth * kHeight * kBytesPerPixel]);
 
   EXPECT_CALL(*command_buffer(), OnFlush())
       .WillOnce(SetMemory(result1.ptr, static_cast<uint32>(1)))
@@ -1411,7 +1472,7 @@ TEST_F(GLES2ImplementationTest, ReadPixelsBadFormatType) {
       0, 0, kWidth, kHeight, kFormat, kType,
       mem1.id, mem1.offset, result1.id, result1.offset);
   expected.set_token.Init(GetNextToken());
-  scoped_array<int8> buffer(new int8[kWidth * kHeight * kBytesPerPixel]);
+  scoped_ptr<int8[]> buffer(new int8[kWidth * kHeight * kBytesPerPixel]);
 
   EXPECT_CALL(*command_buffer(), OnFlush())
       .Times(1)
@@ -2081,7 +2142,7 @@ TEST_F(GLES2ImplementationTest, TexImage2D2Writes) {
       kWidth, kHeight / 2, kFormat, kType, kPixelStoreUnpackAlignment,
       &half_size, NULL, NULL));
 
-  scoped_array<uint8> pixels(new uint8[size]);
+  scoped_ptr<uint8[]> pixels(new uint8[size]);
   for (uint32 ii = 0; ii < size; ++ii) {
     pixels[ii] = static_cast<uint8>(ii);
   }
@@ -2205,7 +2266,7 @@ TEST_F(GLES2ImplementationTest, TexSubImage2DFlipY) {
       kTarget, kLevel, kFormat, kTextureWidth, kTextureHeight, kBorder, kFormat,
       kType, NULL);
   gl_->PixelStorei(GL_UNPACK_FLIP_Y_CHROMIUM, GL_TRUE);
-  scoped_array<uint32> pixels(new uint32[kSubImageWidth * kSubImageHeight]);
+  scoped_ptr<uint32[]> pixels(new uint32[kSubImageWidth * kSubImageHeight]);
   for (int y = 0; y < kSubImageHeight; ++y) {
     for (int x = 0; x < kSubImageWidth; ++x) {
       pixels.get()[kSubImageWidth * y + x] = x | (y << 16);
@@ -2262,7 +2323,7 @@ TEST_F(GLES2ImplementationTest, SubImageUnpack) {
   uint32 src_size;
   ASSERT_TRUE(GLES2Util::ComputeImageDataSizes(
       kSrcWidth, kSrcSubImageY1, kFormat, kType, 8, &src_size, NULL, NULL));
-  scoped_array<uint8> src_pixels;
+  scoped_ptr<uint8[]> src_pixels;
   src_pixels.reset(new uint8[src_size]);
   for (size_t i = 0; i < src_size; ++i) {
     src_pixels[i] = static_cast<int8>(i);
@@ -2809,4 +2870,3 @@ TEST_F(GLES2ImplementationTest, Enable) {
 
 }  // namespace gles2
 }  // namespace gpu
-

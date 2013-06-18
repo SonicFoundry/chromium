@@ -71,7 +71,7 @@ Notification::Notification(message_center::NotificationType type,
 }
 
 Notification::Notification(const GURL& origin_url,
-                           const gfx::ImageSkia& icon,
+                           const gfx::Image& icon,
                            const string16& title,
                            const string16& body,
                            WebKit::WebTextDirection dir,
@@ -124,4 +124,12 @@ Notification& Notification::operator=(const Notification& notification) {
     optional_fields_.reset();
   delegate_ = notification.delegate();
   return *this;
+}
+
+void Notification::DisableTimeout() {
+#if defined(ENABLE_MESSAGE_CENTER)
+  if (!optional_fields_.get())
+    optional_fields_.reset(new base::DictionaryValue());
+  optional_fields_->SetBoolean(message_center::kPrivateNeverTimeoutKey, true);
+#endif
 }

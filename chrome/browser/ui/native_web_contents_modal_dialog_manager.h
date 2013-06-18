@@ -7,6 +7,10 @@
 
 #include "chrome/browser/ui/native_web_contents_modal_dialog.h"
 
+namespace content {
+class WebContents;
+}  // namespace content
+
 // Interface from NativeWebContentsModalDialogManager to
 // WebContentsModalDialogManager.
 class NativeWebContentsModalDialogManagerDelegate {
@@ -14,6 +18,7 @@ class NativeWebContentsModalDialogManagerDelegate {
   NativeWebContentsModalDialogManagerDelegate() {}
   virtual ~NativeWebContentsModalDialogManagerDelegate() {}
 
+  virtual content::WebContents* GetWebContents() const = 0;
   virtual void WillClose(NativeWebContentsModalDialog dialog) = 0;
 
  private:
@@ -34,6 +39,9 @@ class NativeWebContentsModalDialogManager {
   // Makes the web contents modal dialog visible. Only one web contents modal
   // dialog is shown at a time per tab.
   virtual void ShowDialog(NativeWebContentsModalDialog dialog) = 0;
+
+  // Hides the web contents modal dialog without closing it.
+  virtual void HideDialog(NativeWebContentsModalDialog dialog) = 0;
 
   // Closes the web contents modal dialog.
   virtual void CloseDialog(NativeWebContentsModalDialog dialog) = 0;

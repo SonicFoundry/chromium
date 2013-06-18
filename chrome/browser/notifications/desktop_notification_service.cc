@@ -7,19 +7,19 @@
 #include "base/metrics/histogram.h"
 #include "base/threading/thread.h"
 #include "base/utf_string_conversions.h"
-#include "chrome/browser/api/infobars/confirm_infobar_delegate.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/content_settings/content_settings_details.h"
 #include "chrome/browser/content_settings/content_settings_provider.h"
 #include "chrome/browser/content_settings/host_content_settings_map.h"
+#include "chrome/browser/extensions/extension_info_map.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/infobars/confirm_infobar_delegate.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/notifications/desktop_notification_service_factory.h"
 #include "chrome/browser/notifications/notification.h"
 #include "chrome/browser/notifications/notification_object_proxy.h"
 #include "chrome/browser/notifications/notification_ui_manager.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -28,6 +28,7 @@
 #include "chrome/common/content_settings_pattern.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_view_host.h"
@@ -42,6 +43,7 @@
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebSecurityOrigin.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/message_center/notifier_settings.h"
 #include "ui/webui/web_ui_util.h"
 
 using content::BrowserThread;
@@ -52,6 +54,49 @@ using WebKit::WebTextDirection;
 using WebKit::WebSecurityOrigin;
 
 const ContentSetting kDefaultSetting = CONTENT_SETTING_ASK;
+
+namespace {
+
+bool UsesTextNotifications() {
+#if defined(USE_ASH)
+  return true;
+#else
+  return
+      g_browser_process->notification_ui_manager()->DelegatesToMessageCenter();
+#endif
+}
+
+void ToggleListPrefItem(PrefService* prefs, const char* key,
+                        const std::string& item, bool flag) {
+  ListPrefUpdate update(prefs, key);
+  base::ListValue* const list = update.Get();
+  if (flag) {
+    // AppendIfNotPresent will delete |adding_value| when the same value
+    // already exists.
+    base::StringValue* const adding_value = new base::StringValue(item);
+    list->AppendIfNotPresent(adding_value);
+  } else {
+    base::StringValue removed_value(item);
+    list->Remove(removed_value, NULL);
+  }
+}
+
+void CopySetFromPrefToMemory(PrefService* prefs, const char* key,
+                             std::set<std::string>* dst) {
+  dst->clear();
+  const base::ListValue* pref_list = prefs->GetList(key);
+  for (size_t i = 0; i < pref_list->GetSize(); ++i) {
+    std::string element;
+    if (!pref_list->GetString(i, &element) && element.empty()) {
+      LOG(WARNING) << i << "-th element is not a string for "
+                   << key;
+      continue;
+    }
+    dst->insert(element);
+  }
+}
+
+}  // namespace
 
 // NotificationPermissionInfoBarDelegate --------------------------------------
 
@@ -193,10 +238,12 @@ bool NotificationPermissionInfoBarDelegate::Cancel() {
 
 // static
 void DesktopNotificationService::RegisterUserPrefs(
-    PrefRegistrySyncable* registry) {
+    user_prefs::PrefRegistrySyncable* registry) {
 #if defined(OS_CHROMEOS) || defined(ENABLE_MESSAGE_CENTER)
   registry->RegisterListPref(prefs::kMessageCenterDisabledExtensionIds,
-                             PrefRegistrySyncable::SYNCABLE_PREF);
+                             user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterListPref(prefs::kMessageCenterDisabledSystemComponentIds,
+                             user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
 #endif
 }
 
@@ -260,14 +307,15 @@ std::string DesktopNotificationService::AddNotification(
     const string16& replace_id,
     NotificationDelegate* delegate,
     Profile* profile) {
-#if defined(USE_ASH)
-  // For Ash create a non-HTML notification with |icon_url|.
-  Notification notification(origin_url, icon_url, title, message,
-                            WebKit::WebTextDirectionDefault,
-                            string16(), replace_id, delegate);
-  g_browser_process->notification_ui_manager()->Add(notification, profile);
-  return notification.notification_id();
-#else
+  if (UsesTextNotifications()) {
+    // For message center create a non-HTML notification with |icon_url|.
+    Notification notification(origin_url, icon_url, title, message,
+                              WebKit::WebTextDirectionDefault,
+                              string16(), replace_id, delegate);
+    g_browser_process->notification_ui_manager()->Add(notification, profile);
+    return notification.notification_id();
+  }
+
   // Generate a data URL embedding the icon URL, title, and message.
   GURL content_url(CreateDataUrl(
       icon_url, title, message, WebKit::WebTextDirectionDefault));
@@ -275,7 +323,6 @@ std::string DesktopNotificationService::AddNotification(
       GURL(), content_url, string16(), replace_id, delegate);
   g_browser_process->notification_ui_manager()->Add(notification, profile);
   return notification.notification_id();
-#endif
 }
 
 // static
@@ -283,24 +330,25 @@ std::string DesktopNotificationService::AddIconNotification(
     const GURL& origin_url,
     const string16& title,
     const string16& message,
-    const gfx::ImageSkia& icon,
+    const gfx::Image& icon,
     const string16& replace_id,
     NotificationDelegate* delegate,
     Profile* profile) {
-#if defined(USE_ASH)
-  // For Ash create a non-HTML notification with |icon|.
-  Notification notification(origin_url, icon, title, message,
-                            WebKit::WebTextDirectionDefault,
-                            string16(), replace_id, delegate);
-  g_browser_process->notification_ui_manager()->Add(notification, profile);
-  return notification.notification_id();
-#else
+
+  if (UsesTextNotifications()) {
+    // For message center create a non-HTML notification with |icon|.
+    Notification notification(origin_url, icon, title, message,
+                              WebKit::WebTextDirectionDefault,
+                              string16(), replace_id, delegate);
+    g_browser_process->notification_ui_manager()->Add(notification, profile);
+    return notification.notification_id();
+  }
+
   GURL icon_url;
-  if (!icon.isNull())
-    icon_url = GURL(webui::GetBitmapDataUrl(*icon.bitmap()));
+  if (!icon.IsEmpty())
+    icon_url = GURL(webui::GetBitmapDataUrl(*icon.ToSkBitmap()));
   return AddNotification(
       origin_url, title, message, icon_url, replace_id, delegate, profile);
-#endif
 }
 
 // static
@@ -314,33 +362,25 @@ DesktopNotificationService::DesktopNotificationService(
     NotificationUIManager* ui_manager)
     : profile_(profile),
       ui_manager_(ui_manager) {
-  StartObserving();
-}
-
-DesktopNotificationService::~DesktopNotificationService() {
-  StopObserving();
-}
-
-void DesktopNotificationService::StartObserving() {
-  if (!profile_->IsOffTheRecord()) {
-    notification_registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
-                                content::Source<Profile>(profile_));
-  }
-  notification_registrar_.Add(this, chrome::NOTIFICATION_PROFILE_DESTROYED,
-                              content::Source<Profile>(profile_));
 #if defined(ENABLE_MESSAGE_CENTER)
   OnDisabledExtensionIdsChanged();
+  OnDisabledSystemComponentIdsChanged();
   disabled_extension_id_pref_.Init(
       prefs::kMessageCenterDisabledExtensionIds,
       profile_->GetPrefs(),
       base::Bind(
           &DesktopNotificationService::OnDisabledExtensionIdsChanged,
           base::Unretained(this)));
+  disabled_system_component_id_pref_.Init(
+      prefs::kMessageCenterDisabledSystemComponentIds,
+      profile_->GetPrefs(),
+      base::Bind(
+          &DesktopNotificationService::OnDisabledSystemComponentIdsChanged,
+          base::Unretained(this)));
 #endif
 }
 
-void DesktopNotificationService::StopObserving() {
-  notification_registrar_.RemoveAll();
+DesktopNotificationService::~DesktopNotificationService() {
 #if defined(ENABLE_MESSAGE_CENTER)
   disabled_extension_id_pref_.Destroy();
 #endif
@@ -366,34 +406,6 @@ void DesktopNotificationService::DenyPermission(const GURL& origin) {
       CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
       NO_RESOURCE_IDENTIFIER,
       CONTENT_SETTING_BLOCK);
-}
-
-void DesktopNotificationService::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
-  // This may get called during shutdown, so don't use GetUIManager() here,
-  // and don't do anything if ui_manager_ hasn't already been set.
-  if (!ui_manager_)
-    return;
-
-  if (type == chrome::NOTIFICATION_EXTENSION_UNLOADED) {
-    // Remove all notifications currently shown or queued by the extension
-    // which was unloaded.
-    const extensions::Extension* extension =
-        content::Details<extensions::UnloadedExtensionInfo>(details)->extension;
-    if (extension &&
-        g_browser_process && g_browser_process->notification_ui_manager()) {
-      g_browser_process->notification_ui_manager()->
-          CancelAllBySourceOrigin(extension->url());
-    }
-  } else if (type == chrome::NOTIFICATION_PROFILE_DESTROYED) {
-    if (g_browser_process && g_browser_process->notification_ui_manager()) {
-      g_browser_process->notification_ui_manager()->
-          CancelAllByProfile(profile_);
-    }
-    StopObserving();
-  }
 }
 
 ContentSetting DesktopNotificationService::GetDefaultContentSetting(
@@ -466,7 +478,7 @@ void DesktopNotificationService::RequestPermission(
           DesktopNotificationServiceFactory::GetForProfile(
               Profile::FromBrowserContext(contents->GetBrowserContext())),
           origin,
-          DisplayNameForOrigin(origin),
+          DisplayNameForOriginInProcessId(origin, process_id),
           process_id,
           route_id,
           callback_context);
@@ -505,33 +517,40 @@ bool DesktopNotificationService::ShowDesktopNotification(
                                   params.notification_id,
                                   source == WorkerNotification);
 
-  string16 display_source = DisplayNameForOrigin(origin);
+  string16 display_source = DisplayNameForOriginInProcessId(origin, process_id);
   if (params.is_html) {
     ShowNotification(Notification(origin, params.contents_url, display_source,
         params.replace_id, proxy));
   } else {
-    ShowNotification(Notification(origin, params.icon_url, params.title,
+    Notification notification(origin, params.icon_url, params.title,
         params.body, params.direction, display_source, params.replace_id,
-        proxy));
+        proxy);
+    // The webkit notification doesn't timeout.
+    notification.DisableTimeout();
+    ShowNotification(notification);
   }
   return true;
 }
 
-string16 DesktopNotificationService::DisplayNameForOrigin(
-    const GURL& origin) {
+string16 DesktopNotificationService::DisplayNameForOriginInProcessId(
+    const GURL& origin, int process_id) {
   // If the source is an extension, lookup the display name.
-  if (origin.SchemeIs(extensions::kExtensionScheme)) {
-    ExtensionService* extension_service =
-        extensions::ExtensionSystem::Get(profile_)->extension_service();
-    if (extension_service) {
-      const extensions::Extension* extension =
-          extension_service->extensions()->GetExtensionOrAppByURL(
-              ExtensionURLInfo(
-                  WebSecurityOrigin::createFromString(
-                      UTF8ToUTF16(origin.spec())),
-                  origin));
-      if (extension)
-        return UTF8ToUTF16(extension->name());
+  // Message center prefers to use extension name if the notification
+  // is allowed by an extension.
+  if (NotificationUIManager::DelegatesToMessageCenter() ||
+      origin.SchemeIs(extensions::kExtensionScheme)) {
+    ExtensionInfoMap* extension_info_map =
+        extensions::ExtensionSystem::Get(profile_)->info_map();
+    if (extension_info_map) {
+      ExtensionSet extensions;
+      extension_info_map->GetExtensionsWithAPIPermissionForSecurityOrigin(
+          origin, process_id, extensions::APIPermission::kNotification,
+          &extensions);
+      for (ExtensionSet::const_iterator iter = extensions.begin();
+           iter != extensions.end(); ++iter) {
+        if (IsExtensionEnabled((*iter)->id()))
+          return UTF8ToUTF16((*iter)->name());
+      }
     }
   }
   return UTF8ToUTF16(origin.host());
@@ -560,34 +579,44 @@ void DesktopNotificationService::SetExtensionEnabled(
     const std::string& id, bool enabled) {
   // Do not touch |disabled_extension_ids_|. It will be updated at
   // OnDisabledExtensionIdsChanged() which will be called when the pref changes.
-  ListPrefUpdate update(profile_->GetPrefs(),
-                        prefs::kMessageCenterDisabledExtensionIds);
-  base::ListValue* disabled_extension_ids = update.Get();
-  if (enabled) {
-    base::StringValue removed_value(id);
-    disabled_extension_ids->Remove(removed_value, NULL);
-  } else {
-    // AppendIfNotPresent will delete |adding_value| when the same value
-    // already exists.
-    base::StringValue* adding_value = new base::StringValue(id);
-    disabled_extension_ids->AppendIfNotPresent(adding_value);
-  }
+  ToggleListPrefItem(
+      profile_->GetPrefs(),
+      prefs::kMessageCenterDisabledExtensionIds,
+      id,
+      !enabled);
 }
 
 void DesktopNotificationService::OnDisabledExtensionIdsChanged() {
-  disabled_extension_ids_.clear();
-  const base::ListValue* pref_list = profile_->GetPrefs()->GetList(
-      prefs::kMessageCenterDisabledExtensionIds);
-  for (size_t i = 0; i < pref_list->GetSize(); ++i) {
-    std::string disabled_id;
-    if (!pref_list->GetString(i, &disabled_id) && disabled_id.empty()) {
-      LOG(WARNING) << i << "-th element is not a string for "
-                   << prefs::kMessageCenterDisabledExtensionIds;
-      continue;
-    }
-    disabled_extension_ids_.insert(disabled_id);
-  }
+  CopySetFromPrefToMemory(profile_->GetPrefs(),
+                          prefs::kMessageCenterDisabledExtensionIds,
+                          &disabled_extension_ids_);
 }
+
+#if defined(ENABLE_MESSAGE_CENTER)
+bool DesktopNotificationService::IsSystemComponentEnabled(
+    message_center::Notifier::SystemComponentNotifierType type) {
+  return disabled_system_component_ids_.find(message_center::ToString(type)) ==
+         disabled_system_component_ids_.end();
+}
+
+void DesktopNotificationService::SetSystemComponentEnabled(
+    message_center::Notifier::SystemComponentNotifierType type, bool enabled) {
+  // Do not touch |disabled_extension_ids_|. It will be updated at
+  // OnDisabledExtensionIdsChanged() which will be called when the pref changes.
+  ToggleListPrefItem(
+      profile_->GetPrefs(),
+      prefs::kMessageCenterDisabledSystemComponentIds,
+      message_center::ToString(type),
+      !enabled);
+}
+
+void DesktopNotificationService::OnDisabledSystemComponentIdsChanged() {
+  disabled_extension_ids_.clear();
+  CopySetFromPrefToMemory(profile_->GetPrefs(),
+                          prefs::kMessageCenterDisabledSystemComponentIds,
+                          &disabled_system_component_ids_);
+}
+#endif
 
 WebKit::WebNotificationPresenter::Permission
     DesktopNotificationService::HasPermission(const GURL& origin) {

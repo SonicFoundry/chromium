@@ -12,8 +12,8 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/version.h"
-#include "chrome/browser/extensions/crx_installer_error.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
+#include "chrome/browser/extensions/extension_installer.h"
 #include "chrome/browser/extensions/sandboxed_unpacker.h"
 #include "chrome/browser/extensions/webstore_installer.h"
 #include "chrome/common/extensions/extension.h"
@@ -30,6 +30,7 @@ class SequencedTaskRunner;
 }
 
 namespace extensions {
+class CrxInstallerError;
 class ExtensionUpdaterTest;
 class RequirementsChecker;
 
@@ -74,17 +75,17 @@ class CrxInstaller
     NumOffStoreInstallAllowReasons
   };
 
-  // Extensions will be installed into frontend->install_directory(),
-  // then registered with |frontend|. Any install UI will be displayed
+  // Extensions will be installed into service->install_directory(),
+  // then registered with |service|. Any install UI will be displayed
   // using |client|. Pass NULL for |client| for silent install
   static scoped_refptr<CrxInstaller> Create(
-      ExtensionService* frontend,
+      ExtensionService* service,
       ExtensionInstallPrompt* client);
 
   // Same as the previous method, except use the |approval| to bypass the
   // prompt. Note that the caller retains ownership of |approval|.
   static scoped_refptr<CrxInstaller> Create(
-      ExtensionService* frontend,
+      ExtensionService* service,
       ExtensionInstallPrompt* client,
       const WebstoreInstaller::Approval* approval);
 
@@ -191,14 +192,16 @@ class CrxInstaller
 
   bool did_handle_successfully() const { return did_handle_successfully_; }
 
-  Profile* profile() { return profile_; }
+  Profile* profile() { return installer_.profile(); }
+
+  const Extension* extension() { return installer_.extension(); }
 
  private:
   friend class ::ExtensionServiceTest;
   friend class ExtensionUpdaterTest;
   friend class ExtensionCrxInstallerTest;
 
-  CrxInstaller(base::WeakPtr<ExtensionService> frontend_weak,
+  CrxInstaller(base::WeakPtr<ExtensionService> service_weak,
                ExtensionInstallPrompt* client,
                const WebstoreInstaller::Approval* approval);
   virtual ~CrxInstaller();
@@ -222,13 +225,12 @@ class CrxInstaller
                                const Extension* extension) OVERRIDE;
 
   // Called on the UI thread to start the requirements check on the extension.
-  void CheckRequirements();
+  void CheckImportsAndRequirements();
 
   // Runs on the UI thread. Callback from RequirementsChecker.
   void OnRequirementsChecked(std::vector<std::string> requirement_errors);
 
-  // Runs on the UI thread. Confirms with the user (via ExtensionInstallPrompt)
-  // that it is OK to install this extension.
+  // Runs on the UI thread. Confirms the installation to the ExtensionService.
   void ConfirmInstall();
 
   // Runs on File thread. Install the unpacked extension into the profile and
@@ -281,7 +283,7 @@ class CrxInstaller
   // A parsed copy of the expected manifest, before any transformations like
   // localization have taken place. If |approved_| is true, then the
   // extension's manifest must match this for the install to proceed.
-  scoped_ptr<base::DictionaryValue> expected_manifest_;
+  scoped_ptr<Manifest> expected_manifest_;
 
   // If non-NULL, contains the expected version of the extension we're
   // installing.  Important for external sources, where claiming the wrong
@@ -306,16 +308,12 @@ class CrxInstaller
   // apps.
   bool create_app_shortcut_;
 
-  // The extension we're installing. We own this and either pass it off to
-  // ExtensionService on success, or delete it on failure.
-  scoped_refptr<const Extension> extension_;
-
   // The ordinal of the NTP apps page |extension_| will be shown on.
   syncer::StringOrdinal page_ordinal_;
 
   // A parsed copy of the unmodified original manifest, before any
   // transformations like localization have taken place.
-  scoped_ptr<base::DictionaryValue> original_manifest_;
+  scoped_ptr<Manifest> original_manifest_;
 
   // If non-empty, contains the current version of the extension we're
   // installing (for upgrades).
@@ -329,10 +327,7 @@ class CrxInstaller
   base::FilePath temp_dir_;
 
   // The frontend we will report results back to.
-  base::WeakPtr<ExtensionService> frontend_weak_;
-
-  // The Profile where the extension is being installed in.
-  Profile* profile_;
+  base::WeakPtr<ExtensionService> service_weak_;
 
   // The client we will work with to do the installation. This can be NULL, in
   // which case the install is silent.
@@ -378,15 +373,10 @@ class CrxInstaller
   // still consider the installation 'handled'.
   bool did_handle_successfully_;
 
-  // Whether we should record an oauth2 grant upon successful install.
-  bool record_oauth2_grant_;
-
   // Whether we should produce an error if the manifest declares requirements
   // that are not met. If false and there is an unmet requirement, the install
   // will continue but the extension will be distabled.
   bool error_on_unsupported_requirements_;
-
-  scoped_ptr<RequirementsChecker> requirements_checker_;
 
   bool has_requirement_errors_;
 
@@ -401,6 +391,9 @@ class CrxInstaller
   // Whether the update is initiated by the user from the extension settings
   // page.
   bool update_from_settings_page_;
+
+  // Gives access to common methods and data of an extension installer.
+  ExtensionInstaller installer_;
 
   DISALLOW_COPY_AND_ASSIGN(CrxInstaller);
 };

@@ -5,7 +5,6 @@
 #include "chrome/browser/ui/views/collected_cookies_views.h"
 
 #include "base/prefs/pref_service.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
 #include "chrome/browser/browsing_data/browsing_data_appcache_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_cookie_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_database_helper.h"
@@ -17,11 +16,13 @@
 #include "chrome/browser/content_settings/cookie_settings.h"
 #include "chrome/browser/content_settings/local_shared_objects_container.h"
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/collected_cookies_infobar_delegate.h"
 #include "chrome/browser/ui/views/constrained_window_views.h"
 #include "chrome/browser/ui/views/cookie_info_view.h"
 #include "chrome/browser/ui/web_contents_modal_dialog_manager.h"
+#include "chrome/browser/ui/web_contents_modal_dialog_manager_delegate.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/notification_details.h"
@@ -193,11 +194,13 @@ CollectedCookiesViews::CollectedCookiesViews(content::WebContents* web_contents)
       TabSpecificContentSettings::FromWebContents(web_contents);
   registrar_.Add(this, chrome::NOTIFICATION_COLLECTED_COOKIES_SHOWN,
                  content::Source<TabSpecificContentSettings>(content_settings));
-  window_ = CreateWebContentsModalDialogViews(
-      this,
-      web_contents->GetView()->GetNativeView());
   WebContentsModalDialogManager* web_contents_modal_dialog_manager =
       WebContentsModalDialogManager::FromWebContents(web_contents);
+  window_ = CreateWebContentsModalDialogViews(
+      this,
+      web_contents->GetView()->GetNativeView(),
+      web_contents_modal_dialog_manager->delegate()->
+          GetWebContentsModalDialogHost());
   web_contents_modal_dialog_manager->ShowDialog(window_->GetNativeView());
 }
 

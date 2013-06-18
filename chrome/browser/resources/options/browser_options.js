@@ -21,22 +21,28 @@ cr.define('options', function() {
   BrowserOptions.prototype = {
     __proto__: options.OptionsPage.prototype,
 
-    // State variables.
-    signedIn: false,
+    /**
+     * Keeps track of the state of |start-stop-button|. On chrome, the value is
+     * true when the user is signed in, and on chromeos, when sync setup has
+     * been completed.
+     * @type {boolean}
+     * @private
+     */
+    signedIn_: false,
 
     /**
      * Keeps track of whether |onShowHomeButtonChanged_| has been called. See
      * |onShowHomeButtonChanged_|.
-     * @type {bool}
+     * @type {boolean}
      * @private
      */
     onShowHomeButtonChangedCalled_: false,
 
     /**
      * Track if page initialization is complete.  All C++ UI handlers have the
-     * chance to manipulate page content within their InitializePage mathods.
+     * chance to manipulate page content within their InitializePage methods.
      * This flag is set to true after all initializers have been called.
-     * @type (boolean}
+     * @type {boolean}
      * @private
      */
     initializationComplete_: false,
@@ -80,12 +86,12 @@ cr.define('options', function() {
       this.updateSyncState_(loadTimeData.getValue('syncData'));
 
       $('start-stop-sync').onclick = function(event) {
-        if (self.signedIn)
+        if (self.signedIn_)
           SyncSetupOverlay.showStopSyncingUI();
         else if (cr.isChromeOS)
           SyncSetupOverlay.showSetupUIWithoutLogin();
         else
-          SyncSetupOverlay.showSetupUI();
+          SyncSetupOverlay.startSignIn();
       };
       $('customize-sync').onclick = function(event) {
         if (cr.isChromeOS)
@@ -200,6 +206,7 @@ cr.define('options', function() {
         if (loadTimeData.getBoolean('profileIsManaged')) {
           $('profiles-create').disabled = true;
           $('profiles-delete').disabled = true;
+          $('profiles-list').canDeleteItems = false;
         }
       }
 
@@ -215,6 +222,10 @@ cr.define('options', function() {
         this.username_ = loadTimeData.getString('username');
 
         this.updateAccountPicture_();
+
+        $('account-picture-wrapper').oncontextmenu = function(e) {
+          e.preventDefault();
+        };
 
         $('manage-accounts-button').onclick = function(event) {
           OptionsPage.navigateToPage('accounts');
@@ -418,16 +429,6 @@ cr.define('options', function() {
           chrome.send('highContrastChange',
                       [$('accessibility-high-contrast-check').checked]);
         };
-
-        // Disable the magnifier-type dropdown list when the magnifier is
-        // disabled.
-        Preferences.getInstance().addEventListener(
-            'settings.a11y.screen_magnifier',
-            function(event) {
-              $('accessibility-screen-magnifier-type-select').setDisabled(
-                  'magnifier-is-disabled', !event.value.value);
-            });
-
       }
 
       // Display management section (CrOS only).
@@ -455,6 +456,22 @@ cr.define('options', function() {
             OptionsPage.navigateToPage('kioskAppsOverlay');
           };
         }
+      }
+
+      // System section.
+      if (!cr.isChromeOS) {
+        var updateGpuRestartButton = function() {
+          $('gpu-mode-reset-restart').hidden =
+              loadTimeData.getBoolean('gpuEnabledAtStart') ==
+              $('gpu-mode-checkbox').checked;
+        };
+        Preferences.getInstance().addEventListener(
+            $('gpu-mode-checkbox').getAttribute('pref'),
+            updateGpuRestartButton);
+        $('gpu-mode-reset-restart-button').onclick = function(event) {
+          chrome.send('restartBrowser');
+        };
+        updateGpuRestartButton();
       }
 
       if (loadTimeData.getBoolean('managedUsersEnabled') &&
@@ -540,9 +557,6 @@ cr.define('options', function() {
         } else {
           section.style.height = 'auto';
         }
-        // Force an update of the list of paired Bluetooth devices.
-        if (cr.isChromeOS)
-          $('bluetooth-paired-devices-list').refresh();
       };
 
       // Delay starting the transition if animating so that hidden change will
@@ -685,6 +699,12 @@ cr.define('options', function() {
         expander.textContent = loadTimeData.getString('hideAdvancedSettings');
     },
 
+    updateInstantState_: function(enabled, checked) {
+      var checkbox = $('instant-enabled-control');
+      checkbox.disabled = !enabled;
+      checkbox.checked = checked;
+    },
+
     /**
      * Updates the sync section with the given state.
      * @param {Object} syncData A bunch of data records that describe the status
@@ -698,29 +718,39 @@ cr.define('options', function() {
       }
 
       $('sync-section').hidden = false;
-      this.signedIn = syncData.signedIn;
+
+      if (cr.isChromeOS)
+        this.signedIn_ = syncData.setupCompleted;
+      else
+        this.signedIn_ = syncData.signedIn;
+
       // Display the "setup sync" button if we're signed in and sync is not
       // managed/disabled.
-      $('customize-sync').hidden = !syncData.signedIn ||
-          syncData.managed || !syncData.syncSystemEnabled;
+      $('customize-sync').hidden = !this.signedIn_ ||
+                                   syncData.managed ||
+                                   !syncData.syncSystemEnabled;
 
       var startStopButton = $('start-stop-sync');
-      // Disable the "start/stop syncing" if we're currently signing in, or
-      // if we're already signed in and signout is not allowed.
+      // Disable the "start/stop syncing" button if we're currently signing in,
+      // or if we're already signed in and signout is not allowed.
       startStopButton.disabled = syncData.setupInProgress ||
-          !syncData.signoutAllowed;
+                                 !syncData.signoutAllowed;
       if (!syncData.signoutAllowed)
         $('start-stop-sync-indicator').setAttribute('controlled-by', 'policy');
       else
         $('start-stop-sync-indicator').removeAttribute('controlled-by');
-      startStopButton.hidden =
-          syncData.setupCompleted && cr.isChromeOS;
+
+      // Hide the "start/stop syncing" button on Chrome OS if sync has already
+      // been set up, or if it is managed or disabled.
+      startStopButton.hidden = cr.isChromeOS && (syncData.setupCompleted ||
+                                                 syncData.isManaged ||
+                                                 !syncData.syncSystemEnabled);
       startStopButton.textContent =
-          syncData.signedIn ?
+          this.signedIn_ ?
               loadTimeData.getString('syncButtonTextStop') :
-          syncData.setupInProgress ?
-              loadTimeData.getString('syncButtonTextInProgress') :
-              loadTimeData.getString('syncButtonTextStart');
+              syncData.setupInProgress ?
+                  loadTimeData.getString('syncButtonTextInProgress') :
+                  loadTimeData.getString('syncButtonTextStart');
       $('start-stop-sync-indicator').hidden = startStopButton.hidden;
 
       // TODO(estade): can this just be textContent?
@@ -842,7 +872,7 @@ cr.define('options', function() {
         // /home/chronos/user/Downloads with Downloads for local files.
         // Also replace '/' with ' \u203a ' (angled quote sign) everywhere.
         var path = $('downloadLocationPath').value;
-        path = path.replace(/^\/special\/drive/, 'Google Drive');
+        path = path.replace(/^\/special\/drive\/root/, 'Google Drive');
         path = path.replace(/^\/home\/chronos\/user\//, '');
         path = path.replace(/\//g, ' \u203a ');
         $('downloadLocationPath').value = path;
@@ -1067,7 +1097,6 @@ cr.define('options', function() {
      * @private
      */
     handleAddBluetoothDevice_: function() {
-      $('bluetooth-unpaired-devices-list').clear();
       chrome.send('findBluetoothDevices');
       OptionsPage.showPageByName('bluetooth', false);
     },
@@ -1322,14 +1351,15 @@ cr.define('options', function() {
      * @param {{name: string,
      *          address: string,
      *          paired: boolean,
-     *          bonded: boolean,
      *          connected: boolean}} device
      *     Decription of the Bluetooth device.
      * @private
      */
     addBluetoothDevice_: function(device) {
       var list = $('bluetooth-unpaired-devices-list');
-      if (device.paired) {
+      // Display the "connecting" (already paired or not yet paired) and the
+      // paired devices in the same list.
+      if (device.paired || device.connecting) {
         // Test to see if the device is currently in the unpaired list, in which
         // case it should be removed from that list.
         var index = $('bluetooth-unpaired-devices-list').find(device.address);
@@ -1401,6 +1431,7 @@ cr.define('options', function() {
     'updateAccountPicture',
     'updateAutoLaunchState',
     'updateDefaultBrowserState',
+    'updateInstantState',
     'updateSearchEngines',
     'updateStartupPages',
     'updateSyncState',

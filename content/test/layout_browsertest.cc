@@ -73,7 +73,7 @@ InProcessBrowserLayoutTest::InProcessBrowserLayoutTest(
 }
 
 InProcessBrowserLayoutTest::~InProcessBrowserLayoutTest() {
-  if (test_http_server_.get())
+  if (test_http_server_)
     CHECK(test_http_server_->Stop());
 }
 
@@ -140,7 +140,7 @@ void InProcessBrowserLayoutTest::RunLayoutTest(
 void InProcessBrowserLayoutTest::RunHttpLayoutTest(
     const std::string& test_case_file_name) {
   DCHECK(test_http_server_.get());
-  GURL url(StringPrintf(
+  GURL url(base::StringPrintf(
       "http://127.0.0.1:%d/%s/%s", port_, test_case_dir_.MaybeAsASCII().c_str(),
       test_case_file_name.c_str()));
   RunLayoutTestInternal(test_case_file_name, url);
@@ -155,8 +155,8 @@ void InProcessBrowserLayoutTest::RunLayoutTestInternal(
   test_controller_->set_printer(printer.release());
 
   LOG(INFO) << "Navigating to URL " << url << " and blocking.";
-  ASSERT_TRUE(
-      test_controller_->PrepareForLayoutTest(url, layout_test_dir_, false, ""));
+  ASSERT_TRUE(test_controller_->PrepareForLayoutTest(
+      url, layout_test_dir_, false, std::string()));
   base::RunLoop run_loop;
   run_loop.Run();
   LOG(INFO) << "Navigation completed.";
@@ -195,9 +195,10 @@ void InProcessBrowserLayoutTest::RunLayoutTestInternal(
 std::string InProcessBrowserLayoutTest::SaveResults(const std::string& expected,
                                                     const std::string& actual) {
   base::FilePath cwd;
-  EXPECT_TRUE(file_util::CreateNewTempDirectory(FILE_PATH_LITERAL(""), &cwd));
-  base::FilePath expected_filename = cwd.Append(
-      FILE_PATH_LITERAL("expected.txt"));
+  EXPECT_TRUE(file_util::CreateNewTempDirectory(
+      base::FilePath::StringType(), &cwd));
+  base::FilePath expected_filename =
+      cwd.Append(FILE_PATH_LITERAL("expected.txt"));
   base::FilePath actual_filename = cwd.Append(FILE_PATH_LITERAL("actual.txt"));
   EXPECT_NE(-1, file_util::WriteFile(expected_filename,
                                      expected.c_str(),
@@ -205,9 +206,9 @@ std::string InProcessBrowserLayoutTest::SaveResults(const std::string& expected,
   EXPECT_NE(-1, file_util::WriteFile(actual_filename,
                                      actual.c_str(),
                                      actual.size()));
-  return StringPrintf("Wrote %"PRFilePath" %"PRFilePath,
-                      expected_filename.value().c_str(),
-                      actual_filename.value().c_str());
+  return base::StringPrintf("Wrote %"PRFilePath" %"PRFilePath,
+                            expected_filename.value().c_str(),
+                            actual_filename.value().c_str());
 }
 
 }  // namespace content

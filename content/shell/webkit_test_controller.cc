@@ -13,13 +13,16 @@
 #include "base/string_number_conversions.h"
 #include "base/stringprintf.h"
 #include "content/public/browser/devtools_manager.h"
+#include "content/public/browser/gpu_data_manager.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
+#include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_contents_view.h"
 #include "content/shell/shell.h"
 #include "content/shell/shell_browser_context.h"
 #include "content/shell/shell_content_browser_client.h"
@@ -31,10 +34,15 @@
 
 namespace content {
 
-namespace {
 const int kTestTimeoutMilliseconds = 30 * 1000;
-const int kVirtualWindowBorder = 3;
-}  // namespace
+// 0x20000000ms is big enough for the purpose to avoid timeout in debugging.
+const int kCloseEnoughToInfinity = 0x20000000;
+
+const int kTestWindowWidthDip = 800;
+const int kTestWindowHeightDip = 600;
+
+const int kTestSVGWindowWidthDip = 480;
+const int kTestSVGWindowHeightDip = 360;
 
 // WebKitTestResultPrinter ----------------------------------------------------
 
@@ -144,12 +152,12 @@ void WebKitTestResultPrinter::AddMessageRaw(const std::string& message) {
 }
 
 void WebKitTestResultPrinter::AddErrorMessage(const std::string& message) {
+  if (!capture_text_only_)
+    *error_ << message << "\n";
   if (state_ != DURING_TEST)
     return;
   PrintTextHeader();
   *output_ << message << "\n";
-  if (!capture_text_only_)
-    *error_ << message << "\n";
   PrintTextFooter();
   PrintImageFooter();
 }
@@ -165,19 +173,24 @@ WebKitTestController* WebKitTestController::Get() {
 }
 
 WebKitTestController::WebKitTestController()
-    : main_window_(NULL) {
+    : main_window_(NULL),
+      is_running_test_(false) {
   CHECK(!instance_);
   instance_ = this;
   printer_.reset(new WebKitTestResultPrinter(&std::cout, &std::cerr));
   registrar_.Add(this,
                  NOTIFICATION_RENDERER_PROCESS_CREATED,
                  NotificationService::AllSources());
+  GpuDataManager::GetInstance()->AddObserver(this);
   ResetAfterLayoutTest();
 }
 
 WebKitTestController::~WebKitTestController() {
   DCHECK(CalledOnValidThread());
   CHECK(instance_ == this);
+  CHECK(!is_running_test_);
+  GpuDataManager::GetInstance()->RemoveObserver(this);
+  DiscardMainWindow();
   instance_ = NULL;
 }
 
@@ -187,36 +200,59 @@ bool WebKitTestController::PrepareForLayoutTest(
     bool enable_pixel_dumping,
     const std::string& expected_pixel_hash) {
   DCHECK(CalledOnValidThread());
+  is_running_test_ = true;
   current_working_directory_ = current_working_directory;
   enable_pixel_dumping_ = enable_pixel_dumping;
   expected_pixel_hash_ = expected_pixel_hash;
   test_url_ = test_url;
   printer_->reset();
-  content::ShellBrowserContext* browser_context =
-      static_cast<content::ShellContentBrowserClient*>(
-          content::GetContentClient()->browser())->browser_context();
+  ShellBrowserContext* browser_context =
+      ShellContentBrowserClient::Get()->browser_context();
   if (test_url.spec().find("compositing/") != std::string::npos)
     is_compositing_test_ = true;
-  gfx::Size initial_size;
+  gfx::Size initial_size(kTestWindowWidthDip, kTestWindowHeightDip);
   // The W3C SVG layout tests use a different size than the other layout tests.
   if (test_url.spec().find("W3C-SVG-1.1") != std::string::npos)
-    initial_size = gfx::Size(480, 360);
-  // TODO(jochen): Only create a new window if we can't reuse an existing
-  // window.
-  main_window_ = content::Shell::CreateNewWindow(
-      browser_context,
-      GURL(),
-      NULL,
-      MSG_ROUTING_NONE,
-      initial_size);
-  WebContentsObserver::Observe(main_window_->web_contents());
-  main_window_->LoadURL(test_url);
+    initial_size = gfx::Size(kTestSVGWindowWidthDip, kTestSVGWindowHeightDip);
+  if (!main_window_) {
+    main_window_ = content::Shell::CreateNewWindow(
+        browser_context,
+        GURL(),
+        NULL,
+        MSG_ROUTING_NONE,
+        initial_size);
+    WebContentsObserver::Observe(main_window_->web_contents());
+    send_configuration_to_next_host_ = true;
+    current_pid_ = base::kNullProcessId;
+    main_window_->LoadURL(test_url);
+  } else {
+#if (defined(OS_WIN) && !defined(USE_AURA)) || defined(TOOLKIT_GTK)
+    // Shell::SizeTo is not implemented on all platforms.
+    main_window_->SizeTo(initial_size.width(), initial_size.height());
+#endif
+    main_window_->web_contents()->GetRenderViewHost()->GetView()
+        ->SetSize(initial_size);
+    main_window_->web_contents()->GetRenderViewHost()->WasResized();
+    RenderViewHost* render_view_host =
+        main_window_->web_contents()->GetRenderViewHost();
+    WebPreferences prefs = render_view_host->GetWebkitPreferences();
+    OverrideWebkitPrefs(&prefs);
+    render_view_host->UpdateWebkitPreferences(prefs);
+    SendTestConfiguration();
+
+    NavigationController::LoadURLParams params(test_url);
+    params.transition_type = PageTransitionFromInt(
+        PAGE_TRANSITION_TYPED | PAGE_TRANSITION_FROM_ADDRESS_BAR);
+    params.should_clear_history_list = true;
+    main_window_->web_contents()->GetController().LoadURLWithParams(params);
+    main_window_->web_contents()->GetView()->Focus();
+  }
   main_window_->web_contents()->GetRenderViewHost()->SetActive(true);
   main_window_->web_contents()->GetRenderViewHost()->Focus();
   if (!CommandLine::ForCurrentProcess()->HasSwitch(switches::kNoTimeout)) {
     watchdog_.Reset(base::Bind(&WebKitTestController::TimeoutHandler,
                                base::Unretained(this)));
-    MessageLoop::current()->PostDelayedTask(
+    base::MessageLoop::current()->PostDelayedTask(
         FROM_HERE,
         watchdog_.callback(),
         base::TimeDelta::FromMilliseconds(kTestTimeoutMilliseconds + 1000));
@@ -228,17 +264,15 @@ bool WebKitTestController::ResetAfterLayoutTest() {
   DCHECK(CalledOnValidThread());
   printer_->PrintTextFooter();
   printer_->PrintImageFooter();
+  send_configuration_to_next_host_ = false;
+  is_running_test_ = false;
   is_compositing_test_ = false;
   enable_pixel_dumping_ = false;
   expected_pixel_hash_.clear();
   test_url_ = GURL();
-  prefs_ = webkit_glue::WebPreferences();
+  prefs_ = WebPreferences();
   should_override_prefs_ = false;
   watchdog_.Cancel();
-  Send(new ShellViewMsg_ResetAll);
-  // TODO(jochen): Reuse the main window for the next test.
-  if (main_window_)
-    DiscardMainWindow(DO_NOT_QUIT_MESSAGE_LOOP);
   return true;
 }
 
@@ -248,27 +282,37 @@ void WebKitTestController::SetTempPath(const base::FilePath& temp_path) {
 
 void WebKitTestController::RendererUnresponsive() {
   DCHECK(CalledOnValidThread());
-  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kNoTimeout))
-    return;
-  printer_->AddErrorMessage("#PROCESS UNRESPONSIVE - renderer");
-  DiscardMainWindow(QUIT_MESSAGE_LOOP);
+  LOG(WARNING) << "renderer unresponsive";
 }
 
-void WebKitTestController::OverrideWebkitPrefs(
-    webkit_glue::WebPreferences* prefs) {
+void WebKitTestController::OverrideWebkitPrefs(WebPreferences* prefs) {
   if (should_override_prefs_) {
     *prefs = prefs_;
   } else {
     ApplyLayoutTestDefaultPreferences(prefs);
     if (is_compositing_test_) {
       CommandLine& command_line = *CommandLine::ForCurrentProcess();
-      if (command_line.HasSwitch(switches::kEnableSoftwareCompositing))
+      if (!command_line.HasSwitch(switches::kEnableSoftwareCompositing))
         prefs->accelerated_2d_canvas_enabled = true;
       prefs->accelerated_compositing_for_video_enabled = true;
-      prefs->deferred_2d_canvas_enabled = true;
       prefs->mock_scrollbars_enabled = true;
     }
   }
+}
+
+void WebKitTestController::OpenURL(const GURL& url) {
+  Shell::CreateNewWindow(main_window_->web_contents()->GetBrowserContext(),
+                         url,
+                         main_window_->web_contents()->GetSiteInstance(),
+                         MSG_ROUTING_NONE,
+                         gfx::Size());
+}
+
+void WebKitTestController::TestFinishedInSecondaryWindow() {
+  RenderViewHost* render_view_host =
+      main_window_->web_contents()->GetRenderViewHost();
+  render_view_host->Send(
+      new ShellViewMsg_NotifyDone(render_view_host->GetRoutingID()));
 }
 
 bool WebKitTestController::OnMessageReceived(const IPC::Message& message) {
@@ -287,12 +331,11 @@ bool WebKitTestController::OnMessageReceived(const IPC::Message& message) {
     IPC_MESSAGE_HANDLER(ShellViewHostMsg_GoToOffset, OnGoToOffset)
     IPC_MESSAGE_HANDLER(ShellViewHostMsg_Reload, OnReload)
     IPC_MESSAGE_HANDLER(ShellViewHostMsg_LoadURLForFrame, OnLoadURLForFrame)
-    IPC_MESSAGE_HANDLER(ShellViewHostMsg_SetClientWindowRect,
-                        OnSetClientWindowRect)
     IPC_MESSAGE_HANDLER(ShellViewHostMsg_CaptureSessionHistory,
                         OnCaptureSessionHistory)
     IPC_MESSAGE_HANDLER(ShellViewHostMsg_CloseRemainingWindows,
                         OnCloseRemainingWindows)
+    IPC_MESSAGE_HANDLER(ShellViewHostMsg_ResetDone, OnResetDone)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
 
@@ -304,7 +347,7 @@ void WebKitTestController::PluginCrashed(const base::FilePath& plugin_path,
   DCHECK(CalledOnValidThread());
   printer_->AddErrorMessage(
       base::StringPrintf("#CRASHED - plugin (pid %d)", plugin_pid));
-  DiscardMainWindow(QUIT_MESSAGE_LOOP);
+  DiscardMainWindow();
 }
 
 void WebKitTestController::RenderViewCreated(RenderViewHost* render_view_host) {
@@ -313,6 +356,9 @@ void WebKitTestController::RenderViewCreated(RenderViewHost* render_view_host) {
   // later when the RenderProcessHost was created.
   if (render_view_host->GetProcess()->GetHandle() != base::kNullProcessHandle)
     current_pid_ = base::GetProcId(render_view_host->GetProcess()->GetHandle());
+  if (!send_configuration_to_next_host_)
+    return;
+  send_configuration_to_next_host_ = false;
   SendTestConfiguration();
 }
 
@@ -324,13 +370,13 @@ void WebKitTestController::RenderViewGone(base::TerminationStatus status) {
   } else {
     printer_->AddErrorMessage("#CRASHED - renderer");
   }
-  DiscardMainWindow(QUIT_MESSAGE_LOOP);
+  DiscardMainWindow();
 }
 
 void WebKitTestController::WebContentsDestroyed(WebContents* web_contents) {
   DCHECK(CalledOnValidThread());
   printer_->AddErrorMessage("FAIL: main window was destroyed");
-  DiscardMainWindow(QUIT_MESSAGE_LOOP);
+  DiscardMainWindow();
 }
 
 void WebKitTestController::Observe(int type,
@@ -357,32 +403,48 @@ void WebKitTestController::Observe(int type,
   }
 }
 
+void WebKitTestController::OnGpuProcessCrashed(
+    base::TerminationStatus exit_code) {
+  DCHECK(CalledOnValidThread());
+  printer_->AddErrorMessage("#CRASHED - gpu");
+  DiscardMainWindow();
+}
+
 void WebKitTestController::TimeoutHandler() {
   DCHECK(CalledOnValidThread());
   printer_->AddErrorMessage(
       "FAIL: Timed out waiting for notifyDone to be called");
-  DiscardMainWindow(QUIT_MESSAGE_LOOP);
+  DiscardMainWindow();
 }
 
-void WebKitTestController::DiscardMainWindow(
-    WhetherToQuitMessageLoop quit_message_loop) {
-  main_window_ = NULL;
+void WebKitTestController::DiscardMainWindow() {
+  // If we're running a test, we need to close all windows and exit the message
+  // loop. Otherwise, we're already outside of the message loop, and we just
+  // discard the main window.
   WebContentsObserver::Observe(NULL);
+  if (is_running_test_) {
+    Shell::CloseAllWindows();
+    base::MessageLoop::current()->PostTask(FROM_HERE,
+                                           base::MessageLoop::QuitClosure());
+  } else if (main_window_) {
+    main_window_->Close();
+  }
+  main_window_ = NULL;
   current_pid_ = base::kNullProcessId;
-  Shell::CloseAllWindows();
-  if (quit_message_loop == QUIT_MESSAGE_LOOP)
-    MessageLoop::current()->PostTask(FROM_HERE, MessageLoop::QuitClosure());
 }
 
 void WebKitTestController::SendTestConfiguration() {
   RenderViewHost* render_view_host =
       main_window_->web_contents()->GetRenderViewHost();
-  ShellViewMsg_SetTestConfiguration_Params params;
+  ShellTestConfiguration params;
   params.current_working_directory = current_working_directory_;
   params.temp_path = temp_path_;
   params.test_url = test_url_;
   params.enable_pixel_dumping = enable_pixel_dumping_;
-  params.layout_test_timeout = kTestTimeoutMilliseconds;
+  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kNoTimeout))
+    params.layout_test_timeout = kCloseEnoughToInfinity;
+  else
+    params.layout_test_timeout = kTestTimeoutMilliseconds;
   params.allow_external_pages = CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kAllowExternalPages);
   params.expected_pixel_hash = expected_pixel_hash_;
@@ -395,12 +457,18 @@ void WebKitTestController::OnTestFinished(bool did_timeout) {
   if (did_timeout) {
     printer_->AddErrorMessage(
         "FAIL: Timed out waiting for notifyDone to be called");
-    DiscardMainWindow(QUIT_MESSAGE_LOOP);
+    DiscardMainWindow();
     return;
   }
   if (!printer_->output_finished())
     printer_->PrintImageFooter();
-  MessageLoop::current()->PostTask(FROM_HERE, MessageLoop::QuitClosure());
+  RenderViewHost* render_view_host =
+      main_window_->web_contents()->GetRenderViewHost();
+  base::MessageLoop::current()->PostTask(
+      FROM_HERE,
+      base::Bind(base::IgnoreResult(&WebKitTestController::Send),
+                 base::Unretained(this),
+                 new ShellViewMsg_Reset(render_view_host->GetRoutingID())));
 }
 
 void WebKitTestController::OnImageDump(
@@ -464,8 +532,7 @@ void WebKitTestController::OnPrintMessage(const std::string& message) {
   printer_->AddMessageRaw(message);
 }
 
-void WebKitTestController::OnOverridePreferences(
-    const webkit_glue::WebPreferences& prefs) {
+void WebKitTestController::OnOverridePreferences(const WebPreferences& prefs) {
   should_override_prefs_ = true;
   prefs_ = prefs;
 }
@@ -489,14 +556,6 @@ void WebKitTestController::OnReload() {
 void WebKitTestController::OnLoadURLForFrame(const GURL& url,
                                              const std::string& frame_name) {
   main_window_->LoadURLForFrame(url, frame_name);
-}
-
-void WebKitTestController::OnSetClientWindowRect(const gfx::Rect& rect) {
-#if (defined(OS_WIN) && !defined(USE_AURA)) || defined(TOOLKIT_GTK)
-  main_window_->SizeTo(rect.width() - 2 * kVirtualWindowBorder,
-                       rect.height() - 2 * kVirtualWindowBorder);
-  main_window_->web_contents()->GetRenderViewHost()->WasResized();
-#endif
 }
 
 void WebKitTestController::OnCaptureSessionHistory() {
@@ -550,7 +609,12 @@ void WebKitTestController::OnCloseRemainingWindows() {
     if (open_windows[i] != main_window_)
       open_windows[i]->Close();
   }
-  MessageLoop::current()->RunUntilIdle();
+  base::MessageLoop::current()->RunUntilIdle();
+}
+
+void WebKitTestController::OnResetDone() {
+  base::MessageLoop::current()->PostTask(FROM_HERE,
+                                         base::MessageLoop::QuitClosure());
 }
 
 }  // namespace content

@@ -19,7 +19,7 @@
 #include "chrome/browser/search_engines/search_terms_data.h"
 #include "chrome/browser/search_engines/template_url.h"
 #include "chrome/browser/search_engines/template_url_service.h"
-#include "chrome/browser/webdata/web_database.h"
+#include "components/webdata/common/web_database.h"
 #include "googleurl/src/gurl.h"
 #include "sql/statement.h"
 #include "sql/transaction.h"
@@ -116,15 +116,30 @@ void BindURLToStatement(const TemplateURLData& data,
   s->BindString(starting_column + 17, data.search_terms_replacement_key);
 }
 
-}  // anonymous namespace
+WebDatabaseTable::TypeKey GetKey() {
+  // We just need a unique constant. Use the address of a static that
+  // COMDAT folding won't touch in an optimizing linker.
+  static int table_key = 0;
+  return reinterpret_cast<void*>(&table_key);
+}
 
-KeywordTable::KeywordTable(sql::Connection* db, sql::MetaTable* meta_table)
-    : WebDatabaseTable(db, meta_table) {
+}  // namespace
+
+KeywordTable::KeywordTable() {
 }
 
 KeywordTable::~KeywordTable() {}
 
-bool KeywordTable::Init() {
+KeywordTable* KeywordTable::FromWebDatabase(WebDatabase* db) {
+  return static_cast<KeywordTable*>(db->GetTable(GetKey()));
+}
+
+WebDatabaseTable::TypeKey KeywordTable::GetTypeKey() const {
+  return GetKey();
+}
+
+bool KeywordTable::Init(sql::Connection* db, sql::MetaTable* meta_table) {
+  WebDatabaseTable::Init(db, meta_table);
   return db_->DoesTableExist("keywords") ||
       db_->Execute("CREATE TABLE keywords ("
                    "id INTEGER PRIMARY KEY,"
@@ -149,6 +164,51 @@ bool KeywordTable::Init() {
 }
 
 bool KeywordTable::IsSyncable() {
+  return true;
+}
+
+bool KeywordTable::MigrateToVersion(int version,
+                                    bool* update_compatible_version) {
+  // Migrate if necessary.
+  switch (version) {
+    case 21:
+      *update_compatible_version = true;
+      return MigrateToVersion21AutoGenerateKeywordColumn();
+    case 25:
+      *update_compatible_version = true;
+      return MigrateToVersion25AddLogoIDColumn();
+    case 26:
+      *update_compatible_version = true;
+      return MigrateToVersion26AddCreatedByPolicyColumn();
+    case 28:
+      *update_compatible_version = true;
+      return MigrateToVersion28SupportsInstantColumn();
+    case 29:
+      *update_compatible_version = true;
+      return MigrateToVersion29InstantURLToSupportsInstant();
+    case 38:
+      *update_compatible_version = true;
+      return MigrateToVersion38AddLastModifiedColumn();
+    case 39:
+      *update_compatible_version = true;
+      return MigrateToVersion39AddSyncGUIDColumn();
+    case 44:
+      *update_compatible_version = true;
+      return MigrateToVersion44AddDefaultSearchProviderBackup();
+    case 45:
+      *update_compatible_version = true;
+      return MigrateToVersion45RemoveLogoIDAndAutogenerateColumns();
+    case 47:
+      *update_compatible_version = true;
+      return MigrateToVersion47AddAlternateURLsColumn();
+    case 48:
+      *update_compatible_version = true;
+      return MigrateToVersion48RemoveKeywordsBackup();
+    case 49:
+      *update_compatible_version = true;
+      return MigrateToVersion49AddSearchTermsReplacementKeyColumn();
+  }
+
   return true;
 }
 
@@ -329,7 +389,7 @@ bool KeywordTable::MigrateToVersion45RemoveLogoIDAndAutogenerateColumns() {
   // Migrate the keywords backup table as well.
   if (!MigrateKeywordsTableForVersion45("keywords_backup") ||
       !meta_table_->SetValue("Default Search Provider ID Backup Signature",
-                             ""))
+                             std::string()))
     return false;
 
   return transaction.Commit();
@@ -350,7 +410,7 @@ bool KeywordTable::MigrateToVersion47AddAlternateURLsColumn() {
   if (!db_->Execute("ALTER TABLE keywords_backup ADD COLUMN "
                     "alternate_urls VARCHAR DEFAULT ''") ||
       !meta_table_->SetValue("Default Search Provider ID Backup Signature",
-                             ""))
+                             std::string()))
     return false;
 
   return transaction.Commit();

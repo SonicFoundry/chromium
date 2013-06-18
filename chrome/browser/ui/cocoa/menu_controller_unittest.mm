@@ -5,7 +5,7 @@
 #import <Cocoa/Cocoa.h>
 
 #include "base/message_loop.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/browser/ui/cocoa/cocoa_test_helper.h"
 #include "chrome/browser/ui/cocoa/menu_controller.h"
@@ -43,7 +43,9 @@ class Delegate : public ui::SimpleMenuModel::Delegate {
   virtual bool GetAcceleratorForCommandId(
       int command_id,
       ui::Accelerator* accelerator) OVERRIDE { return false; }
-  virtual void ExecuteCommand(int command_id) OVERRIDE { ++execute_count_; }
+  virtual void ExecuteCommand(int command_id, int event_flags) OVERRIDE {
+    ++execute_count_;
+  }
 
   virtual void MenuWillShow(ui::SimpleMenuModel* /*source*/) OVERRIDE {
     EXPECT_FALSE(did_show_);

@@ -12,6 +12,7 @@
 #include "base/debug/trace_event.h"
 #include "base/file_util.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/string_util.h"
 #include "base/stringprintf.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/utf_string_conversions.h"
@@ -40,8 +41,7 @@ namespace content {
 namespace {
 
 WebUIDataSource* CreateTracingHTMLSource() {
-  WebUIDataSource* source =
-      WebUIDataSource::Create(chrome::kChromeUITracingHost);
+  WebUIDataSource* source = WebUIDataSource::Create(kChromeUITracingHost);
 
   source->SetJsonPath("strings.js");
   source->SetDefaultResource(IDR_TRACING_HTML);
@@ -75,6 +75,8 @@ class TracingMessageHandler
   virtual void OnTraceDataCollected(
       const scoped_refptr<base::RefCountedString>& trace_fragment) OVERRIDE;
   virtual void OnTraceBufferPercentFullReply(float percent_full) OVERRIDE;
+  virtual void OnKnownCategoriesCollected(
+      const std::set<std::string>& known_categories) OVERRIDE;
 
   // Messages.
   void OnTracingControllerInitialized(const base::ListValue* list);
@@ -83,6 +85,7 @@ class TracingMessageHandler
   void OnBeginRequestBufferPercentFull(const base::ListValue* list);
   void OnLoadTraceFile(const base::ListValue* list);
   void OnSaveTraceFile(const base::ListValue* list);
+  void OnGetKnownCategories(const base::ListValue* list);
 
   // Callbacks.
   void LoadTraceFileComplete(string16* file_contents);
@@ -187,6 +190,9 @@ void TracingMessageHandler::RegisterMessages() {
                  base::Unretained(this)));
   web_ui()->RegisterMessageCallback("saveTraceFile",
       base::Bind(&TracingMessageHandler::OnSaveTraceFile,
+                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback("getKnownCategories",
+      base::Bind(&TracingMessageHandler::OnGetKnownCategories,
                  base::Unretained(this)));
 }
 
@@ -300,7 +306,7 @@ void TracingMessageHandler::FileSelectionCanceled(void* params) {
 
 void TracingMessageHandler::OnLoadTraceFile(const base::ListValue* list) {
   // Only allow a single dialog at a time.
-  if (select_trace_file_dialog_.get())
+  if (select_trace_file_dialog_)
     return;
   select_trace_file_dialog_type_ = ui::SelectFileDialog::SELECT_OPEN_FILE;
   select_trace_file_dialog_ = ui::SelectFileDialog::Create(
@@ -311,9 +317,11 @@ void TracingMessageHandler::OnLoadTraceFile(const base::ListValue* list) {
       ui::SelectFileDialog::SELECT_OPEN_FILE,
       string16(),
       base::FilePath(),
-      NULL, 0, FILE_PATH_LITERAL(""),
-      web_ui()->GetWebContents()->GetView()->GetTopLevelNativeWindow(), NULL,
-      base::FilePath());
+      NULL,
+      0,
+      base::FilePath::StringType(),
+      web_ui()->GetWebContents()->GetView()->GetTopLevelNativeWindow(),
+      NULL, base::FilePath());
 }
 
 void TracingMessageHandler::LoadTraceFileComplete(string16* contents) {
@@ -337,13 +345,13 @@ void TracingMessageHandler::LoadTraceFileComplete(string16* contents) {
     rvh->ExecuteJavascriptInWebFrame(string16(), javascript);
   }
   rvh->ExecuteJavascriptInWebFrame(string16(), UTF8ToUTF16(
-      "tracingController.onLoadTraceFileComplete(JSON.parse(window.traceData));"
+      "tracingController.onLoadTraceFileComplete(window.traceData);"
       "delete window.traceData;"));
 }
 
 void TracingMessageHandler::OnSaveTraceFile(const base::ListValue* list) {
   // Only allow a single dialog at a time.
-  if (select_trace_file_dialog_.get())
+  if (select_trace_file_dialog_)
     return;
 
   DCHECK(list->GetSize() == 1);
@@ -362,9 +370,11 @@ void TracingMessageHandler::OnSaveTraceFile(const base::ListValue* list) {
       ui::SelectFileDialog::SELECT_SAVEAS_FILE,
       string16(),
       base::FilePath(),
-      NULL, 0, FILE_PATH_LITERAL(""),
-      web_ui()->GetWebContents()->GetView()->GetTopLevelNativeWindow(), NULL,
-      base::FilePath());
+      NULL,
+      0,
+      base::FilePath::StringType(),
+      web_ui()->GetWebContents()->GetView()->GetTopLevelNativeWindow(),
+      NULL, base::FilePath());
 }
 
 void TracingMessageHandler::SaveTraceFileComplete() {
@@ -416,6 +426,14 @@ void TracingMessageHandler::OnBeginTracing(const base::ListValue* args) {
 void TracingMessageHandler::OnEndTracingAsync(const base::ListValue* list) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
+  // This is really us beginning to end tracing, rather than tracing being truly
+  // over. When this function yields, we expect to get some number of
+  // OnTraceDataCollected callbacks, which will append data to window.traceData.
+  // To set up for this, set window.traceData to the empty string.
+  web_ui()->GetWebContents()->GetRenderViewHost()->
+    ExecuteJavascriptInWebFrame(string16(),
+                                UTF8ToUTF16("window.traceData = '';"));
+
   // TODO(nduca): fix javascript code to make sure trace_enabled_ is always true
   //              here. triggered a false condition by just clicking stop
   //              trace a few times when it was going slow, and maybe switching
@@ -446,7 +464,11 @@ void TracingMessageHandler::OnEndTracingComplete() {
     return;
 #endif
   }
-  web_ui()->CallJavascriptFunction("tracingController.onEndTracingComplete");
+
+  RenderViewHost* rvh = web_ui()->GetWebContents()->GetRenderViewHost();
+  rvh->ExecuteJavascriptInWebFrame(string16(), UTF8ToUTF16(
+      "tracingController.onEndTracingComplete(window.traceData);"
+      "delete window.traceData;"));
 }
 
 void TracingMessageHandler::OnEndSystemTracingAck(
@@ -465,17 +487,19 @@ void TracingMessageHandler::OnTraceDataCollected(
     const scoped_refptr<base::RefCountedString>& trace_fragment) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
-  base::debug::TraceResultBuffer::SimpleOutput output;
-  base::debug::TraceResultBuffer trace_buffer;
-  trace_buffer.SetOutputCallback(output.GetCallback());
-  output.Append("tracingController.onTraceDataCollected(");
-  trace_buffer.Start();
-  trace_buffer.AddFragment(trace_fragment->data());
-  trace_buffer.Finish();
-  output.Append(");");
+  std::string javascript("window.traceData += '");
+
+  std::string escaped_data;
+  ReplaceChars(trace_fragment->data(), "\\", "\\\\", &escaped_data);
+  javascript += escaped_data;
+
+  // Intentionally append a , to the traceData. This technically causes all
+  // traceData that we pass back to JS to end with a comma, but that is actually
+  // something the JS side strips away anyway
+  javascript += ",';";
 
   web_ui()->GetWebContents()->GetRenderViewHost()->
-      ExecuteJavascriptInWebFrame(string16(), UTF8ToUTF16(output.json_output));
+    ExecuteJavascriptInWebFrame(string16(), UTF8ToUTF16(javascript));
 }
 
 void TracingMessageHandler::OnTraceBufferPercentFullReply(float percent_full) {
@@ -483,6 +507,29 @@ void TracingMessageHandler::OnTraceBufferPercentFullReply(float percent_full) {
   web_ui()->CallJavascriptFunction(
       "tracingController.onRequestBufferPercentFullComplete",
       *scoped_ptr<base::Value>(new base::FundamentalValue(percent_full)));
+}
+
+void TracingMessageHandler::OnGetKnownCategories(const base::ListValue* list) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  if (!TraceController::GetInstance()->GetKnownCategoryGroupsAsync(this)) {
+    std::set<std::string> ret;
+    OnKnownCategoriesCollected(ret);
+  }
+}
+
+void TracingMessageHandler::OnKnownCategoriesCollected(
+    const std::set<std::string>& known_categories) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+
+  scoped_ptr<base::ListValue> categories(new base::ListValue());
+  for (std::set<std::string>::iterator iter = known_categories.begin();
+       iter != known_categories.end();
+       ++iter) {
+    categories->AppendString(*iter);
+  }
+
+  web_ui()->CallJavascriptFunction(
+      "tracingController.onKnownCategoriesCollected", *categories);
 }
 
 }  // namespace

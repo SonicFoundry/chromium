@@ -14,18 +14,6 @@ namespace content {
 // ContentBrowserClient to receive callbacks as media events occur.
 class MediaObserver {
  public:
-  // Called when capture devices are opened.
-  virtual void OnCaptureDevicesOpened(
-      int render_process_id,
-      int render_view_id,
-      const MediaStreamDevices& devices) = 0;
-
-  // Called when the opened capture devices are closed.
-  virtual void OnCaptureDevicesClosed(
-      int render_process_id,
-      int render_view_id,
-      const MediaStreamDevices& devices) = 0;
-
   // Called when a audio capture device is plugged in or unplugged.
   virtual void OnAudioCaptureDevicesChanged(
       const MediaStreamDevices& devices) = 0;
@@ -41,12 +29,13 @@ class MediaObserver {
       const MediaStreamDevice& device,
       MediaRequestState state) = 0;
 
-  // Called when an audio stream is played or paused.
+  // Called when an audio stream transitions into playing audible or silent
+  // sound, and when the stream is stopped.
   virtual void OnAudioStreamPlayingChanged(
       int render_process_id,
       int render_view_id,
       int stream_id,
-      bool playing) = 0;
+      bool is_playing_and_audible) = 0;
 
  protected:
   virtual ~MediaObserver() {}

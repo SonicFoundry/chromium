@@ -10,6 +10,7 @@
 #import "chrome/browser/themes/theme_service.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_controller.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_button.h"
+#import "chrome/browser/ui/cocoa/bookmarks/bookmark_context_menu_cocoa_controller.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_folder_target.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/themed_window.h"
@@ -97,11 +98,11 @@ using content::UserMetricsAction;
   return NO;
 }
 
--(NSTextField*)noItemTextfield {
+- (BookmarkBarTextField*)noItemTextfield {
   return noItemTextfield_;
 }
 
--(NSButton*)importBookmarksButton {
+- (NSButton*)importBookmarksButton {
   return importBookmarksButton_;
 }
 
@@ -112,14 +113,14 @@ using content::UserMetricsAction;
 // Internal method, needs to be called whenever a change has been made to
 // dropIndicatorShown_ or dropIndicatorPosition_ so it can get the controller
 // to reflect the change by moving buttons around.
--(void)dropIndicatorChanged {
+- (void)dropIndicatorChanged {
   if (dropIndicatorShown_)
     [controller_ setDropInsertionPos:dropIndicatorPosition_];
   else
     [controller_ clearDropInsertionPos];
 }
 
--(void)drawRect:(NSRect)dirtyRect {
+- (void)drawRect:(NSRect)dirtyRect {
   [super drawRect:dirtyRect];
 }
 
@@ -264,6 +265,10 @@ using content::UserMetricsAction;
   return NO;
 }
 
+- (NSMenu*)menu {
+  return [[controller_ menuController] menuForBookmarkNode:NULL];
+}
+
 - (void)setController:(id)controller {
   controller_ = controller;
 }
@@ -273,3 +278,19 @@ using content::UserMetricsAction;
 }
 
 @end  // @implementation BookmarkBarView
+
+@implementation BookmarkBarTextField
+
+- (NSMenu*)menu {
+  return [barView_ menu];
+}
+
+@end  // @implementation BookmarkBarTextField
+
+@implementation BookmarkBarItemContainer
+
+- (NSMenu*)menu {
+  return [barView_ menu];
+}
+
+@end  // @implementation BookmarkBarItemContainer

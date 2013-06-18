@@ -1,10 +1,41 @@
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
-import sys
+import logging
+
+from telemetry.page.actions import all_page_actions
+from telemetry.page.actions import page_action
+
+def _GetActionFromData(action_data):
+  action_name = action_data['action']
+  action = all_page_actions.FindClassWithName(action_name)
+  if not action:
+    logging.critical('Could not find an action named %s.', action_name)
+    logging.critical('Check the page set for a typo and check the error '
+                     'log for possible Python loading/compilation errors.')
+    raise Exception('Action "%s" not found.' % action_name)
+  return action(action_data)
+
+def GetCompoundActionFromPage(page, action_name):
+  if not action_name:
+    return []
+
+  action_data_list = getattr(page, action_name)
+  if not isinstance(action_data_list, list):
+    action_data_list = [action_data_list]
+
+  action_list = []
+  for subaction_data in action_data_list:
+    subaction_name = subaction_data['action']
+    if hasattr(page, subaction_name):
+      subaction = GetCompoundActionFromPage(page, subaction_name)
+    else:
+      subaction = [_GetActionFromData(subaction_data)]
+    action_list += subaction * subaction_data.get('repeat', 1)
+  return action_list
 
 class Failure(Exception):
-  """Exception that can be thrown from PageBenchmark to indicate an
+  """Exception that can be thrown from PageMeasurement to indicate an
   undesired but designed-for problem."""
   pass
 
@@ -33,7 +64,8 @@ class PageTest(object):
   def __init__(self,
                test_method_name,
                action_name_to_run='',
-               needs_browser_restart_after_each_run=False):
+               needs_browser_restart_after_each_run=False,
+               discard_first_result=False):
     self.options = None
     try:
       self._test_method = getattr(self, test_method_name)
@@ -43,13 +75,21 @@ class PageTest(object):
     self._action_name_to_run = action_name_to_run
     self._needs_browser_restart_after_each_run = (
         needs_browser_restart_after_each_run)
+    self._discard_first_result = discard_first_result
 
   @property
   def needs_browser_restart_after_each_run(self):
     return self._needs_browser_restart_after_each_run
 
+  @property
+  def discard_first_result(self):
+    """When set to True, the first run of the test is discarded.  This is
+    useful for cases where it's desirable to have some test resource cached so
+    the first run of the test can warm things up. """
+    return self._discard_first_result
+
   def AddCommandLineOptions(self, parser):
-    """Override to expose command-line options for this benchmark.
+    """Override to expose command-line options for this test.
 
     The provided parser is an optparse.OptionParser instance and accepts all
     normal results. The parsed options are available in Run as
@@ -64,8 +104,7 @@ class PageTest(object):
     """Add options specific to the test and the given page."""
     if not self.CanRunForPage(page):
       return
-    action = self.GetAction(page)
-    if action:
+    for action in GetCompoundActionFromPage(page, self._action_name_to_run):
       action.CustomizeBrowserOptions(options)
 
   def SetUpBrowser(self, browser):
@@ -75,6 +114,15 @@ class PageTest(object):
   def CanRunForPage(self, page): #pylint: disable=W0613
     """Override to customize if the test can be ran for the given page."""
     return True
+
+  def WillRunPageSet(self, tab, results):
+    """Override to do operations before the page set is navigated."""
+    pass
+
+  def DidRunPageSet(self, tab, results):
+    """Override to do operations after page set is completed, but before browser
+    is torn down."""
+    pass
 
   def WillNavigateToPage(self, page, tab):
     """Override to do operations before the page is navigated."""
@@ -93,33 +141,37 @@ class PageTest(object):
     """Override to do operations after running the action on the page."""
     pass
 
+  def CreatePageSet(self, options):  # pylint: disable=W0613
+    """Override to make this test generate its own page set instead of
+    allowing arbitrary page sets entered from the command-line."""
+    return None
+
   def Run(self, options, page, tab, results):
     self.options = options
-    action = self.GetAction(page)
-    if action:
-      action.WillRunAction(page, tab)
-      self.WillRunAction(page, tab, action)
-      action.RunAction(page, tab, None)
-      self.DidRunAction(page, tab, action)
+    compound_action = GetCompoundActionFromPage(page, self._action_name_to_run)
+    self._RunCompoundAction(page, tab, compound_action)
     try:
       self._test_method(page, tab, results)
     finally:
       self.options = None
 
-  def GetAction(self, page):
-    if not self._action_name_to_run:
-      return None
-    action_data = getattr(page, self._action_name_to_run)
-    from telemetry.page import all_page_actions
-    cls = all_page_actions.FindClassWithName(action_data['action'])
-    if not cls:
-      sys.stderr.write('Could not find action named %s\n' %
-                       action_data['action'])
-      sys.stderr.write('Check the pageset for a typo and check the error log' +
-                       'for possible python loading/compilation errors\n')
-      raise Exception('%s not found' % action_data['action'])
-    assert cls
-    return cls(action_data)
+  def _RunCompoundAction(self, page, tab, actions):
+    for i, action in enumerate(actions):
+      prev_action = actions[i - 1] if i > 0 else None
+      next_action = actions[i + 1] if i < len(actions) - 1 else None
+
+      if (action.RunsPreviousAction() and
+          next_action and next_action.RunsPreviousAction()):
+        raise page_action.PageActionFailed('Consecutive actions cannot both '
+                                           'have RunsPreviousAction() == True.')
+
+      if not (next_action and next_action.RunsPreviousAction()):
+        action.WillRunAction(page, tab)
+        self.WillRunAction(page, tab, action)
+        try:
+          action.RunAction(page, tab, prev_action)
+        finally:
+          self.DidRunAction(page, tab, action)
 
   @property
   def action_name_to_run(self):

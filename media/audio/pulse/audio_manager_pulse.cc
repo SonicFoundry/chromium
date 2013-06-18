@@ -11,16 +11,22 @@
 #include "base/nix/xdg_util.h"
 #include "base/process_util.h"
 #include "base/stl_util.h"
+#include "media/audio/audio_parameters.h"
 #include "media/audio/audio_util.h"
 #include "media/audio/linux/audio_manager_linux.h"
 #include "media/audio/pulse/pulse_input.h"
 #include "media/audio/pulse/pulse_output.h"
-#include "media/audio/pulse/pulse_stubs.h"
+#include "media/audio/pulse/pulse_unified.h"
 #include "media/audio/pulse/pulse_util.h"
+#include "media/base/channel_layout.h"
+
+#if defined(DLOPEN_PULSEAUDIO)
+#include "media/audio/pulse/pulse_stubs.h"
 
 using media_audio_pulse::kModulePulse;
 using media_audio_pulse::InitializeStubs;
 using media_audio_pulse::StubPathMap;
+#endif  // defined(DLOPEN_PULSEAUDIO)
 
 namespace media {
 
@@ -52,8 +58,11 @@ AudioManagerPulse::AudioManagerPulse()
 }
 
 AudioManagerPulse::~AudioManagerPulse() {
-  DestroyPulse();
   Shutdown();
+
+  // The Pulse objects are the last things to be destroyed since Shutdown()
+  // needs them.
+  DestroyPulse();
 }
 
 // Implementation of AudioManager.
@@ -90,6 +99,16 @@ void AudioManagerPulse::GetAudioInputDeviceNames(
   }
 }
 
+AudioParameters AudioManagerPulse::GetInputStreamParameters(
+    const std::string& device_id) {
+  static const int kDefaultInputBufferSize = 1024;
+
+  // TODO(xians): add support for querying native channel layout for pulse.
+  return AudioParameters(
+      AudioParameters::AUDIO_PCM_LOW_LATENCY, CHANNEL_LAYOUT_STEREO,
+      GetNativeSampleRate(), 16, kDefaultInputBufferSize);
+}
+
 AudioOutputStream* AudioManagerPulse::MakeLinearOutputStream(
     const AudioParameters& params) {
   DCHECK_EQ(AudioParameters::AUDIO_PCM_LINEAR, params.format());
@@ -114,8 +133,36 @@ AudioInputStream* AudioManagerPulse::MakeLowLatencyInputStream(
   return MakeInputStream(params, device_id);
 }
 
+AudioParameters AudioManagerPulse::GetPreferredOutputStreamParameters(
+    const AudioParameters& input_params) {
+  static const int kDefaultOutputBufferSize = 512;
+
+  ChannelLayout channel_layout = CHANNEL_LAYOUT_STEREO;
+  int buffer_size = kDefaultOutputBufferSize;
+  int bits_per_sample = 16;
+  int input_channels = 0;
+  if (input_params.IsValid()) {
+    bits_per_sample = input_params.bits_per_sample();
+    channel_layout = input_params.channel_layout();
+    input_channels = input_params.input_channels();
+    buffer_size = std::min(buffer_size, input_params.frames_per_buffer());
+  }
+
+  int user_buffer_size = GetUserBufferSize();
+  if (user_buffer_size)
+    buffer_size = user_buffer_size;
+
+  return AudioParameters(
+      AudioParameters::AUDIO_PCM_LOW_LATENCY, channel_layout, input_channels,
+      GetNativeSampleRate(), bits_per_sample, buffer_size);
+}
+
 AudioOutputStream* AudioManagerPulse::MakeOutputStream(
     const AudioParameters& params) {
+  if (params.input_channels()) {
+    return new PulseAudioUnifiedStream(params, this);
+  }
+
   return new PulseAudioOutputStream(params, this);
 }
 
@@ -123,20 +170,6 @@ AudioInputStream* AudioManagerPulse::MakeInputStream(
     const AudioParameters& params, const std::string& device_id) {
   return new PulseAudioInputStream(this, device_id, params,
                                    input_mainloop_, input_context_);
-}
-
-AudioParameters AudioManagerPulse::GetPreferredLowLatencyOutputStreamParameters(
-    const AudioParameters& input_params) {
-  // TODO(xians): figure out the optimized buffer size for the Pulse IO.
-  int buffer_size = GetAudioHardwareBufferSize();
-  if (input_params.frames_per_buffer() < buffer_size)
-    buffer_size = input_params.frames_per_buffer();
-
-  // TODO(dalecurtis): This should include bits per channel and channel layout
-  // eventually.
-  return AudioParameters(
-      AudioParameters::AUDIO_PCM_LOW_LATENCY, input_params.channel_layout(),
-      input_params.sample_rate(), 16, buffer_size);
 }
 
 int AudioManagerPulse::GetNativeSampleRate() {
@@ -153,6 +186,7 @@ int AudioManagerPulse::GetNativeSampleRate() {
 bool AudioManagerPulse::Init() {
   DCHECK(!input_mainloop_);
 
+#if defined(DLOPEN_PULSEAUDIO)
   StubPathMap paths;
 
   // Check if the pulse library is avialbale.
@@ -161,6 +195,7 @@ bool AudioManagerPulse::Init() {
     DLOG(WARNING) << "Failed on loading the Pulse library and symbols";
     return false;
   }
+#endif  // defined(DLOPEN_PULSEAUDIO)
 
   // Create a mainloop API and connect to the default server.
   // The mainloop is the internal asynchronous API event loop.
@@ -170,7 +205,6 @@ bool AudioManagerPulse::Init() {
 
   // Start the threaded mainloop.
   if (pa_threaded_mainloop_start(input_mainloop_)) {
-    DestroyPulse();
     return false;
   }
 

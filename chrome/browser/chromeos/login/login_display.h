@@ -37,22 +37,16 @@ class LoginDisplay : public RemoveUserDelegate {
     // Create new Google account.
     virtual void CreateAccount() = 0;
 
-    // Create a new locally managed user.
-    virtual void CreateLocallyManagedUser(const string16& display_name,
-                                          const std::string& password) = 0;
-
-    // Complete sign process with specified |username| and |password|.
+    // Complete sign process with specified |user_context|.
     // Used for new users authenticated through an extension.
-    virtual void CompleteLogin(const std::string& username,
-                               const std::string& password) = 0;
+    virtual void CompleteLogin(const UserContext& user_context) = 0;
 
     // Returns name of the currently connected network.
     virtual string16 GetConnectedNetworkName() = 0;
 
     // Sign in using |username| and |password| specified.
     // Used for known users only.
-    virtual void Login(const std::string& username,
-                       const std::string& password) = 0;
+    virtual void Login(const UserContext& user_context) = 0;
 
     // Sign in as a retail mode user.
     virtual void LoginAsRetailModeUser() = 0;
@@ -67,6 +61,9 @@ class LoginDisplay : public RemoveUserDelegate {
     // Sign in into the public account identified by |username|.
     virtual void LoginAsPublicAccount(const std::string& username) = 0;
 
+    // Notify the delegate when the sign-in UI is finished loading.
+    virtual void OnSigninScreenReady() = 0;
+
     // Called when existing user pod is selected in the UI.
     virtual void OnUserSelected(const std::string& username) = 0;
 
@@ -78,6 +75,9 @@ class LoginDisplay : public RemoveUserDelegate {
 
     // Shows wrong HWID screen.
     virtual void ShowWrongHWIDScreen() = 0;
+
+    // Restarts the public-session auto-login timer if it is running.
+    virtual void ResetPublicSessionAutoLoginTimer() = 0;
 
     // Ignore password change, remove existing cryptohome and
     // force full sync of user data.

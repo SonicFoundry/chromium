@@ -21,15 +21,18 @@
 #include "googleurl/src/gurl.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebInputEvent.h"
 #include "ui/gfx/rect.h"
+#include "ui/gfx/rect_f.h"
 
 struct WebMenuItem;
 
 namespace ui {
+class ViewAndroid;
 class WindowAndroid;
 }
 
 namespace content {
 class RenderWidgetHostViewAndroid;
+class SyncInputEventFilter;
 
 // TODO(jrg): this is a shell.  Upstream the rest.
 class ContentViewCoreImpl : public ContentViewCore,
@@ -39,25 +42,31 @@ class ContentViewCoreImpl : public ContentViewCore,
   ContentViewCoreImpl(JNIEnv* env,
                       jobject obj,
                       bool hardware_accelerated,
-                      bool input_events_delivered_at_vsync,
                       WebContents* web_contents,
+                      ui::ViewAndroid* view_android,
                       ui::WindowAndroid* window_android);
 
   // ContentViewCore implementation.
   virtual base::android::ScopedJavaLocalRef<jobject> GetJavaObject() OVERRIDE;
-  virtual base::android::ScopedJavaLocalRef<jobject> GetContainerViewDelegate()
-      OVERRIDE;
   virtual WebContents* GetWebContents() const OVERRIDE;
+  virtual ui::ViewAndroid* GetViewAndroid() const OVERRIDE;
   virtual ui::WindowAndroid* GetWindowAndroid() const OVERRIDE;
   virtual scoped_refptr<cc::Layer> GetLayer() const OVERRIDE;
   virtual void LoadUrl(NavigationController::LoadURLParams& params) OVERRIDE;
-  virtual void OnWebPreferencesUpdated() OVERRIDE;
   virtual jint GetCurrentRenderProcessId(JNIEnv* env, jobject obj) OVERRIDE;
   virtual void ShowPastePopup(int x, int y) OVERRIDE;
   virtual unsigned int GetScaledContentTexture(
       float scale,
       gfx::Size* out_size) OVERRIDE;
   virtual float GetDpiScale() const OVERRIDE;
+  virtual void SetInputHandler(
+      WebKit::WebCompositorInputHandler* input_handler) OVERRIDE;
+  virtual void RequestContentClipping(const gfx::Rect& clipping,
+                                      const gfx::Size& content_size) OVERRIDE;
+  virtual void AddFrameInfoCallback(
+      const UpdateFrameInfoCallback& callback) OVERRIDE;
+  virtual void RemoveFrameInfoCallback(
+      const UpdateFrameInfoCallback& callback) OVERRIDE;
 
   // --------------------------------------------------------------------------
   // Methods called from Java via JNI
@@ -80,10 +89,6 @@ class ContentViewCoreImpl : public ContentViewCore,
       jstring base_url_for_data_url,
       jstring virtual_url_for_data_url,
       jboolean can_load_local_resources);
-  void SetAllUserAgentOverridesInHistory(
-      JNIEnv* env,
-      jobject obj,
-      jstring user_agent_override);
   base::android::ScopedJavaLocalRef<jstring> GetURL(JNIEnv* env, jobject) const;
   base::android::ScopedJavaLocalRef<jstring> GetTitle(
       JNIEnv* env, jobject obj) const;
@@ -109,7 +114,8 @@ class ContentViewCoreImpl : public ContentViewCore,
   void ScrollBegin(JNIEnv* env, jobject obj, jlong time_ms, jfloat x, jfloat y);
   void ScrollEnd(JNIEnv* env, jobject obj, jlong time_ms);
   void ScrollBy(JNIEnv* env, jobject obj, jlong time_ms,
-                jfloat x, jfloat y, jfloat dx, jfloat dy);
+                jfloat x, jfloat y, jfloat dx, jfloat dy,
+                jboolean last_input_event_for_vsync);
   void FlingStart(JNIEnv* env, jobject obj, jlong time_ms,
                   jfloat x, jfloat y, jfloat vx, jfloat vy);
   void FlingCancel(JNIEnv* env, jobject obj, jlong time_ms);
@@ -131,8 +137,8 @@ class ContentViewCoreImpl : public ContentViewCore,
   void PinchBegin(JNIEnv* env, jobject obj, jlong time_ms, jfloat x, jfloat y);
   void PinchEnd(JNIEnv* env, jobject obj, jlong time_ms);
   void PinchBy(JNIEnv* env, jobject obj, jlong time_ms,
-               jfloat x, jfloat y,
-               jfloat delta);
+               jfloat x, jfloat y, jfloat delta,
+               jboolean last_input_event_for_vsync);
   void SelectBetweenCoordinates(JNIEnv* env, jobject obj,
                                 jfloat x1, jfloat y1,
                                 jfloat x2, jfloat y2);
@@ -179,21 +185,28 @@ class ContentViewCoreImpl : public ContentViewCore,
                               jclass safe_annotation_clazz,
                               jobject retained_object_set);
   void RemoveJavascriptInterface(JNIEnv* env, jobject obj, jstring name);
-  int GetNavigationHistory(JNIEnv* env, jobject obj, jobject context);
+  int GetNavigationHistory(JNIEnv* env, jobject obj, jobject history);
   void GetDirectedNavigationHistory(JNIEnv* env,
                                     jobject obj,
-                                    jobject context,
+                                    jobject history,
                                     jboolean is_forward,
                                     jint max_entries);
+  base::android::ScopedJavaLocalRef<jstring>
+      GetOriginalUrlForActiveNavigationEntry(JNIEnv* env, jobject obj);
   void UpdateVSyncParameters(JNIEnv* env, jobject obj, jlong timebase_micros,
                              jlong interval_micros);
+  void OnVSync(JNIEnv* env, jobject /* obj */, jlong frame_time_micros);
   jboolean PopulateBitmapFromCompositor(JNIEnv* env,
                                         jobject obj,
                                         jobject jbitmap);
   void WasResized(JNIEnv* env, jobject obj);
   jboolean IsRenderWidgetHostViewReady(JNIEnv* env, jobject obj);
   void ExitFullscreen(JNIEnv* env, jobject obj);
-  void EnableHidingTopControls(JNIEnv* env, jobject obj, bool enable);
+  void UpdateTopControlsState(JNIEnv* env,
+                              jobject obj,
+                              bool enable_hiding,
+                              bool enable_showing,
+                              bool animate);
   void ShowImeIfNeeded(JNIEnv* env, jobject obj);
 
   void ShowInterstitialPage(JNIEnv* env,
@@ -202,7 +215,11 @@ class ContentViewCoreImpl : public ContentViewCore,
                             jint delegate);
   jboolean IsShowingInterstitialPage(JNIEnv* env, jobject obj);
 
-  jboolean ConsumePendingRendererFrame(JNIEnv* env, jobject obj);
+  void AttachExternalVideoSurface(JNIEnv* env,
+                                  jobject obj,
+                                  jint player_id,
+                                  jobject jsurface);
+  void DetachExternalVideoSurface(JNIEnv* env, jobject obj, jint player_id);
 
   // --------------------------------------------------------------------------
   // Public methods that call to Java via JNI
@@ -219,15 +236,14 @@ class ContentViewCoreImpl : public ContentViewCore,
   void OnTabCrashed();
 
   // All sizes and offsets are in CSS pixels as cached by the renderer.
-  void UpdateFrameInfo(
-      float scroll_offset_x, float scroll_offset_y,
-      float page_scale_factor,
-      float min_page_scale_factor, float max_page_scale_factor,
-      float content_width, float content_height,
-      float viewport_width, float viewport_height);
-
-  void UpdateOffsetsForFullscreen(float controls_offset_y,
-                                  float content_offset_y);
+  void UpdateFrameInfo(const gfx::Vector2dF& scroll_offset,
+                       float page_scale_factor,
+                       const gfx::Vector2dF& page_scale_factor_limits,
+                       const gfx::SizeF& content_size,
+                       const gfx::SizeF& viewport_size,
+                       const gfx::Vector2dF& controls_offset,
+                       const gfx::Vector2dF& content_offset,
+                       float overdraw_bottom_height);
 
   void UpdateImeAdapter(int native_ime_adapter, int text_input_type,
                         const std::string& text,
@@ -253,18 +269,30 @@ class ContentViewCoreImpl : public ContentViewCore,
   void ShowDisambiguationPopup(
       const gfx::Rect& target_rect, const SkBitmap& zoomed_bitmap);
 
+  void RequestExternalVideoSurface(int player_id);
+  void NotifyGeometryChange(int player_id, const gfx::RectF& rect);
+
   // --------------------------------------------------------------------------
   // Methods called from native code
   // --------------------------------------------------------------------------
 
   gfx::Size GetPhysicalBackingSize() const;
   gfx::Size GetViewportSizeDip() const;
+  gfx::Size GetViewportSizeOffsetDip() const;
+  float GetOverdrawBottomHeightDip() const;
+
+  InputEventAckState FilterInputEvent(const WebKit::WebInputEvent& input_event);
 
   void AttachLayer(scoped_refptr<cc::Layer> layer);
   void RemoveLayer(scoped_refptr<cc::Layer> layer);
-  void DidProduceRendererFrame();
+  void SetVSyncNotificationEnabled(bool enabled);
 
  private:
+  enum InputEventVSyncStatus {
+      NOT_LAST_INPUT_EVENT_FOR_VSYNC,
+      LAST_INPUT_EVENT_FOR_VSYNC
+  };
+
   class ContentViewUserData;
 
   friend class ContentViewUserData;
@@ -279,8 +307,6 @@ class ContentViewCoreImpl : public ContentViewCore,
   // Other private methods and data
   // --------------------------------------------------------------------------
 
-  void InitJNI(JNIEnv* env, jobject obj);
-
   void InitWebContents();
 
   RenderWidgetHostViewAndroid* GetRenderWidgetHostViewAndroid();
@@ -289,18 +315,14 @@ class ContentViewCoreImpl : public ContentViewCore,
 
   WebKit::WebGestureEvent MakeGestureEvent(
       WebKit::WebInputEvent::Type type, long time_ms,
-      float xPix, float yPix) const;
+      float x, float y, InputEventVSyncStatus vsync_status) const;
 
   gfx::Size GetViewportSizePix() const;
-
-  void UpdateVSyncFlagOnInputEvent(WebKit::WebInputEvent* event) const;
+  gfx::Size GetViewportSizeOffsetPix() const;
 
   void DeleteScaledSnapshotTexture();
 
   void SendGestureEvent(const WebKit::WebGestureEvent& event);
-
-  struct JavaObject;
-  JavaObject* java_object_;
 
   // A weak reference to the Java ContentViewCore object.
   JavaObjectWeakGlobalRef java_ref_;
@@ -317,17 +339,20 @@ class ContentViewCoreImpl : public ContentViewCore,
   // Whether the renderer backing this ContentViewCore has crashed.
   bool tab_crashed_;
 
-  // Whether input events will be consistently delivered at vsync time.
-  bool input_events_delivered_at_vsync_;
-
-  // Whether a new frame from the renderer is waiting to be displayed by the
-  // browser compositor.
-  bool renderer_frame_pending_;
-
+  // Device scale factor.
   float dpi_scale_;
+
+  // The Android view that can be used to add and remove decoration layers
+  // like AutofillPopup.
+  ui::ViewAndroid* view_android_;
 
   // The owning window that has a hold of main application activity.
   ui::WindowAndroid* window_android_;
+
+  std::vector<UpdateFrameInfoCallback> update_frame_info_callbacks_;
+
+  // Optional browser-side input event filtering.
+  scoped_ptr<SyncInputEventFilter> input_event_filter_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentViewCoreImpl);
 };

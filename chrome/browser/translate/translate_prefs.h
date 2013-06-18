@@ -9,12 +9,15 @@
 
 #include "googleurl/src/gurl.h"
 
-class PrefRegistrySyncable;
 class PrefService;
 
 namespace base {
 class DictionaryValue;
 class ListValue;
+}
+
+namespace user_prefs {
+class PrefRegistrySyncable;
 }
 
 class TranslatePrefs {
@@ -35,6 +38,9 @@ class TranslatePrefs {
   void BlacklistSite(const std::string& site);
   void RemoveSiteFromBlacklist(const std::string& site);
 
+  bool HasWhitelistedLanguagePairs() const;
+  void ClearWhitelistedLanguagePairs();
+
   bool IsLanguagePairWhitelisted(const std::string& original_language,
       const std::string& target_language);
   void WhitelistLanguagePair(const std::string& original_language,
@@ -47,7 +53,7 @@ class TranslatePrefs {
   void ClearBlacklistedLanguages();
 
   // Will return true if at least one site has been blacklisted.
-  bool HasBlacklistedSites();
+  bool HasBlacklistedSites() const;
   void ClearBlacklistedSites();
 
   // These methods are used to track how many times the user has denied the
@@ -68,7 +74,7 @@ class TranslatePrefs {
       const std::string& original_language, const GURL& url);
   static bool ShouldAutoTranslate(PrefService* user_prefs,
       const std::string& original_language, std::string* target_language);
-  static void RegisterUserPrefs(PrefRegistrySyncable* registry);
+  static void RegisterUserPrefs(user_prefs::PrefRegistrySyncable* registry);
   static void MigrateUserPrefs(PrefService* user_prefs);
 
  private:
@@ -80,6 +86,8 @@ class TranslatePrefs {
   bool IsLanguageWhitelisted(const std::string& original_language,
       std::string* target_language) const;
   bool IsListEmpty(const char* pref_id) const;
+  bool IsDictionaryEmpty(const char* pref_id) const;
+
   // Retrieves the dictionary mapping the number of times translation has been
   // denied for a language, creating it if necessary.
   base::DictionaryValue* GetTranslationDeniedCountDictionary();

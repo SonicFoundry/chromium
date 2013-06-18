@@ -11,11 +11,12 @@
 #include "ash/desktop_background/desktop_background_widget_controller.h"
 #include "ash/launcher/launcher.h"
 #include "ash/root_window_controller.h"
-#include "ash/shell_delegate.h"
+#include "ash/session_state_delegate.h"
+#include "ash/shelf/shelf_layout_manager.h"
+#include "ash/shelf/shelf_widget.h"
 #include "ash/shell_window_ids.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/root_window_layout_manager.h"
-#include "ash/wm/shelf_layout_manager.h"
 #include "ash/wm/window_util.h"
 #include "base/utf_string_conversions.h"
 #include "ui/aura/client/aura_constants.h"
@@ -55,7 +56,7 @@ void ExpectAllContainers() {
   EXPECT_TRUE(Shell::GetContainer(
       root_window, internal::kShellWindowId_PanelContainer));
   EXPECT_TRUE(Shell::GetContainer(
-      root_window, internal::kShellWindowId_LauncherContainer));
+      root_window, internal::kShellWindowId_ShelfContainer));
   EXPECT_TRUE(Shell::GetContainer(
       root_window, internal::kShellWindowId_SystemModalContainer));
   EXPECT_TRUE(Shell::GetContainer(
@@ -88,7 +89,7 @@ class ModalWindow : public views::WidgetDelegateView {
   virtual bool CanResize() const OVERRIDE {
     return true;
   }
-  virtual string16 GetWindowTitle() const OVERRIDE {
+  virtual base::string16 GetWindowTitle() const OVERRIDE {
     return ASCIIToUTF16("Modal Window");
   }
   virtual ui::ModalType GetModalType() const OVERRIDE {
@@ -218,7 +219,7 @@ TEST_F(ShellTest, CreateLockScreenModalWindow) {
   EXPECT_TRUE(GetDefaultContainer()->Contains(
                   widget->GetNativeWindow()->parent()));
 
-  Shell::GetInstance()->delegate()->LockScreen();
+  Shell::GetInstance()->session_state_delegate()->LockScreen();
   // Create a LockScreen window.
   views::Widget* lock_widget = CreateTestWindow(widget_params);
   ash::Shell::GetContainer(
@@ -263,10 +264,12 @@ TEST_F(ShellTest, CreateLockScreenModalWindow) {
 }
 
 TEST_F(ShellTest, IsScreenLocked) {
-  ash::Shell::GetInstance()->delegate()->LockScreen();
-  EXPECT_TRUE(Shell::GetInstance()->IsScreenLocked());
-  ash::Shell::GetInstance()->delegate()->UnlockScreen();
-  EXPECT_FALSE(Shell::GetInstance()->IsScreenLocked());
+  SessionStateDelegate* delegate =
+      Shell::GetInstance()->session_state_delegate();
+  delegate->LockScreen();
+  EXPECT_TRUE(delegate->IsScreenLocked());
+  delegate->UnlockScreen();
+  EXPECT_FALSE(delegate->IsScreenLocked());
 }
 
 // Fails on Mac, see http://crbug.com/115662
@@ -282,7 +285,7 @@ TEST_F(ShellTest, MAYBE_ManagedWindowModeBasics) {
   // We start with the usual window containers.
   ExpectAllContainers();
   // Launcher is visible.
-  views::Widget* launcher_widget = Launcher::ForPrimaryDisplay()->widget();
+  ShelfWidget* launcher_widget = Launcher::ForPrimaryDisplay()->shelf_widget();
   EXPECT_TRUE(launcher_widget->IsVisible());
   // Launcher is at bottom-left of screen.
   EXPECT_EQ(0, launcher_widget->GetWindowBoundsInScreen().x());
@@ -323,19 +326,22 @@ TEST_F(ShellTest, FullscreenWindowHidesShelf) {
   // Shelf defaults to visible.
   EXPECT_EQ(
       SHELF_VISIBLE,
-      Shell::GetPrimaryRootWindowController()->shelf()->visibility_state());
+      Shell::GetPrimaryRootWindowController()->
+          GetShelfLayoutManager()->visibility_state());
 
   // Fullscreen window hides it.
   widget->SetFullscreen(true);
   EXPECT_EQ(
       SHELF_HIDDEN,
-      Shell::GetPrimaryRootWindowController()->shelf()->visibility_state());
+      Shell::GetPrimaryRootWindowController()->
+          GetShelfLayoutManager()->visibility_state());
 
   // Restoring the window restores it.
   widget->Restore();
   EXPECT_EQ(
       SHELF_VISIBLE,
-      Shell::GetPrimaryRootWindowController()->shelf()->visibility_state());
+      Shell::GetPrimaryRootWindowController()->
+          GetShelfLayoutManager()->visibility_state());
 
   // Clean up.
   widget->Close();

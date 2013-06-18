@@ -4,6 +4,7 @@
 
 #include "chrome/browser/lifetime/application_lifetime.h"
 
+#include "ash/shell.h"
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
@@ -343,10 +344,8 @@ void NotifyAppTerminating() {
 void NotifyAndTerminate(bool fast_path) {
 #if defined(OS_CHROMEOS)
   static bool notified = false;
-  // Don't ask SessionManager to shutdown if
-  // a) a shutdown request has already been sent.
-  // b) shutdown request comes from session manager.
-  if (notified || g_session_manager_requested_shutdown)
+  // Return if a shutdown request has already been sent.
+  if (notified)
     return;
   notified = true;
 #endif
@@ -363,7 +362,9 @@ void NotifyAndTerminate(bool fast_path) {
     if (update_engine_client->GetLastStatus().status ==
         chromeos::UpdateEngineClient::UPDATE_STATUS_UPDATED_NEED_REBOOT) {
       update_engine_client->RebootAfterUpdate();
-    } else {
+    } else if (!g_session_manager_requested_shutdown) {
+      // Don't ask SessionManager to stop session if the shutdown request comes
+      // from session manager.
       chromeos::DBusThreadManager::Get()->GetSessionManagerClient()
           ->StopSession();
     }
@@ -382,6 +383,25 @@ void OnAppExiting() {
     return;
   notified = true;
   HandleAppExitingForPlatform();
+}
+
+bool ShouldStartShutdown(Browser* browser) {
+  if (BrowserList::GetInstance(browser->host_desktop_type())->size() > 1)
+    return false;
+#if defined(OS_WIN) && defined(USE_AURA)
+  // On Windows 8 the desktop and ASH environments could be active
+  // at the same time.
+  // We should not start the shutdown process in the following cases:-
+  // 1. If the desktop type of the browser going away is ASH and there
+  //    are browser windows open in the desktop.
+  // 2. If the desktop type of the browser going away is desktop and the ASH
+  //    environment is still active.
+  if (browser->host_desktop_type() == chrome::HOST_DESKTOP_TYPE_NATIVE)
+    return !ash::Shell::HasInstance();
+  else if (browser->host_desktop_type() == chrome::HOST_DESKTOP_TYPE_ASH)
+    return BrowserList::GetInstance(chrome::HOST_DESKTOP_TYPE_NATIVE)->empty();
+#endif
+  return true;
 }
 
 }  // namespace chrome

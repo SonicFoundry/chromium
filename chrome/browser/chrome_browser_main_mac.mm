@@ -22,7 +22,6 @@
 #include "chrome/browser/mac/keychain_reauthorize.h"
 #import "chrome/browser/mac/keystone_glue.h"
 #include "chrome/browser/metrics/metrics_service.h"
-#include "chrome/browser/storage_monitor/image_capture_device_manager.h"
 #include "chrome/browser/storage_monitor/storage_monitor_mac.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
@@ -190,8 +189,8 @@ void ChromeBrowserMainPartsMac::PreEarlyInitialization() {
     //
     // This is kicked off by a special stub executable during an automatic
     // update. See chrome/installer/mac/keychain_reauthorize_main.cc.
-    chrome::browser::mac::KeychainReauthorizeIfNeeded(
-        kKeychainReauthorizeAtUpdatePref, kKeychainReauthorizeAtUpdateMaxTries);
+    chrome::KeychainReauthorizeIfNeeded(kKeychainReauthorizeAtUpdatePref,
+                                        kKeychainReauthorizeAtUpdateMaxTries);
 
     exit(0);
   }
@@ -282,15 +281,15 @@ void ChromeBrowserMainPartsMac::PreMainMessageLoopStart() {
 }
 
 void ChromeBrowserMainPartsMac::PreProfileInit() {
-  storage_monitor_ = new chrome::StorageMonitorMac();
-  // TODO(gbillock): Make the ImageCapture manager owned by StorageMonitorMac.
-  if (base::mac::IsOSLionOrLater()) {
-    image_capture_device_manager_.reset(new chrome::ImageCaptureDeviceManager);
-    image_capture_device_manager_->SetNotifications(
-        storage_monitor_->receiver());
-  }
+  storage_monitor_.reset(new chrome::StorageMonitorMac());
 
   ChromeBrowserMainPartsPosix::PreProfileInit();
+}
+
+void ChromeBrowserMainPartsMac::PostProfileInit() {
+  storage_monitor_->Init();
+
+  ChromeBrowserMainPartsPosix::PostProfileInit();
 }
 
 void ChromeBrowserMainPartsMac::DidEndMainMessageLoop() {

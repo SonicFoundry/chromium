@@ -2,7 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/command_line.h"
 #include "base/logging.h"
+#include "base/path_service.h"
+#include "base/mac/bundle_locations.h"
+#include "content/public/common/content_switches.h"
 #include "content/shell/webkit_test_platform_support.h"
 
 #include <AppKit/AppKit.h>
@@ -59,7 +63,7 @@ bool WebKitTestPlatformInitialize() {
   // its direct dependents, it's not easily possible to put the ttf files into
   // the helper's resource directory instead of the outer bundle's resource
   // directory.
-  NSString* bundle = [[NSBundle mainBundle] bundlePath];
+  NSString* bundle = [base::mac::FrameworkBundle() bundlePath];
   bundle = [bundle stringByAppendingPathComponent:@"../.."];
   NSURL* resources_directory = [[NSBundle bundleWithPath:bundle] resourceURL];
 
@@ -78,6 +82,14 @@ bool WebKitTestPlatformInitialize() {
     DLOG(FATAL) << "Fail to activate fonts.";
     CFRelease(errors);
   }
+
+  // Add <app bundle's parent dir>/plugins to the plugin path so we can load
+  // test plugins.
+  base::FilePath plugins_dir;
+  PathService::Get(base::DIR_EXE, &plugins_dir);
+  plugins_dir = plugins_dir.AppendASCII("../../../plugins");
+  CommandLine& command_line = *CommandLine::ForCurrentProcess();
+  command_line.AppendSwitchPath(switches::kExtraPluginDir, plugins_dir);
 
   return true;
 }

@@ -30,7 +30,6 @@
           },
         },
       }],
-      
     ],
   },
   'conditions': [
@@ -297,10 +296,25 @@
             'aidl_interface_file': 'public/android/java/src/org/chromium/content/common/common.aidl',
           },
           'sources': [
-            'public/android/java/src/org/chromium/content/common/ISandboxedProcessCallback.aidl',
-            'public/android/java/src/org/chromium/content/common/ISandboxedProcessService.aidl',
+            'public/android/java/src/org/chromium/content/common/IChildProcessCallback.aidl',
+            'public/android/java/src/org/chromium/content/common/IChildProcessService.aidl',
           ],
           'includes': [ '../build/java_aidl.gypi' ],
+        },
+        {
+          'target_name': 'content_native_libraries_gen',
+          'type': 'none',
+          'sources': [
+            'public/android/java/templates/NativeLibraries.template',
+          ],
+          'variables': {
+            'package_name': 'org/chromium/content/app',
+            'include_path': 'public/android/java/templates',
+            'template_deps': [
+              'public/android/java/templates/native_libraries_array.h'
+            ],
+          },
+          'includes': [ '../build/android/java_cpp_template.gypi' ],
         },
         {
           'target_name': 'content_java',
@@ -313,16 +327,19 @@
             'common_aidl',
             'content_common',
             'page_transition_types_java',
+            'result_codes_java',
+            'content_native_libraries_gen',
           ],
           'variables': {
             'java_in_dir': '../content/public/android/java',
+            'jar_excluded_classes': [ '*/NativeLibraries.class' ],
             'has_java_resources': 1,
             'R_package': 'org.chromium.content',
             'R_package_relpath': 'org/chromium/content',
             'java_strings_grd': 'android_content_strings.grd',
           },
           'conditions': [
-            ['android_build_type == 0', {
+            ['android_webview_build == 0', {
               'dependencies': [
                 '../third_party/eyesfree/eyesfree.gyp:eyesfree_java',
                 '../third_party/guava/guava.gyp:guava_javalib',
@@ -344,32 +361,23 @@
           'includes': [ '../build/android/java_cpp_template.gypi' ],
         },
         {
-          'target_name': 'surface_texture_jni_headers',
+          'target_name': 'result_codes_java',
           'type': 'none',
+          'sources': [
+            'public/android/java/src/org/chromium/content/common/ResultCodes.template',
+          ],
           'variables': {
-            'jni_gen_dir': 'content',
-            'input_java_class': 'android/graphics/SurfaceTexture.class',
-            'input_jar_file': '<(android_sdk)/android.jar',
+            'package_name': 'org/chromium/content/common',
+            'template_deps': ['public/common/result_codes_list.h'],
           },
-          'includes': [ '../build/jar_file_jni_generator.gypi' ],
-        },
-        {
-          'target_name': 'surface_jni_headers',
-          'type': 'none',
-          'variables': {
-            'jni_gen_dir': 'content',
-            'input_java_class': 'android/view/Surface.class',
-            'input_jar_file': '<(android_sdk)/android.jar',
-          },
-          'includes': [ '../build/jar_file_jni_generator.gypi' ],
+          'includes': [ '../build/android/java_cpp_template.gypi' ],
         },
         {
           'target_name': 'java_set_jni_headers',
           'type': 'none',
           'variables': {
-            'jni_gen_dir': 'content',
+            'jni_gen_package': 'content',
             'input_java_class': 'java/util/HashSet.class',
-            'input_jar_file': '<(android_sdk)/android.jar',
           },
           'includes': [ '../build/jar_file_jni_generator.gypi' ],
         },
@@ -379,8 +387,6 @@
           'type': 'none',
           'dependencies': [
             'java_set_jni_headers',
-            'surface_texture_jni_headers',
-            'surface_jni_headers',
           ],
           'direct_dependent_settings': {
             'include_dirs': [

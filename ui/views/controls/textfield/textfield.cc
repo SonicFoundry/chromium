@@ -56,7 +56,9 @@ bool Textfield::IsViewsTextfieldEnabled() {
     return false;
   if (command_line->HasSwitch(switches::kEnableViewsTextfield))
     return true;
-  return false;
+  // The new dialog style cannot host native Windows textfield controls.
+  if (command_line->HasSwitch(switches::kEnableNewDialogStyle))
+    return true;
 #endif
   return true;
 }
@@ -441,6 +443,10 @@ void Textfield::ExecuteCommand(int command_id) {
   native_wrapper_->ExecuteTextCommand(command_id);
 }
 
+bool Textfield::HasTextBeingDragged() {
+  return native_wrapper_->HasTextBeingDragged();
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Textfield, View overrides:
 
@@ -492,21 +498,9 @@ void Textfield::AboutToRequestFocusFromTabTraversal(bool reverse) {
 }
 
 bool Textfield::SkipDefaultKeyEventProcessing(const ui::KeyEvent& e) {
-  // TODO(hamaji): Figure out which keyboard combinations we need to add here,
-  //               similar to LocationBarView::SkipDefaultKeyEventProcessing.
-  ui::KeyboardCode key = e.key_code();
-  if (key == ui::VKEY_BACK)
-    return true;  // We'll handle BackSpace ourselves.
-
-#if defined(OS_WIN) && !defined(USE_AURA)
-  // We don't translate accelerators for ALT + NumPad digit on Windows, they are
-  // used for entering special characters.  We do translate alt-home.
-  if (e.IsAltDown() && (key != ui::VKEY_HOME) &&
-      NativeTextfieldWin::IsNumPadDigit(key,
-                                        (e.flags() & ui::EF_EXTENDED) != 0))
-    return true;
-#endif
-  return false;
+  // Skip any accelerator handling of backspace; textfields handle this key.
+  // Also skip processing of [Alt]+<num-pad digit> Unicode alt key codes.
+  return e.key_code() == ui::VKEY_BACK || e.IsUnicodeKeyCode();
 }
 
 void Textfield::OnPaintFocusBorder(gfx::Canvas* canvas) {

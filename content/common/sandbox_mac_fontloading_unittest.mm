@@ -44,7 +44,7 @@ bool FontLoadingTestCase::BeforeSandboxInit() {
   }
 
   font_shmem_.reset(new base::SharedMemory);
-  if (!font_shmem_.get()) {
+  if (!font_shmem_) {
     LOG(ERROR) << "Failed to create shared memory object.";
     return false;
   }
@@ -64,7 +64,7 @@ bool FontLoadingTestCase::BeforeSandboxInit() {
 
 bool FontLoadingTestCase::SandboxedTest() {
   base::SharedMemoryHandle shmem_handle;
-  if (!font_shmem_->ShareToProcess(NULL, &shmem_handle)) {
+  if (!font_shmem_->ShareToProcess(base::kNullProcessHandle, &shmem_handle)) {
     LOG(ERROR) << "SharedMemory::ShareToProcess failed";
     return false;
   }

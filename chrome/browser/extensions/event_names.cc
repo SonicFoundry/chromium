@@ -35,8 +35,6 @@ const char kOnFileBrowserMountCompleted[] =
     "fileBrowserPrivate.onMountCompleted";
 const char kOnFileTransfersUpdated[] =
     "fileBrowserPrivate.onFileTransfersUpdated";
-const char kOnDocumentFeedFetched[] =
-    "fileBrowserPrivate.onDocumentFeedFetched";
 const char kOnFileBrowserPreferencesChanged[] =
     "fileBrowserPrivate.onPreferencesChanged";
 const char kOnFileBrowserDriveConnectionStatusChanged[] =
@@ -65,6 +63,7 @@ const char kOnTabCaptureStatusChanged[] = "tabCapture.onStatusChanged";
 
 const char kBluetoothOnAdapterStateChanged[] =
     "bluetooth.onAdapterStateChanged";
+const char kBluetoothOnConnection[] = "bluetooth.onConnection";
 const char kBluetoothOnDeviceDiscovered[] = "bluetooth.onDeviceDiscovered";
 const char kBluetoothOnDeviceSearchFinished[] =
     "bluetooth.onDeviceSearchFinished";
@@ -76,8 +75,8 @@ const char kOnCpuUpdated[] = "experimental.systemInfo.cpu.onUpdated";
 const char kOnDisplayChanged[] = "systemInfo.display.onDisplayChanged";
 const char kOnStorageAvailableCapacityChanged[] =
     "experimental.systemInfo.storage.onAvailableCapacityChanged";
-const char kOnStorageAdded[] = "experimental.systemInfo.storage.onAdded";
-const char kOnStorageRemoved[] = "experimental.systemInfo.storage.onRemoved";
+const char kOnStorageAttached[] = "experimental.systemInfo.storage.onAttached";
+const char kOnStorageDetached[] = "experimental.systemInfo.storage.onDetached";
 
 const char kOnSystemIndicatorClicked[] = "systemIndicator.onClicked";
 
@@ -89,15 +88,19 @@ const char kOnDetachEventName[] = "mediaGalleriesPrivate.onDeviceDetached";
 const char kOnGalleryChangedEventName[] =
     "mediaGalleriesPrivate.onGalleryChanged";
 
-const char kOnNotificationDisplayed[] = "experimental.notification.onDisplayed";
-const char kOnNotificationError[] = "experimental.notification.onError";
-const char kOnNotificationClosed[] = "experimental.notification.onClosed";
-const char kOnNotificationClicked[] = "experimental.notification.onClicked";
-const char kOnNotificationButtonClicked[] =
-    "experimental.notification.onButtonClicked";
+const char kOnNotificationDisplayed[] = "notifications.onDisplayed";
+const char kOnNotificationError[] = "notifications.onError";
+const char kOnNotificationClosed[] = "notifications.onClosed";
+const char kOnNotificationClicked[] = "notifications.onClicked";
+const char kOnNotificationButtonClicked[] = "notifications.onButtonClicked";
 
 const char kOnNetworksChanged[] = "networkingPrivate.onNetworksChanged";
 const char kOnNetworkListChanged[] = "networkingPrivate.onNetworkListChanged";
+
+const char kOnAudioDeviceChanged[] = "audio.onDeviceChanged";
+
+const char kOnLaunched[] = "app.runtime.onLaunched";
+const char kOnRestarted[] = "app.runtime.onRestarted";
 
 }  // namespace event_names
 

@@ -219,7 +219,7 @@
     },
     {
       'target_name': 'gl_tests',
-      'type': 'executable',
+      'type': '<(gtest_target_type)',
       'dependencies': [
         '../base/base.gyp:base',
         '../base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations',
@@ -247,21 +247,31 @@
         'command_buffer/tests/gl_chromium_framebuffer_multisample_unittest.cc',
         'command_buffer/tests/gl_copy_texture_CHROMIUM_unittest.cc',
         'command_buffer/tests/gl_depth_texture_unittest.cc',
-        'command_buffer/tests/gl_query_unittests.cc',
         'command_buffer/tests/gl_lose_context_chromium_unittests.cc',
         'command_buffer/tests/gl_manager.cc',
         'command_buffer/tests/gl_manager.h',
         'command_buffer/tests/gl_pointcoord_unittest.cc',
         'command_buffer/tests/gl_program_unittests.cc',
+        'command_buffer/tests/gl_query_unittests.cc',
+        'command_buffer/tests/gl_readback_unittests.cc',
         'command_buffer/tests/gl_shared_resources_unittests.cc',
-        'command_buffer/tests/gl_tests_main.cc',
+        'command_buffer/tests/gl_stream_draw_unittests.cc',
         'command_buffer/tests/gl_test_utils.cc',
         'command_buffer/tests/gl_test_utils.h',
+        'command_buffer/tests/gl_tests_main.cc',
         'command_buffer/tests/gl_texture_mailbox_unittests.cc',
         'command_buffer/tests/gl_texture_storage_unittests.cc',
         'command_buffer/tests/gl_unittests.cc',
+        'command_buffer/tests/gl_unittests_android.cc',
         'command_buffer/tests/gl_virtual_contexts_unittests.cc',
         'command_buffer/tests/occlusion_query_unittests.cc',
+      ],
+      'conditions': [
+        ['OS == "android" and gtest_target_type == "shared_library"', {
+          'dependencies': [
+            '../testing/android/native_test.gyp:native_test_native_code',
+          ],
+        }],
       ],
       # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
       'msvs_disabled_warnings': [ 4267, ],
@@ -280,13 +290,23 @@
       ],
       'sources': [
         'command_buffer/service/gles2_cmd_decoder_mock.cc',
-        'command_buffer/service/gles2_cmd_decoder_mock.cc',
+        'command_buffer/service/error_state_mock.cc',
       ],
     },
   ],
   'conditions': [
     ['component=="static_library"', {
       'targets': [
+         {
+          'target_name': 'disk_cache_proto',
+          'type': 'static_library',
+          'sources': [ 'command_buffer/service/disk_cache_proto.proto' ],
+          'variables': {
+            'proto_in_dir': 'command_buffer/service',
+            'proto_out_dir': 'gpu/command_buffer/service',
+          },
+          'includes': [ '../build/protoc.gypi' ],
+        },
         {
           'target_name': 'gpu',
           'type': 'none',
@@ -350,6 +370,7 @@
           ],
           'dependencies': [
             'command_buffer_common',
+            'disk_cache_proto',
           ],
           # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
           'msvs_disabled_warnings': [4267, ],
@@ -368,6 +389,16 @@
     },
     { # component != static_library
       'targets': [
+         {
+          'target_name': 'disk_cache_proto',
+          'type': 'static_library',
+          'sources': [ 'command_buffer/service/disk_cache_proto.proto' ],
+          'variables': {
+            'proto_in_dir': 'command_buffer/service',
+            'proto_out_dir': 'gpu/command_buffer/service',
+          },
+          'includes': [ '../build/protoc.gypi' ],
+        },
         {
           'target_name': 'gpu',
           'type': 'shared_library',
@@ -387,6 +418,7 @@
           'dependencies': [
             '../base/base.gyp:base',
             'command_buffer/command_buffer.gyp:gles2_utils',
+            'disk_cache_proto',
           ],
           # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
           'msvs_disabled_warnings': [4267, ],
@@ -455,6 +487,24 @@
               'msvs_target_platform': 'x64',
             },
           },
+        },
+      ],
+    }],
+    ['OS == "android" and gtest_target_type == "shared_library"', {
+      'targets': [
+        {
+          'target_name': 'gl_tests_apk',
+          'type': 'none',
+          'dependencies': [
+            'gl_tests',
+          ],
+          'variables': {
+            'test_suite_name': 'gl_tests',
+            'input_shlib_path': '<(SHARED_LIB_DIR)/<(SHARED_LIB_PREFIX)gl_tests<(SHARED_LIB_SUFFIX)',
+          },
+          'includes': [
+            '../build/apk_test.gypi',
+          ],
         },
       ],
     }],

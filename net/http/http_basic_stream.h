@@ -38,6 +38,7 @@ class HttpBasicStream : public HttpStream {
 
   // HttpStream methods:
   virtual int InitializeStream(const HttpRequestInfo* request_info,
+                               RequestPriority priority,
                                const BoundNetLog& net_log,
                                const CompletionCallback& callback) OVERRIDE;
 
@@ -62,8 +63,6 @@ class HttpBasicStream : public HttpStream {
 
   virtual bool CanFindEndOfResponse() const OVERRIDE;
 
-  virtual bool IsMoreDataBuffered() const OVERRIDE;
-
   virtual bool IsConnectionReused() const OVERRIDE;
 
   virtual void SetConnectionReused() OVERRIDE;
@@ -80,8 +79,6 @@ class HttpBasicStream : public HttpStream {
 
   virtual bool IsSpdyHttpStream() const OVERRIDE;
 
-  virtual void LogNumRttVsBytesMetrics() const OVERRIDE;
-
   virtual void Drain(HttpNetworkSession* session) OVERRIDE;
 
  private:
@@ -96,10 +93,6 @@ class HttpBasicStream : public HttpStream {
   std::string request_line_;
 
   const HttpRequestInfo* request_info_;
-
-  const HttpResponseInfo* response_;
-
-  int64 bytes_read_offset_;
 
   DISALLOW_COPY_AND_ASSIGN(HttpBasicStream);
 };

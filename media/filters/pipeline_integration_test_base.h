@@ -10,7 +10,6 @@
 #include "media/audio/null_audio_sink.h"
 #include "media/base/filter_collection.h"
 #include "media/base/pipeline.h"
-#include "media/filters/chunk_demuxer.h"
 #include "media/filters/video_renderer_base.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
@@ -21,6 +20,7 @@ class FilePath;
 namespace media {
 
 class Decryptor;
+class Demuxer;
 
 // Empty MD5 hash string.  Used to verify empty audio or video tracks.
 extern const char kNullHash[];
@@ -49,6 +49,7 @@ class PipelineIntegrationTestBase {
   // Initialize the pipeline and ignore any status updates.  Useful for testing
   // invalid audio/video clips which don't have deterministic results.
   bool Start(const base::FilePath& file_path);
+  bool Start(const base::FilePath& file_path, Decryptor* decryptor);
 
   void Play();
   void Pause();
@@ -56,7 +57,7 @@ class PipelineIntegrationTestBase {
   void Stop();
   bool WaitUntilCurrentTimeIsAfter(const base::TimeDelta& wait_time);
   scoped_ptr<FilterCollection> CreateFilterCollection(
-      const base::FilePath& file_path);
+      const base::FilePath& file_path, Decryptor* decryptor);
 
   // Returns the MD5 hash of all video frames seen.  Should only be called once
   // after playback completes.  First time hashes should be generated with
@@ -64,29 +65,38 @@ class PipelineIntegrationTestBase {
   // with hashing enabled.
   std::string GetVideoHash();
 
-  // Returns the MD5 hash of all audio frames seen.  Should only be called once
+  // Returns the hash of all audio frames seen.  Should only be called once
   // after playback completes.  Pipeline must have been started with hashing
   // enabled.
   std::string GetAudioHash();
 
  protected:
-  MessageLoop message_loop_;
+  base::MessageLoop message_loop_;
   base::MD5Context md5_context_;
   bool hashing_enabled_;
+  scoped_ptr<Demuxer> demuxer_;
+  scoped_ptr<DataSource> data_source_;
   scoped_refptr<Pipeline> pipeline_;
   scoped_refptr<NullAudioSink> audio_sink_;
   bool ended_;
   PipelineStatus pipeline_status_;
+  NeedKeyCB need_key_cb_;
 
   void OnStatusCallbackChecked(PipelineStatus expected_status,
                                PipelineStatus status);
   void OnStatusCallback(PipelineStatus status);
   PipelineStatusCB QuitOnStatusCB(PipelineStatus expected_status);
+  void DemuxerNeedKeyCB(const std::string& type,
+                        scoped_ptr<uint8[]> init_data, int init_data_size);
+  void set_need_key_cb(const NeedKeyCB& need_key_cb) {
+    need_key_cb_ = need_key_cb;
+  }
+
   void OnEnded();
   void OnError(PipelineStatus status);
   void QuitAfterCurrentTimeTask(const base::TimeDelta& quit_time);
   scoped_ptr<FilterCollection> CreateFilterCollection(
-      const scoped_refptr<Demuxer>& demuxer, Decryptor* decryptor);
+      scoped_ptr<Demuxer> demuxer, Decryptor* decryptor);
   void SetDecryptor(Decryptor* decryptor,
                     const DecryptorReadyCB& decryptor_ready_cb);
   void OnVideoRendererPaint(const scoped_refptr<VideoFrame>& frame);

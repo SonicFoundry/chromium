@@ -54,22 +54,25 @@ class WallpaperFunctionBase : public AsyncExtensionFunction {
   virtual void OnWallpaperDecoded(const gfx::ImageSkia& wallpaper) = 0;
 };
 
-class WallpaperPrivateSetWallpaperIfExistFunction
+class WallpaperPrivateSetWallpaperIfExistsFunction
     : public WallpaperFunctionBase {
  public:
-  DECLARE_EXTENSION_FUNCTION("wallpaperPrivate.setWallpaperIfExist",
-                             WALLPAPERPRIVATE_SETWALLPAPERIFEXIST)
+  DECLARE_EXTENSION_FUNCTION("wallpaperPrivate.setWallpaperIfExists",
+                             WALLPAPERPRIVATE_SETWALLPAPERIFEXISTS)
 
-  WallpaperPrivateSetWallpaperIfExistFunction();
+  WallpaperPrivateSetWallpaperIfExistsFunction();
 
  protected:
-  virtual ~WallpaperPrivateSetWallpaperIfExistFunction();
+  virtual ~WallpaperPrivateSetWallpaperIfExistsFunction();
 
   // AsyncExtensionFunction overrides.
   virtual bool RunImpl() OVERRIDE;
 
  private:
   virtual void OnWallpaperDecoded(const gfx::ImageSkia& wallpaper) OVERRIDE;
+
+  // File doesn't exist. Sets javascript callback parameter to false.
+  void OnFileNotExists(const std::string& error);
 
   // Reads file specified by |file_path|. If success, post a task to start
   // decoding the file.
@@ -134,6 +137,21 @@ class WallpaperPrivateSetWallpaperFunction : public WallpaperFunctionBase {
   base::SequencedWorkerPool::SequenceToken sequence_token_;
 };
 
+class WallpaperPrivateResetWallpaperFunction
+    : public AsyncExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("wallpaperPrivate.resetWallpaper",
+                             WALLPAPERPRIVATE_RESETWALLPAPER)
+
+  WallpaperPrivateResetWallpaperFunction();
+
+ protected:
+  virtual ~WallpaperPrivateResetWallpaperFunction();
+
+  // AsyncExtensionFunction overrides.
+  virtual bool RunImpl() OVERRIDE;
+};
+
 class WallpaperPrivateSetCustomWallpaperFunction
     : public WallpaperFunctionBase {
  public:
@@ -157,10 +175,16 @@ class WallpaperPrivateSetCustomWallpaperFunction
                          scoped_ptr<gfx::ImageSkia> image);
 
   // Thumbnail is ready. Calls api function javascript callback.
-  void ThumbnailGenerated(const std::string& file_name);
+  void ThumbnailGenerated(base::RefCountedBytes* data);
 
   // Layout of the downloaded wallpaper.
   ash::WallpaperLayout layout_;
+
+  // True if need to generate thumbnail and pass to callback.
+  bool generate_thumbnail_;
+
+  // Unique file name of the custom wallpaper.
+  std::string file_name_;
 
   // Email address of logged in user.
   std::string email_;

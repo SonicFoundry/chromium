@@ -57,12 +57,10 @@ class PpapiDecryptor : public media::Decryptor {
                        const scoped_refptr<media::DecoderBuffer>& encrypted,
                        const DecryptCB& decrypt_cb) OVERRIDE;
   virtual void CancelDecrypt(StreamType stream_type) OVERRIDE;
-  virtual void InitializeAudioDecoder(
-      scoped_ptr<media::AudioDecoderConfig> config,
-      const DecoderInitCB& init_cb) OVERRIDE;
-  virtual void InitializeVideoDecoder(
-      scoped_ptr<media::VideoDecoderConfig> config,
-      const DecoderInitCB& init_cb) OVERRIDE;
+  virtual void InitializeAudioDecoder(const media::AudioDecoderConfig& config,
+                                      const DecoderInitCB& init_cb) OVERRIDE;
+  virtual void InitializeVideoDecoder(const media::VideoDecoderConfig& config,
+                                      const DecoderInitCB& init_cb) OVERRIDE;
   virtual void DecryptAndDecodeAudio(
       const scoped_refptr<media::DecoderBuffer>& encrypted,
       const AudioDecodeCB& audio_decode_cb) OVERRIDE;
@@ -91,7 +89,7 @@ class PpapiDecryptor : public media::Decryptor {
   void NeedKey(const std::string& key_system,
                const std::string& session_id,
                const std::string& type,
-               scoped_array<uint8> init_data, int init_data_size);
+               scoped_ptr<uint8[]> init_data, int init_data_size);
 
   // Hold a reference of the plugin instance to make sure the plugin outlives
   // the |plugin_cdm_delegate_|. This is needed because |plugin_cdm_delegate_|

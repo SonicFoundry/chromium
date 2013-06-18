@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_CHROMEOS_NET_CONNECTIVITY_STATE_HELPER_H_
 #define CHROME_BROWSER_CHROMEOS_NET_CONNECTIVITY_STATE_HELPER_H_
 
+#include "base/observer_list.h"
 #include "chrome/browser/chromeos/cros/network_library.h"
+#include "chrome/browser/chromeos/net/connectivity_state_helper_observer.h"
 #include "chromeos/network/network_state_handler.h"
-#include "chromeos/network/network_state_handler_observer.h"
 
 namespace chromeos {
 
@@ -16,22 +17,25 @@ namespace chromeos {
 // appropriate source (e.g. NetworkStateHandler).
 class ConnectivityStateHelper {
  public:
-  virtual ~ConnectivityStateHelper() {}
+  virtual ~ConnectivityStateHelper();
 
   // Initializes the state helper singleton to use the default (network state
   // handler) implementation or the network library implementation based
   // on the value of command line flag.
   static void Initialize();
-
-  // Similar to initialize, but can be used to inject an alternative
-  // (say,a MockConnectivityStateHelper) implementation.
-  static void InitializeForTesting(ConnectivityStateHelper* csh);
-
+  static bool IsInitialized();
   static void Shutdown();
   static ConnectivityStateHelper* Get();
 
-  // Returns true if we are in a connected state.
+  // Sets up Get() to return |impl| for testing (e.g. with a mock
+  // implementation). Call SetForTest(NUL) when |impl| is deleted.
+  static void SetForTest(ConnectivityStateHelper* impl);
+
+  // Returns true if in a connected state.
   virtual bool IsConnected() = 0;
+
+  // Returns true if in a connecting state.
+  virtual bool IsConnecting() = 0;
 
   // Returns true if there's a network of |type| in connected state.
   virtual bool IsConnectedType(const std::string& type) = 0;
@@ -49,8 +53,18 @@ class ConnectivityStateHelper {
   // Returns true if we have a default network and are in online state.
   virtual bool DefaultNetworkOnline() = 0;
 
+  // Request a network scan.
+  virtual void RequestScan() const = 0;
+
+  // Add/remove observers for listening to connection manager changes.
+  virtual void AddNetworkManagerObserver(
+      ConnectivityStateHelperObserver* observer);
+  virtual void RemoveNetworkManagerObserver(
+      ConnectivityStateHelperObserver* observer);
+
  protected:
-  ConnectivityStateHelper() {}
+  ConnectivityStateHelper();
+  ObserverList<ConnectivityStateHelperObserver> connectivity_observers_;
 };
 
 }  // namespace chromeos

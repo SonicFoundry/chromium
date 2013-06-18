@@ -12,18 +12,23 @@
 #include "base/prefs/pref_registry_simple.h"
 #include "base/prefs/pref_service.h"
 #include "base/string_util.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/cros/cros_library.h"
+#include "chrome/browser/chromeos/cros/network_property_ui_data.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/cros_settings_names.h"
-#include "chrome/browser/policy/proto/chrome_device_policy.pb.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
+#include "chrome/browser/policy/browser_policy_connector.h"
+#include "chrome/browser/policy/cloud/cloud_policy_constants.h"
+#include "chrome/browser/policy/proto/chromeos/chrome_device_policy.pb.h"
 #include "chrome/browser/prefs/proxy_config_dictionary.h"
 #include "chrome/browser/prefs/proxy_prefs.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/pref_names.h"
+#include "chromeos/network/network_ui_data.h"
 #include "chromeos/network/onc/onc_constants.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/notification_service.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -202,29 +207,29 @@ bool ProxyConfigServiceImpl::ProxyConfig::FromNetProxyConfig(
       }
       return true;
     case net::ProxyConfig::ProxyRules::TYPE_SINGLE_PROXY:
-      if (!rules.single_proxy.is_valid())
+      if (rules.single_proxies.IsEmpty())
         return false;
       mode = MODE_SINGLE_PROXY;
-      single_proxy.server = rules.single_proxy;
+      single_proxy.server = rules.single_proxies.Get();
       bypass_rules = rules.bypass_rules;
       return true;
     case net::ProxyConfig::ProxyRules::TYPE_PROXY_PER_SCHEME:
       // Make sure we have valid server for at least one of the protocols.
-      if (!rules.proxy_for_http.is_valid() &&
-          !rules.proxy_for_https.is_valid() &&
-          !rules.proxy_for_ftp.is_valid() &&
-          !rules.fallback_proxy.is_valid()) {
+      if (rules.proxies_for_http.IsEmpty() &&
+          rules.proxies_for_https.IsEmpty() &&
+          rules.proxies_for_ftp.IsEmpty() &&
+          rules.fallback_proxies.IsEmpty()) {
         return false;
       }
       mode = MODE_PROXY_PER_SCHEME;
-      if (rules.proxy_for_http.is_valid())
-        http_proxy.server = rules.proxy_for_http;
-      if (rules.proxy_for_https.is_valid())
-        https_proxy.server = rules.proxy_for_https;
-      if (rules.proxy_for_ftp.is_valid())
-        ftp_proxy.server = rules.proxy_for_ftp;
-      if (rules.fallback_proxy.is_valid())
-        socks_proxy.server = rules.fallback_proxy;
+      if (!rules.proxies_for_http.IsEmpty())
+        http_proxy.server = rules.proxies_for_http.Get();
+      if (!rules.proxies_for_https.IsEmpty())
+        https_proxy.server = rules.proxies_for_https.Get();
+      if (!rules.proxies_for_ftp.IsEmpty())
+        ftp_proxy.server = rules.proxies_for_ftp.Get();
+      if (!rules.fallback_proxies.IsEmpty())
+        socks_proxy.server = rules.fallback_proxies.Get();
       bypass_rules = rules.bypass_rules;
       return true;
     default:
@@ -306,28 +311,28 @@ bool ProxyConfigServiceImpl::ProxyConfig::DeserializeForDevice(
       case net::ProxyConfig::ProxyRules::TYPE_NO_RULES:
         return false;
       case net::ProxyConfig::ProxyRules::TYPE_SINGLE_PROXY:
-        if (!rules.single_proxy.is_valid())
+        if (rules.single_proxies.IsEmpty())
           return false;
         mode = MODE_SINGLE_PROXY;
-        single_proxy.server = rules.single_proxy;
-        break;
+        single_proxy.server = rules.single_proxies.Get();
+        return true;
       case net::ProxyConfig::ProxyRules::TYPE_PROXY_PER_SCHEME:
         // Make sure we have valid server for at least one of the protocols.
-        if (!rules.proxy_for_http.is_valid() &&
-            !rules.proxy_for_https.is_valid() &&
-            !rules.proxy_for_ftp.is_valid() &&
-            !rules.fallback_proxy.is_valid()) {
+        if (rules.proxies_for_http.IsEmpty() &&
+            rules.proxies_for_https.IsEmpty() &&
+            rules.proxies_for_ftp.IsEmpty() &&
+            rules.fallback_proxies.IsEmpty()) {
           return false;
         }
         mode = MODE_PROXY_PER_SCHEME;
-        if (rules.proxy_for_http.is_valid())
-          http_proxy.server = rules.proxy_for_http;
-        if (rules.proxy_for_https.is_valid())
-          https_proxy.server = rules.proxy_for_https;
-        if (rules.proxy_for_ftp.is_valid())
-          ftp_proxy.server = rules.proxy_for_ftp;
-        if (rules.fallback_proxy.is_valid())
-          socks_proxy.server = rules.fallback_proxy;
+        if (!rules.proxies_for_http.IsEmpty())
+          http_proxy.server = rules.proxies_for_http.Get();
+        if (!rules.proxies_for_https.IsEmpty())
+          https_proxy.server = rules.proxies_for_https.Get();
+        if (!rules.proxies_for_ftp.IsEmpty())
+          ftp_proxy.server = rules.proxies_for_ftp.Get();
+        if (!rules.fallback_proxies.IsEmpty())
+          socks_proxy.server = rules.fallback_proxies.Get();
         break;
     }
   } else {
@@ -589,10 +594,12 @@ void ProxyConfigServiceImpl::RegisterPrefs(PrefRegistrySimple* registry) {
 }
 
 // static
-void ProxyConfigServiceImpl::RegisterUserPrefs(PrefRegistrySyncable* registry) {
-  registry->RegisterBooleanPref(prefs::kUseSharedProxies,
-                                true,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
+void ProxyConfigServiceImpl::RegisterUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterBooleanPref(
+      prefs::kUseSharedProxies,
+      true,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 //------------------ ProxyConfigServiceImpl: private methods -------------------
@@ -707,6 +714,27 @@ bool ProxyConfigServiceImpl::GetUseSharedProxies() {
     return !UserManager::Get()->IsUserLoggedIn();
   }
   return use_shared_proxies_.GetValue();
+}
+
+bool ProxyConfigServiceImpl::IgnoreProxy(const Network* network) {
+  if (network->profile_type() == PROFILE_USER)
+    return false;
+
+  if (network->ui_data().onc_source() == onc::ONC_SOURCE_DEVICE_POLICY &&
+      UserManager::Get()->IsUserLoggedIn()) {
+    policy::BrowserPolicyConnector* connector =
+        g_browser_process->browser_policy_connector();
+    const User* logged_in_user = UserManager::Get()->GetLoggedInUser();
+    if (connector->GetUserAffiliation(logged_in_user->email()) ==
+            policy::USER_AFFILIATION_MANAGED) {
+      VLOG(1) << "Respecting proxy for network " << network->name()
+              << ", as logged-in user belongs to the domain the device "
+              << "is enrolled to.";
+      return false;
+    }
+  }
+
+  return !GetUseSharedProxies();
 }
 
 void ProxyConfigServiceImpl::DetermineEffectiveConfig(const Network* network,

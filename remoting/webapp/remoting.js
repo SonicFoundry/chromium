@@ -31,20 +31,11 @@ function consentRequired_(authContinue) {
 }
 
 /**
- * @enum {string} The start-up mode of the web-app
- */
-remoting.TabType = {
-  REGULAR: 'REGULAR',
-  PINNED: 'PINNED',
-  WINDOWED: 'WINDOWED',
-  FULLSCREEN: 'FULLSCREEN',
-  UNKNOWN: 'UNKNOWN'
-};
-
-/**
  * Entry point for app initialization.
  */
 remoting.init = function() {
+  migrateLocalToChromeStorage_();
+
   // TODO(jamiewalch): Remove this when we migrate to apps v2
   // (http://crbug.com/ 134213).
   remoting.initMockStorage();
@@ -104,19 +95,20 @@ remoting.init = function() {
       }
     }
     // No valid URL parameters, start up normally.
-    remoting.initDaemonUi();
+    remoting.initHomeScreenUi();
   }
   remoting.hostList.load(onLoad);
 
   // Show the tab-type warnings if necessary.
-  /** @param {remoting.TabType} tabType */
-  var onTabTypeKnown = function(tabType) {
-    if (tabType != remoting.TabType.WINDOWED) {
+  /** @param {boolean} isWindowed */
+  var onIsWindowed = function(isWindowed) {
+    if (!isWindowed &&
+        navigator.platform.indexOf('Mac') == -1) {
       document.getElementById('startup-mode-box-me2me').hidden = false;
       document.getElementById('startup-mode-box-it2me').hidden = false;
     }
   };
-  getTabType_(onTabTypeKnown);
+  isWindowed_(onIsWindowed);
 };
 
 /**
@@ -132,9 +124,11 @@ remoting.onEmail = function(email) {
   document.getElementById('get-started-me2me').disabled = false;
 };
 
-/** initDaemonUi is called if the app is not starting up in session mode, and
- * also if the user cancels pin entry or the connection in session mode. */
-remoting.initDaemonUi = function() {
+/**
+ * initHomeScreenUi is called if the app is not starting up in session mode,
+ * and also if the user cancels pin entry or the connection in session mode.
+ */
+remoting.initHomeScreenUi = function() {
   remoting.hostController = new remoting.HostController();
   document.getElementById('share-button').disabled =
       !remoting.hostController.isPluginSupported();
@@ -147,6 +141,7 @@ remoting.initDaemonUi = function() {
   // Display the cached host list, then asynchronously update and re-display it.
   remoting.updateLocalHostState();
   remoting.hostList.refresh(remoting.updateLocalHostState);
+  remoting.initSurvey();
 };
 
 /**
@@ -154,14 +149,22 @@ remoting.initDaemonUi = function() {
  */
 remoting.updateLocalHostState = function() {
   /**
-   * @param {remoting.HostController.State} state Host state.
-   * @param {string?} localHostId
+   * @param {string?} hostId Host id.
    */
-  var onHostState = function(state, localHostId) {
-    remoting.hostList.setLocalHostStateAndId(state, localHostId);
+  var onHostId = function(hostId) {
+    remoting.hostController.getLocalHostState(onHostState.bind(null, hostId));
+  };
+
+  /**
+   * @param {string?} hostId Host id.
+   * @param {remoting.HostController.State} state Host state.
+   */
+  var onHostState = function(hostId, state) {
+    remoting.hostList.setLocalHostStateAndId(state, hostId);
     remoting.hostList.display();
   };
-  remoting.hostController.getLocalHostStateAndId(onHostState);
+
+  remoting.hostController.getLocalHostId(onHostId);
 };
 
 /**
@@ -210,7 +213,7 @@ remoting.promptClose = function() {
  */
 remoting.signOut = function() {
   remoting.oauth2.clear();
-  chrome.storage.local.clear();
+  remoting.storage.local.clear();
   remoting.setMode(remoting.AppMode.HOME);
   document.getElementById('auth-dialog').hidden = false;
 };
@@ -332,35 +335,19 @@ remoting.showErrorMessage = function(error) {
 };
 
 /**
- * Get the start-up mode of the application.
- * @param {function(remoting.TabType):void} callback Callback to receive the
- *     type start-up mode of the application (the type of the current tab).
+ * Determine whether or not the app is running in a window.
+ * @param {function(boolean):void} callback Callback to receive whether or not
+ *     the current tab is running in windowed mode.
  */
-function getTabType_(callback) {
+function isWindowed_(callback) {
   /** @param {chrome.Window} win The current window. */
   var windowCallback = function(win) {
-    switch (win.state) {
-      case 'fullscreen':
-        callback(remoting.TabType.FULLSCREEN);
-        return;
-      case 'normal':
-        switch (win.type) {
-          case 'normal':
-            callback(remoting.TabType.REGULAR);
-            return;
-          case 'popup':
-          case 'app':
-            callback(remoting.TabType.WINDOWED);
-            return;
-        }
-    }
-    // TODO(jamiewalch): Decide what to do about "panel".
-    callback(remoting.TabType.UNKNOWN);
+    callback(win.type == 'popup');
   };
   /** @param {chrome.Tab} tab The current tab. */
   var tabCallback = function(tab) {
     if (tab.pinned) {
-      callback(remoting.TabType.PINNED);
+      callback(false);
     } else {
       chrome.windows.get(tab.windowId, null, windowCallback);
     }
@@ -371,3 +358,38 @@ function getTabType_(callback) {
     console.error('chome.tabs is not available.');
   }
 }
+
+/**
+ * Migrate settings in window.localStorage to chrome.storage.local so that
+ * users of older web-apps that used the former do not lose their settings.
+ */
+function migrateLocalToChromeStorage_() {
+  // The OAuth2 class still uses window.localStorage, so don't migrate any of
+  // those settings.
+  var oauthSettings = [
+      'oauth2-refresh-token',
+      'oauth2-refresh-token-revokable',
+      'oauth2-access-token',
+      'oauth2-xsrf-token',
+      'remoting-email'
+  ];
+  for (var setting in window.localStorage) {
+    if (oauthSettings.indexOf(setting) == -1) {
+      var copy = {}
+      copy[setting] = window.localStorage.getItem(setting);
+      chrome.storage.local.set(copy);
+      window.localStorage.removeItem(setting);
+    }
+  }
+}
+
+/**
+ * Generate a nonce, to be used as an xsrf protection token.
+ *
+ * @return {string} A URL-Safe Base64-encoded 128-bit random value. */
+remoting.generateXsrfToken = function() {
+  var random = new Uint8Array(16);
+  window.crypto.getRandomValues(random);
+  var base64Token = window.btoa(String.fromCharCode.apply(null, random));
+  return base64Token.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+};

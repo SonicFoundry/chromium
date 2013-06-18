@@ -7,7 +7,7 @@
 #include "base/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/command_updater.h"
-#include "chrome/browser/ui/search/search.h"
+#include "chrome/browser/search/search.h"
 #include "chrome/browser/ui/search/search_model.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "grit/generated_resources.h"
@@ -39,7 +39,7 @@ const int kReloadMenuItems[]  = {
 
 ReloadButton::ReloadButton(LocationBarView* location_bar,
                            CommandUpdater* command_updater)
-    : ALLOW_THIS_IN_INITIALIZER_LIST(ButtonDropDown(this, CreateMenuModel())),
+    : ButtonDropDown(this, CreateMenuModel()),
       location_bar_(location_bar),
       command_updater_(command_updater),
       intended_mode_(MODE_RELOAD),
@@ -201,10 +201,6 @@ bool ReloadButton::GetAcceleratorForCommandId(int command_id,
       return true;
   }
   return GetWidget()->GetAccelerator(command_id, accelerator);
-}
-
-void ReloadButton::ExecuteCommand(int command_id) {
-  ExecuteCommand(command_id, 0);
 }
 
 void ReloadButton::ExecuteCommand(int command_id, int event_flags) {

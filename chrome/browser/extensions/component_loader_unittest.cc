@@ -2,24 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <string>
-
 #include "chrome/browser/extensions/component_loader.h"
+
+#include <string>
 
 #include "base/file_util.h"
 #include "base/path_service.h"
 #include "base/prefs/pref_registry_simple.h"
 #include "chrome/browser/extensions/test_extension_service.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/background_info.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_set.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_pref_service_syncable.h"
+#include "components/user_prefs/pref_registry_syncable.h"
+#include "extensions/common/constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using extensions::Extension;
+namespace extensions {
 
 namespace {
 
@@ -71,19 +72,15 @@ class MockExtensionService : public TestExtensionService {
 
 }  // namespace
 
-namespace extensions {
-
 class ComponentLoaderTest : public testing::Test {
  public:
-  ComponentLoaderTest() :
+  ComponentLoaderTest()
       // Note: we pass the same pref service here, to stand in for both
       // user prefs and local state.
-      component_loader_(&extension_service_, &prefs_, &local_state_) {
+      : component_loader_(&extension_service_, &prefs_, &local_state_) {
   }
 
-  virtual void SetUp() {
-    (new BackgroundManifestHandler)->Register();
-
+  virtual void SetUp() OVERRIDE {
     extension_path_ =
         GetBasePath().AppendASCII("good")
                      .AppendASCII("Extensions")
@@ -92,18 +89,18 @@ class ComponentLoaderTest : public testing::Test {
 
     // Read in the extension manifest.
     ASSERT_TRUE(file_util::ReadFileToString(
-        extension_path_.Append(Extension::kManifestFilename),
-                               &manifest_contents_));
+        extension_path_.Append(kManifestFilename),
+        &manifest_contents_));
 
     // Register the user prefs that ComponentLoader will read.
     prefs_.registry()->RegisterStringPref(
         prefs::kEnterpriseWebStoreURL,
         std::string(),
-        PrefRegistrySyncable::UNSYNCABLE_PREF);
+        user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
     prefs_.registry()->RegisterStringPref(
         prefs::kEnterpriseWebStoreName,
         std::string(),
-        PrefRegistrySyncable::UNSYNCABLE_PREF);
+        user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 
     // Register the local state prefs.
 #if defined(OS_CHROMEOS)
@@ -142,7 +139,7 @@ TEST_F(ComponentLoaderTest, ParseManifest) {
   // Test manifests that are valid JSON, but don't have an object literal
   // at the root. ParseManifest() should always return NULL.
 
-  manifest.reset(component_loader_.ParseManifest(""));
+  manifest.reset(component_loader_.ParseManifest(std::string()));
   EXPECT_FALSE(manifest.get());
 
   manifest.reset(component_loader_.ParseManifest("[{ \"foo\": 3 }]"));

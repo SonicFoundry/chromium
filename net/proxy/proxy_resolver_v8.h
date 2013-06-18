@@ -11,6 +11,7 @@
 #include "net/proxy/proxy_resolver.h"
 
 namespace v8 {
+class HeapStatistics;
 class Isolate;
 }  // namespace v8
 
@@ -58,11 +59,11 @@ class NET_EXPORT_PRIVATE ProxyResolverV8 : public ProxyResolver {
                             bool* terminate) = 0;
 
     // Handler for "alert(message)"
-    virtual void Alert(const string16& message) = 0;
+    virtual void Alert(const base::string16& message) = 0;
 
     // Handler for when an error is encountered. |line_number| may be -1
     // if a line number is not applicable to this error.
-    virtual void OnError(int line_number, const string16& error) = 0;
+    virtual void OnError(int line_number, const base::string16& error) = 0;
 
    protected:
     virtual ~JSBindings() {}
@@ -94,6 +95,11 @@ class NET_EXPORT_PRIVATE ProxyResolverV8 : public ProxyResolver {
   // hack can be removed when the "default Isolate" concept is gone.
   static void RememberDefaultIsolate();
   static v8::Isolate* GetDefaultIsolate();
+
+  // Get total/ued heap memory usage of all v8 instances used by the proxy
+  // resolver.
+  static size_t GetTotalHeapSize();
+  static size_t GetUsedHeapSize();
 
  private:
   static v8::Isolate* g_default_isolate_;

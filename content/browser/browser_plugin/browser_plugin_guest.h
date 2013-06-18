@@ -25,12 +25,14 @@
 
 #include "base/compiler_specific.h"
 #include "base/id_map.h"
+#include "base/memory/weak_ptr.h"
 #include "base/shared_memory.h"
 #include "base/time.h"
-#include "content/common/browser_plugin_message_enums.h"
+#include "content/common/browser_plugin/browser_plugin_message_enums.h"
 #include "content/port/common/input_event_ack_state.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "content/public/browser/render_view_host_observer.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebDragOperation.h"
@@ -40,7 +42,7 @@
 #include "ui/surface/transport_dib.h"
 
 struct BrowserPluginHostMsg_AutoSize_Params;
-struct BrowserPluginHostMsg_CreateGuest_Params;
+struct BrowserPluginHostMsg_Attach_Params;
 struct BrowserPluginHostMsg_ResizeGuest_Params;
 struct ViewHostMsg_CreateWindow_Params;
 #if defined(OS_MACOSX)
@@ -50,6 +52,10 @@ struct ViewHostMsg_UpdateRect_Params;
 class WebCursor;
 struct WebDropData;
 
+namespace cc {
+class CompositorFrameAck;
+}
+
 namespace WebKit {
 class WebInputEvent;
 }
@@ -58,44 +64,63 @@ namespace content {
 
 class BrowserPluginHostFactory;
 class BrowserPluginEmbedder;
+class BrowserPluginGuestManager;
 class RenderProcessHost;
 class RenderWidgetHostView;
 struct MediaStreamRequest;
 
 // A browser plugin guest provides functionality for WebContents to operate in
-// the guest role and implements guest specific overrides for ViewHostMsg_*
+// the guest role and implements guest-specific overrides for ViewHostMsg_*
 // messages.
 //
-// BrowserPluginEmbedder is responsible for creating and destroying a guest.
-class CONTENT_EXPORT BrowserPluginGuest : public NotificationObserver,
-                                          public WebContentsDelegate,
-                                          public WebContentsObserver {
+// When a guest is initially created, it is in an unattached state. That is,
+// it is not visible anywhere and has no embedder WebContents assigned.
+// A BrowserPluginGuest is said to be "attached" if it has an embedder.
+// A BrowserPluginGuest can also create a new unattached guest via
+// CreateNewWindow. The newly created guest will live in the same partition,
+// which means it can share storage and can script this guest.
+class CONTENT_EXPORT BrowserPluginGuest
+    : public NotificationObserver,
+      public WebContentsDelegate,
+      public WebContentsObserver,
+      public base::SupportsWeakPtr<BrowserPluginGuest> {
  public:
+  typedef base::Callback<void(bool)> GeolocationCallback;
   virtual ~BrowserPluginGuest();
 
   static BrowserPluginGuest* Create(
       int instance_id,
-      WebContentsImpl* embedder_web_contents,
+      WebContentsImpl* web_contents);
+
+  static BrowserPluginGuest* CreateWithOpener(
+      int instance_id,
       WebContentsImpl* web_contents,
-      const BrowserPluginHostMsg_CreateGuest_Params& params);
+      BrowserPluginGuest* opener,
+      bool has_render_view);
+
+  // Destroys the guest WebContents and all its associated state, including
+  // this BrowserPluginGuest, and its new unattached windows.
+  void Destroy();
+
+  // Returns the identifier that uniquely identifies a browser plugin guest
+  // within an embedder.
+  int instance_id() const { return instance_id_; }
 
   // Overrides factory for testing. Default (NULL) value indicates regular
   // (non-test) environment.
   static void set_factory_for_testing(BrowserPluginHostFactory* factory) {
-    content::BrowserPluginGuest::factory_ = factory;
+    BrowserPluginGuest::factory_ = factory;
   }
 
   bool OnMessageReceivedFromEmbedder(const IPC::Message& message);
 
-  void Initialize(const BrowserPluginHostMsg_CreateGuest_Params& params);
+  void Initialize(WebContentsImpl* embedder_web_contents,
+                  const BrowserPluginHostMsg_Attach_Params& params);
 
   void set_guest_hang_timeout_for_testing(const base::TimeDelta& timeout) {
     guest_hang_timeout_ = timeout;
   }
 
-  void set_embedder_web_contents(WebContentsImpl* web_contents) {
-    embedder_web_contents_ = web_contents;
-  }
   WebContentsImpl* embedder_web_contents() const {
     return embedder_web_contents_;
   }
@@ -105,6 +130,8 @@ class CONTENT_EXPORT BrowserPluginGuest : public NotificationObserver,
   bool focused() const { return focused_; }
   bool visible() const { return guest_visible_; }
   void clear_damage_buffer() { damage_buffer_.reset(); }
+
+  BrowserPluginGuest* opener() const { return opener_; }
 
   void UpdateVisibility();
 
@@ -143,10 +170,37 @@ class CONTENT_EXPORT BrowserPluginGuest : public NotificationObserver,
 
 
   // WebContentsDelegate implementation.
-  virtual bool CanDownload(RenderViewHost* render_view_host,
+
+  virtual bool AddMessageToConsole(WebContents* source,
+                                   int32 level,
+                                   const string16& message,
+                                   int32 line_no,
+                                   const string16& source_id) OVERRIDE;
+  // If a new window is created with target="_blank" and rel="noreferrer", then
+  // this method is called, indicating that the new WebContents is ready to be
+  // attached.
+  virtual void AddNewContents(WebContents* source,
+                              WebContents* new_contents,
+                              WindowOpenDisposition disposition,
+                              const gfx::Rect& initial_pos,
+                              bool user_gesture,
+                              bool* was_blocked) OVERRIDE;
+  virtual void CanDownload(RenderViewHost* render_view_host,
                            int request_id,
-                           const std::string& request_method) OVERRIDE;
+                           const std::string& request_method,
+                           const base::Callback<void(bool)>& callback) OVERRIDE;
+  virtual void CloseContents(WebContents* source) OVERRIDE;
   virtual bool HandleContextMenu(const ContextMenuParams& params) OVERRIDE;
+  virtual void HandleKeyboardEvent(
+      WebContents* source,
+      const NativeWebKeyboardEvent& event) OVERRIDE;
+  virtual WebContents* OpenURLFromTab(WebContents* source,
+                                      const OpenURLParams& params) OVERRIDE;
+  virtual void WebContentsCreated(WebContents* source_contents,
+                                  int64 source_frame_id,
+                                  const string16& frame_name,
+                                  const GURL& target_url,
+                                  WebContents* new_contents) OVERRIDE;
   virtual void RendererUnresponsive(WebContents* source) OVERRIDE;
   virtual void RendererResponsive(WebContents* source) OVERRIDE;
   virtual void RunFileChooser(WebContents* web_contents,
@@ -154,14 +208,11 @@ class CONTENT_EXPORT BrowserPluginGuest : public NotificationObserver,
   virtual bool ShouldFocusPageAfterCrash() OVERRIDE;
   virtual void RequestMediaAccessPermission(
       WebContents* web_contents,
-      const content::MediaStreamRequest& request,
-      const content::MediaResponseCallback& callback) OVERRIDE;
+      const MediaStreamRequest& request,
+      const MediaResponseCallback& callback) OVERRIDE;
 
   // Exposes the protected web_contents() from WebContentsObserver.
-  WebContents* GetWebContents();
-
-  // Kill the guest process.
-  void Terminate();
+  WebContentsImpl* GetWebContents();
 
   // Overridden in tests.
   virtual void SetDamageBuffer(
@@ -175,9 +226,22 @@ class CONTENT_EXPORT BrowserPluginGuest : public NotificationObserver,
   // messages for testing.
   virtual void SendMessageToEmbedder(IPC::Message* msg);
 
-  // Returns the identifier that uniquely identifies a browser plugin guest
-  // within an embedder.
-  int instance_id() const { return instance_id_; }
+  // Returns whether the guest is attached to an embedder.
+  bool attached() const { return !!embedder_web_contents_; }
+
+  // Attaches this BrowserPluginGuest to the provided |embedder_web_contents|
+  // and initializes the guest with the provided |params|. Attaching a guest
+  // to an embedder implies that this guest's lifetime is no longer managed
+  // by its opener, and it can begin loading resources.
+  void Attach(WebContentsImpl* embedder_web_contents,
+              BrowserPluginHostMsg_Attach_Params params);
+
+  // Requests geolocation permission through Embedder JavaScript API.
+  void AskEmbedderForGeolocationPermission(int bridge_id,
+                                           const GURL& requesting_frame,
+                                           const GeolocationCallback& callback);
+  // Cancels pending geolocation request.
+  void CancelGeolocationRequest(int bridge_id);
 
   // Allow the embedder to call this for unhandled messages when
   // BrowserPluginGuest is already destroyed.
@@ -186,25 +250,38 @@ class CONTENT_EXPORT BrowserPluginGuest : public NotificationObserver,
                                        const std::string& mailbox_name,
                                        uint32 sync_point);
 
- private:
-  typedef std::pair<content::MediaStreamRequest, content::MediaResponseCallback>
-      MediaStreamRequestAndCallbackPair;
-  typedef std::map<int, MediaStreamRequestAndCallbackPair>
-      MediaStreamRequestsMap;
+  // Returns whether BrowserPluginGuest is interested in receiving the given
+  // |message|.
+  static bool ShouldForwardToBrowserPluginGuest(const IPC::Message& message);
 
+  void DragSourceEndedAt(int client_x, int client_y, int screen_x,
+      int screen_y, WebKit::WebDragOperation operation);
+
+  void DragSourceMovedTo(int client_x, int client_y,
+                         int screen_x, int screen_y);
+
+  // Called when the drag started by this guest ends at an OS-level.
+  void EndSystemDrag();
+
+ private:
+  class EmbedderRenderViewHostObserver;
   friend class TestBrowserPluginGuest;
 
+  class DownloadRequest;
+  class GeolocationRequest;
+  // MediaRequest because of naming conflicts with MediaStreamRequest.
+  class MediaRequest;
+  class NewWindowRequest;
+  class PermissionRequest;
+
   BrowserPluginGuest(int instance_id,
-                     WebContentsImpl* embedder_web_contents,
                      WebContentsImpl* web_contents,
-                     const BrowserPluginHostMsg_CreateGuest_Params& params);
+                     BrowserPluginGuest* opener,
+                     bool has_render_view);
 
-  // Returns the embedder's routing ID.
-  int embedder_routing_id() const;
-
-  // Schedules this BrowserPluginGuest for deletion if it hasn't already been
-  // scheduled.
-  void Destroy();
+  // Destroy unattached new windows that have been opened by this
+  // BrowserPluginGuest.
+  void DestroyUnattachedWindows();
 
   base::SharedMemory* damage_buffer() const { return damage_buffer_.get(); }
   const gfx::Size& damage_view_size() const { return damage_view_size_; }
@@ -222,7 +299,17 @@ class CONTENT_EXPORT BrowserPluginGuest : public NotificationObserver,
 
   bool InAutoSizeBounds(const gfx::Size& size) const;
 
-  // Message handlers for messsages from embedder.
+  void RequestNewWindowPermission(WebContentsImpl* new_contents,
+                                  WindowOpenDisposition disposition,
+                                  const gfx::Rect& initial_bounds,
+                                  bool user_gesture);
+
+  // Message handlers for messages from embedder.
+
+  void OnCompositorFrameACK(int instance_id,
+                            int route_id,
+                            int renderer_host_id,
+                            const cc::CompositorFrameAck& ack);
 
   // Allows or denies a permission request access, after the embedder has had a
   // chance to decide.
@@ -240,6 +327,9 @@ class CONTENT_EXPORT BrowserPluginGuest : public NotificationObserver,
                           const WebDropData& drop_data,
                           WebKit::WebDragOperationsMask drag_mask,
                           const gfx::Point& location);
+  // Instructs the guest to execute an edit command decoded in the embedder.
+  void OnExecuteEditCommand(int instance_id,
+                            const std::string& command);
   // If possible, navigate the guest to |relative_index| entries away from the
   // current navigation entry.
   virtual void OnGo(int instance_id, int relative_index);
@@ -305,10 +395,7 @@ class CONTENT_EXPORT BrowserPluginGuest : public NotificationObserver,
 
   // Message handlers for messages from guest.
 
-  void OnCreateWindow(const ViewHostMsg_CreateWindow_Params& params,
-                      int* route_id,
-                      int* surface_id,
-                      int64* cloned_session_storage_namespace_id);
+  void OnDragStopped();
   void OnHandleInputEventAck(
       WebKit::WebInputEvent::Type event_type,
       InputEventAckState ack_result);
@@ -322,17 +409,34 @@ class CONTENT_EXPORT BrowserPluginGuest : public NotificationObserver,
   void OnShowWidget(int route_id, const gfx::Rect& initial_pos);
   // Overriden in tests.
   virtual void OnTakeFocus(bool reverse);
-  void OnUpdateDragCursor(WebKit::WebDragOperation operation);
   void OnUpdateFrameName(int frame_id,
                          bool is_top_level,
                          const std::string& name);
   void OnUpdateRect(const ViewHostMsg_UpdateRect_Params& params);
 
+  // Requests download permission through embedder JavaScript API after
+  // retrieving url information from IO thread.
+  void DidRetrieveDownloadURLFromRequestId(const std::string& request_method,
+                                           int permission_request_id,
+                                           const std::string& url);
+
+  // Embedder sets permission to allow or deny geolocation request.
+  void SetGeolocationPermission(
+      GeolocationCallback callback, int bridge_id, bool allowed);
+
+  // Weak pointer used to ask GeolocationPermissionContext about geolocation
+  // permission.
+  base::WeakPtrFactory<BrowserPluginGuest> weak_ptr_factory_;
+
   // Static factory instance (always NULL for non-test).
-  static content::BrowserPluginHostFactory* factory_;
+  static BrowserPluginHostFactory* factory_;
 
   NotificationRegistrar notification_registrar_;
+  scoped_ptr<EmbedderRenderViewHostObserver> embedder_rvh_observer_;
   WebContentsImpl* embedder_web_contents_;
+
+  std::map<int, int> bridge_id_to_request_id_map_;
+
   // An identifier that uniquely identifies a browser plugin guest within an
   // embedder.
   int instance_id_;
@@ -342,27 +446,46 @@ class CONTENT_EXPORT BrowserPluginGuest : public NotificationObserver,
   size_t damage_buffer_size_;
   gfx::Size damage_view_size_;
   float damage_buffer_scale_factor_;
+  float guest_device_scale_factor_;
   gfx::Rect guest_window_rect_;
   gfx::Rect guest_screen_rect_;
   base::TimeDelta guest_hang_timeout_;
   bool focused_;
   bool mouse_locked_;
+  bool pending_lock_request_;
   bool guest_visible_;
   bool embedder_visible_;
   std::string name_;
   bool auto_size_enabled_;
   gfx::Size max_auto_size_;
   gfx::Size min_auto_size_;
-  bool destroy_called_;
 
-  // A counter to generate unique request id for a media access request.
+  // Tracks the target URL of the new window and whether or not it has changed
+  // since the WebContents has been created and before the new window has been
+  // attached to a BrowserPlugin. Once the first navigation commits, we no
+  // longer track this URL.
+  struct TargetURL {
+    bool changed;
+    GURL url;
+    explicit TargetURL(const GURL& url) :
+        changed(false),
+        url(url) {}
+  };
+  typedef std::map<BrowserPluginGuest*, TargetURL> PendingWindowMap;
+  PendingWindowMap pending_new_windows_;
+  base::WeakPtr<BrowserPluginGuest> opener_;
+  // A counter to generate a unique request id for a permission request.
   // We only need the ids to be unique for a given BrowserPluginGuest.
-  int current_media_access_request_id_;
-  // A map to store WebContents's media request object and callback.
-  // We need to store these because we need a roundtrip to the embedder to know
-  // if we allow or disallow the request. The key of the map is unique only for
-  // a given BrowserPluginGuest.
-  MediaStreamRequestsMap media_requests_map_;
+  int next_permission_request_id_;
+
+  // A map to store relevant info for a request keyed by the request's id.
+  typedef std::map<int, PermissionRequest*> RequestMap;
+  RequestMap permission_request_map_;
+
+  // Indicates that this BrowserPluginGuest has associated renderer-side state.
+  // This is used to determine whether or not to create a new RenderView when
+  // this guest is attached.
+  bool has_render_view_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserPluginGuest);
 };

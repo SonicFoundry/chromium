@@ -15,9 +15,6 @@ namespace content {
 class WebContents;
 }
 
-namespace chrome {
-namespace search {
-
 class SearchModel;
 
 // The SearchDelegate class acts as a helper to the Browser class.
@@ -33,7 +30,8 @@ class SearchDelegate : public SearchModelObserver {
   virtual ~SearchDelegate();
 
   // Overrides for SearchModelObserver:
-  virtual void ModeChanged(const Mode& old_mode, const Mode& new_mode) OVERRIDE;
+  virtual void ModelChanged(const SearchModel::State& old_state,
+                            const SearchModel::State& new_state) OVERRIDE;
 
   // When the active tab is changed, the model state of this new active tab is
   // propagated to the browser.
@@ -61,8 +59,5 @@ class SearchDelegate : public SearchModelObserver {
 
   DISALLOW_COPY_AND_ASSIGN(SearchDelegate);
 };
-
-}  // namespace search
-}  // namespace chrome
 
 #endif  // CHROME_BROWSER_UI_SEARCH_SEARCH_DELEGATE_H_

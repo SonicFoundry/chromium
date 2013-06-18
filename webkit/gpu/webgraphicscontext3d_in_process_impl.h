@@ -17,9 +17,6 @@
 #include "ui/gfx/native_widget_types.h"
 #include "webkit/gpu/webkit_gpu_export.h"
 
-#if !defined(OS_MACOSX)
-#define FLIP_FRAMEBUFFER_VERTICALLY
-#endif
 namespace gfx {
 class GLContext;
 class GLSurface;
@@ -480,6 +477,12 @@ class WEBKIT_GPU_EXPORT WebGraphicsContext3DInProcessImpl :
   virtual void copyTextureCHROMIUM(WGC3Denum target, WGC3Duint source_id,
                                    WGC3Duint dest_id, WGC3Dint level,
                                    WGC3Denum internal_format);
+
+  virtual void copyTextureCHROMIUM(WGC3Denum target, WGC3Duint source_id,
+                                   WGC3Duint dest_id, WGC3Dint level,
+                                   WGC3Denum internal_format,
+                                   WGC3Denum dest_type);
+
   virtual void bindUniformLocationCHROMIUM(WebGLId program, WGC3Dint location,
                                            const WGC3Dchar* uniform);
 
@@ -499,6 +502,8 @@ class WEBKIT_GPU_EXPORT WebGraphicsContext3DInProcessImpl :
   virtual void* mapBufferCHROMIUM(WGC3Denum target, WGC3Denum access);
   virtual WGC3Dboolean unmapBufferCHROMIUM(WGC3Denum target);
 
+  virtual void drawBuffersEXT(WGC3Dsizei n, const WGC3Denum* bufs);
+
  protected:
   virtual GrGLInterface* onCreateGrGLInterface();
 
@@ -513,11 +518,9 @@ class WEBKIT_GPU_EXPORT WebGraphicsContext3DInProcessImpl :
   bool AllocateOffscreenFrameBuffer(int width, int height);
   void ClearRenderTarget();
 
-#ifdef FLIP_FRAMEBUFFER_VERTICALLY
   void FlipVertically(unsigned char* framebuffer,
                       unsigned int width,
                       unsigned int height);
-#endif
 
   // Take into account the user's requested context creation attributes, in
   // particular stencil and antialias, and determine which could or could
@@ -558,9 +561,7 @@ class WEBKIT_GPU_EXPORT WebGraphicsContext3DInProcessImpl :
   // For tracking which texture is bound
   WebGLId bound_texture_;
 
-#ifdef FLIP_FRAMEBUFFER_VERTICALLY
   unsigned char* scanline_;
-#endif
 
   // Errors raised by synthesizeGLError().
   std::list<WGC3Denum> synthetic_errors_list_;

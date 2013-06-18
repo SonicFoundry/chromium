@@ -10,6 +10,9 @@
 #include "base/memory/scoped_ptr.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/common/content_export.h"
+#include "ui/base/events/event.h"
+#include "ui/base/gestures/gesture_recognizer.h"
+#include "ui/base/gestures/gesture_types.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/vector2d_f.h"
@@ -34,7 +37,9 @@ struct NativeWebKeyboardEvent;
 // the relevant calls to the platform view.
 // -----------------------------------------------------------------------------
 class CONTENT_EXPORT RenderWidgetHostViewGuest
-    : public RenderWidgetHostViewBase {
+    : public RenderWidgetHostViewBase,
+      public ui::GestureConsumer,
+      public ui::GestureEventHelper {
  public:
   RenderWidgetHostViewGuest(RenderWidgetHost* widget,
                             BrowserPluginGuest* guest,
@@ -59,6 +64,10 @@ class CONTENT_EXPORT RenderWidgetHostViewGuest
   virtual void SetBackground(const SkBitmap& background) OVERRIDE;
 #if defined(OS_WIN) && !defined(USE_AURA)
   virtual void SetClickthroughRegion(SkRegion* region) OVERRIDE;
+#endif
+#if defined(OS_WIN) && defined(USE_AURA)
+  virtual gfx::NativeViewAccessible AccessibleObjectFromChildId(long child_id)
+      OVERRIDE;
 #endif
 
   // RenderWidgetHostViewPort implementation.
@@ -110,6 +119,8 @@ class CONTENT_EXPORT RenderWidgetHostViewGuest
   virtual void AcceleratedSurfacePostSubBuffer(
       const GpuHostMsg_AcceleratedSurfacePostSubBuffer_Params& params,
       int gpu_host_id) OVERRIDE;
+  virtual void OnSwapCompositorFrame(
+      scoped_ptr<cc::CompositorFrame> frame) OVERRIDE;
   virtual void AcceleratedSurfaceSuspend() OVERRIDE;
   virtual void AcceleratedSurfaceRelease() OVERRIDE;
   virtual bool HasAcceleratedSurface(const gfx::Size& desired_size) OVERRIDE;
@@ -119,6 +130,10 @@ class CONTENT_EXPORT RenderWidgetHostViewGuest
       bool is_pinned_to_left, bool is_pinned_to_right) OVERRIDE;
   virtual gfx::Rect GetBoundsInRootWindow() OVERRIDE;
   virtual gfx::GLSurfaceHandle GetCompositingSurface() OVERRIDE;
+#if defined(OS_WIN) || defined(USE_AURA)
+  virtual void ProcessAckedTouchEvent(const WebKit::WebTouchEvent& touch,
+                                      InputEventAckState ack_result) OVERRIDE;
+#endif  // defined(OS_WIN) || defined(USE_AURA)
   virtual bool LockMouse() OVERRIDE;
   virtual void UnlockMouse() OVERRIDE;
   virtual void GetScreenInfo(WebKit::WebScreenInfo* results) OVERRIDE;
@@ -148,13 +163,6 @@ class CONTENT_EXPORT RenderWidgetHostViewGuest
   // RenderWidgetHostViewPort implementation.
   virtual void ShowDisambiguationPopup(const gfx::Rect& target_rect,
                                        const SkBitmap& zoomed_bitmap) OVERRIDE;
-  virtual void UpdateFrameInfo(const gfx::Vector2dF& scroll_offset,
-                               float page_scale_factor,
-                               const gfx::Vector2dF& page_scale_factor_limits,
-                               const gfx::SizeF& content_size,
-                               const gfx::SizeF& viewport_size,
-                               const gfx::Vector2dF& controls_offset,
-                               const gfx::Vector2dF& content_offset) OVERRIDE;
   virtual void HasTouchEventHandlers(bool need_touch_events) OVERRIDE;
 #endif  // defined(OS_ANDROID)
 
@@ -167,6 +175,10 @@ class CONTENT_EXPORT RenderWidgetHostViewGuest
   virtual void WillWmDestroy() OVERRIDE;
 #endif  // defined(OS_WIN) && !defined(USE_AURA)
 
+  // Overridden from ui::GestureEventHelper.
+  virtual bool DispatchLongPressGestureEvent(ui::GestureEvent* event) OVERRIDE;
+  virtual bool DispatchCancelTouchEvent(ui::TouchEvent* event) OVERRIDE;
+
  protected:
   friend class RenderWidgetHostView;
 
@@ -174,17 +186,25 @@ class CONTENT_EXPORT RenderWidgetHostViewGuest
   // Destroys this view without calling |Destroy| on |platform_view_|.
   void DestroyGuestView();
 
+  // Builds and forwards a WebKitGestureEvent to the renderer.
+  bool ForwardGestureEventToRenderer(ui::GestureEvent* gesture);
+
+  // Process all of the given gestures (passes them on to renderer)
+  void ProcessGestures(ui::GestureRecognizer::Gestures* gestures);
+
   // The model object.
   RenderWidgetHostImpl* host_;
 
   BrowserPluginGuest *guest_;
-  bool enable_compositing_;
   bool is_hidden_;
+  gfx::Size size_;
   // The platform view for this RenderWidgetHostView.
   // RenderWidgetHostViewGuest mostly only cares about stuff related to
   // compositing, the rest are directly forwared to this |platform_view_|.
   RenderWidgetHostViewPort* platform_view_;
-
+#if defined(OS_WIN) || defined(USE_AURA)
+  scoped_ptr<ui::GestureRecognizer> gesture_recognizer_;
+#endif  // defined(OS_WIN) || defined(USE_AURA)
   DISALLOW_COPY_AND_ASSIGN(RenderWidgetHostViewGuest);
 };
 

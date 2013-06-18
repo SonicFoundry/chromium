@@ -10,12 +10,12 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram.h"
 #include "base/prefs/pref_service.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/profile_sync_service.h"
 #include "chrome/browser/ui/webui/ntp/new_tab_ui.h"
 #include "chrome/browser/web_resource/notification_promo.h"
 #include "chrome/common/pref_names.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_ui.h"
 #include "grit/chromium_strings.h"
@@ -74,9 +74,6 @@ void NewTabPageHandler::RegisterMessages() {
                  base::Unretained(this)));
   web_ui()->RegisterMessageCallback("logTimeToClick",
       base::Bind(&NewTabPageHandler::HandleLogTimeToClick,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("getShouldShowApps",
-      base::Bind(&NewTabPageHandler::HandleGetShouldShowApps,
                  base::Unretained(this)));
 }
 
@@ -172,22 +169,14 @@ void NewTabPageHandler::HandleLogTimeToClick(const ListValue* args) {
   }
 }
 
-void NewTabPageHandler::HandleGetShouldShowApps(const ListValue* args) {
-  apps::GetIsAppLauncherEnabled(
-      base::Bind(&NewTabPageHandler::GotIsAppLauncherEnabled,
-                 AsWeakPtr()));
-}
-
-void NewTabPageHandler::GotIsAppLauncherEnabled(bool is_enabled) {
-  base::FundamentalValue should_show_apps(!is_enabled);
-  web_ui()->CallJavascriptFunction("ntp.gotShouldShowApps", should_show_apps);
-}
-
 // static
-void NewTabPageHandler::RegisterUserPrefs(PrefRegistrySyncable* registry) {
+void NewTabPageHandler::RegisterUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
   // TODO(estade): should be syncable.
-  registry->RegisterIntegerPref(prefs::kNtpShownPage, APPS_PAGE_ID,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterIntegerPref(
+      prefs::kNtpShownPage,
+      APPS_PAGE_ID,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 // static

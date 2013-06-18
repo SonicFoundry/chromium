@@ -51,6 +51,7 @@
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
+#include "content/public/common/sandboxed_process_launcher_delegate.h"
 #include "webkit/plugins/npapi/plugin_constants_win.h"
 #include "webkit/plugins/npapi/webplugin_delegate_impl.h"
 #endif
@@ -73,6 +74,21 @@ void PluginProcessHost::OnPluginWindowDestroyed(HWND window, HWND parent) {
 void PluginProcessHost::AddWindow(HWND window) {
   plugin_parent_windows_set_.insert(window);
 }
+
+// NOTE: changes to this class need to be reviewed by the security team.
+class PluginSandboxedProcessLauncherDelegate
+    : public SandboxedProcessLauncherDelegate {
+ public:
+  PluginSandboxedProcessLauncherDelegate() {}
+  virtual ~PluginSandboxedProcessLauncherDelegate() {}
+
+  virtual void ShouldSandbox(bool* in_sandbox) OVERRIDE {
+    *in_sandbox = false;
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(PluginSandboxedProcessLauncherDelegate);
+};
 
 #endif  // defined(OS_WIN)
 
@@ -105,32 +121,22 @@ PluginProcessHost::~PluginProcessHost() {
   std::set<HWND>::iterator window_index;
   for (window_index = plugin_parent_windows_set_.begin();
        window_index != plugin_parent_windows_set_.end();
-       window_index++) {
+       ++window_index) {
     PostMessage(*window_index, WM_CLOSE, 0, 0);
   }
 #elif defined(OS_MACOSX)
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   // If the plugin process crashed but had fullscreen windows open at the time,
   // make sure that the menu bar is visible.
-  std::set<uint32>::iterator window_index;
-  for (window_index = plugin_fullscreen_windows_set_.begin();
-       window_index != plugin_fullscreen_windows_set_.end();
-       window_index++) {
-    if (BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-      base::mac::ReleaseFullScreen(base::mac::kFullScreenModeHideAll);
-    } else {
-      BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                              base::Bind(base::mac::ReleaseFullScreen,
-                                         base::mac::kFullScreenModeHideAll));
-    }
+  for (size_t i = 0; i < plugin_fullscreen_windows_set_.size(); ++i) {
+    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                            base::Bind(base::mac::ReleaseFullScreen,
+                                       base::mac::kFullScreenModeHideAll));
   }
   // If the plugin hid the cursor, reset that.
   if (!plugin_cursor_visible_) {
-    if (BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-      base::mac::SetCursorVisibility(true);
-    } else {
-      BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                              base::Bind(base::mac::SetCursorVisibility, true));
-    }
+    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                            base::Bind(base::mac::SetCursorVisibility, true));
   }
 #endif
   // Cancel all pending and sent requests.
@@ -182,7 +188,6 @@ bool PluginProcessHost::Init(const webkit::WebPluginInfo& info) {
   static const char* const kSwitchNames[] = {
     switches::kDisableBreakpad,
 #if defined(OS_MACOSX)
-    switches::kDisableCompositedCoreAnimationPlugins,
     switches::kDisableCoreAnimationPlugins,
     switches::kEnableSandboxLogging,
 #endif
@@ -238,7 +243,7 @@ bool PluginProcessHost::Init(const webkit::WebPluginInfo& info) {
 
   process_->Launch(
 #if defined(OS_WIN)
-      base::FilePath(),
+      new PluginSandboxedProcessLauncherDelegate,
 #elif defined(OS_POSIX)
       false,
       env,

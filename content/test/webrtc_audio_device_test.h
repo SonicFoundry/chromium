@@ -132,9 +132,8 @@ class WebRTCAudioDeviceTest : public ::testing::Test, public IPC::Listener {
   void CreateChannel(const char* name);
   void DestroyChannel();
 
-  void OnGetAudioHardwareConfig(int* output_buffer_size,
-                                int* output_sample_rate, int* input_sample_rate,
-                                media::ChannelLayout* input_channel_layout);
+  void OnGetAudioHardwareConfig(media::AudioParameters* input_params,
+                                media::AudioParameters* output_params);
 
   // IPC::Listener implementation.
   virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
@@ -152,7 +151,7 @@ class WebRTCAudioDeviceTest : public ::testing::Test, public IPC::Listener {
   std::string GetTestDataPath(const base::FilePath::StringType& file_name);
 
   scoped_ptr<ReplaceContentClientRenderer> saved_content_renderer_;
-  MessageLoopForUI message_loop_;
+  base::MessageLoopForUI message_loop_;
   ContentRendererClient content_renderer_client_;
   RenderThreadImpl* render_thread_;  // Owned by mock_process_.
   scoped_ptr<WebRTCMockRenderProcess> mock_process_;

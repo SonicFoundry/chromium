@@ -22,9 +22,9 @@
 #include "jingle/notifier/base/notification_method.h"
 #include "jingle/notifier/base/notifier_options.h"
 #include "net/base/host_port_pair.h"
-#include "net/base/host_resolver.h"
 #include "net/base/network_change_notifier.h"
-#include "net/base/transport_security_state.h"
+#include "net/dns/host_resolver.h"
+#include "net/http/transport_security_state.h"
 #include "net/url_request/url_request_test_util.h"
 #include "sync/internal_api/public/base/model_type.h"
 #include "sync/internal_api/public/base_node.h"
@@ -88,7 +88,7 @@ class MyTestURLRequestContextGetter : public net::TestURLRequestContextGetter {
   virtual net::TestURLRequestContext* GetURLRequestContext() OVERRIDE {
     // Construct |context_| lazily so it gets constructed on the right
     // thread (the IO thread).
-    if (!context_.get())
+    if (!context_)
       context_.reset(new MyTestURLRequestContext());
     return context_.get();
   }
@@ -311,7 +311,9 @@ int SyncClientMain(int argc, char* argv[]) {
   // TODO(akalin): Replace this with just the context getter once
   // HttpPostProviderFactory is removed.
   scoped_ptr<HttpPostProviderFactory> post_factory(
-      new HttpBridgeFactory(context_getter, kUserAgent));
+      new HttpBridgeFactory(context_getter,
+                            kUserAgent,
+                            NetworkTimeUpdateCallback()));
   // Used only when committing bookmarks, so it's okay to leave this
   // as NULL.
   ExtensionsActivityMonitor* extensions_activity_monitor = NULL;
@@ -338,6 +340,7 @@ int SyncClientMain(int argc, char* argv[]) {
                     credentials,
                     scoped_ptr<Invalidator>(
                         invalidator_factory.CreateInvalidator()),
+                    invalidator_factory.GetInvalidatorClientId(),
                     kRestoredKeyForBootstrapping,
                     kRestoredKeystoreKeyForBootstrapping,
                     scoped_ptr<InternalComponentsFactory>(

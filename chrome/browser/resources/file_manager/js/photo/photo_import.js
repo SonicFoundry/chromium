@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+'use strict';
+
 document.addEventListener('DOMContentLoaded', function() {
   PhotoImport.load();
 });
@@ -23,6 +25,7 @@ function PhotoImport(dom, filesystem, params) {
   this.mediaFilesList_ = null;
   this.destination_ = null;
   this.myPhotosDirectory_ = null;
+  this.parentWindowId_ = params.parentWindowId;
 
   this.initDom_();
   this.initMyPhotos_();
@@ -51,8 +54,10 @@ PhotoImport.load = function(opt_filesystem, opt_params) {
   ImageUtil.metrics = metrics;
 
   var hash = location.hash ? location.hash.substr(1) : '';
+  var query = location.search ? location.search.substr(1) : '';
   var params = opt_params || {};
   if (!params.source) params.source = hash;
+  if (!params.parentWindowId && query) params.parentWindowId = query;
   if (!params.metadataCache) params.metadataCache = MetadataCache.createFull();
 
   function onFilesystem(filesystem) {
@@ -100,6 +105,10 @@ PhotoImport.prototype.initDom_ = function() {
       loadTimeData.getString('PHOTO_IMPORT_IMPORT_BUTTON');
   this.importButton_.addEventListener('click', this.onImportClick_.bind(this));
 
+  this.cancelButton_ = this.dom_.querySelector('button.cancel');
+  this.cancelButton_.textContent = str('CANCEL_LABEL');
+  this.cancelButton_.addEventListener('click', this.onCancelClick_.bind(this));
+
   this.grid_ = this.dom_.querySelector('grid');
   cr.ui.Grid.decorate(this.grid_);
   this.grid_.itemConstructor = GridItem.bind(null, this);
@@ -111,7 +120,7 @@ PhotoImport.prototype.initDom_ = function() {
   this.onSelectionChanged_();
 
   this.importingDialog_ = new ImportingDialog(this.dom_, this.copyManager_,
-      this.metadataCache_);
+      this.metadataCache_, this.parentWindowId_);
 
   var dialogs = cr.ui.dialogs;
   dialogs.BaseDialog.OK_LABEL = str('OK_LABEL');
@@ -370,10 +379,12 @@ PhotoImport.prototype.onSelectAllNone_ = function() {
  * @private
  */
 PhotoImport.prototype.onError_ = function(message) {
-  this.alert_.show(message,
-                   function() {
-                     window.close();
-                   });
+  this.importingDialog_.hide(function() {
+    this.alert_.show(message,
+                     function() {
+                       window.close();
+                     });
+  }.bind(this));
 };
 
 /**
@@ -424,16 +435,26 @@ PhotoImport.prototype.onSelectionChanged_ = function() {
  * @private
  */
 PhotoImport.prototype.onImportClick_ = function(event) {
-  this.createDestination_(function() {
-    var entries = this.getSelectedItems_();
-    var move = this.dom_.querySelector('#delete-after-checkbox').checked;
+  var entries = this.getSelectedItems_();
+  var move = this.dom_.querySelector('#delete-after-checkbox').checked;
+  this.importingDialog_.show(entries, move);
 
+  this.createDestination_(function() {
     var percentage = Math.round(entries.length / this.fileList_.length * 100);
     metrics.recordMediumCount('PhotoImport.ImportCount', entries.length);
     metrics.recordSmallCount('PhotoImport.ImportPercentage', percentage);
 
-    this.importingDialog_.show(entries, this.destination_, move);
+    this.importingDialog_.start(this.destination_);
   }.bind(this));
+};
+
+/**
+ * Click event handler for the cancel button.
+ * @param {Event} event The event.
+ * @private
+ */
+PhotoImport.prototype.onCancelClick_ = function(event) {
+  window.close();
 };
 
 /**

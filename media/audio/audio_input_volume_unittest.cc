@@ -18,6 +18,24 @@
 
 namespace media {
 
+double GetVolumeAfterSetVolumeOnLinux(AudioInputStream* ais,
+                                      double target_volume) {
+  // SetVolume() is asynchronous on Linux, we need to keep trying until
+  // the SetVolume() operation is done.
+  static const int kTimesToRun = 10;
+  double volume = 0.0;
+  for (int i = 0; i < kTimesToRun; ++i) {
+    volume = ais->GetVolume();
+    if (volume == target_volume)
+      break;
+
+    // Sleep 100ms to wait for the operation.
+    base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(100));
+  }
+
+  return volume;
+}
+
 class AudioInputVolumeTest : public ::testing::Test {
  protected:
   AudioInputVolumeTest()
@@ -36,7 +54,7 @@ class AudioInputVolumeTest : public ::testing::Test {
     if (!CoreAudioUtil::IsSupported())
       return false;
 #endif
-    if (!audio_manager_.get())
+    if (!audio_manager_)
       return false;
 
     return audio_manager_->HasAudioInputDevices();
@@ -51,29 +69,10 @@ class AudioInputVolumeTest : public ::testing::Test {
   }
 
   AudioInputStream* CreateAndOpenStream(const std::string& device_id) {
-    AudioParameters::Format format = AudioParameters::AUDIO_PCM_LOW_LATENCY;
-    ChannelLayout channel_layout =
-        media::GetAudioInputHardwareChannelLayout(device_id);
-    int bits_per_sample = 16;
-    int sample_rate =
-        static_cast<int>(media::GetAudioInputHardwareSampleRate(device_id));
-    int samples_per_packet = 0;
-#if defined(OS_MACOSX)
-    samples_per_packet = (sample_rate / 100);
-#elif defined(OS_LINUX) || defined(OS_OPENBSD)
-    samples_per_packet = (sample_rate / 100);
-#elif defined(OS_WIN)
-    if (sample_rate == 44100)
-      samples_per_packet = 448;
-    else
-      samples_per_packet = (sample_rate / 100);
-#else
-#error Unsupported platform
-#endif
+    const AudioParameters& params =
+        audio_manager_->GetInputStreamParameters(device_id);
     AudioInputStream* ais = audio_manager_->MakeAudioInputStream(
-        AudioParameters(format, channel_layout, sample_rate, bits_per_sample,
-                        samples_per_packet),
-        device_id);
+        params, device_id);
     EXPECT_TRUE(NULL != ais);
 
 #if defined(OS_LINUX) || defined(OS_OPENBSD)
@@ -147,14 +146,22 @@ TEST_F(AudioInputVolumeTest, InputVolumeTest) {
     // Set the volume to the mininum level (=0).
     double new_volume = 0.0;
     ais->SetVolume(new_volume);
+#if defined(OS_LINUX)
+    current_volume = GetVolumeAfterSetVolumeOnLinux(ais, new_volume);
+#else
     current_volume = ais->GetVolume();
+#endif
     EXPECT_EQ(new_volume, current_volume);
 
     // Set the volume to the mid level (50% of max).
     // Verify that the absolute error is small enough.
     new_volume = max_volume / 2;
     ais->SetVolume(new_volume);
+#if defined(OS_LINUX)
+    current_volume = GetVolumeAfterSetVolumeOnLinux(ais, new_volume);
+#else
     current_volume = ais->GetVolume();
+#endif
     EXPECT_LT(current_volume, max_volume);
     EXPECT_GT(current_volume, 0);
     EXPECT_NEAR(current_volume, new_volume, 0.25 * max_volume);

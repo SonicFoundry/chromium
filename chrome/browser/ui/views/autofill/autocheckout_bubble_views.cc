@@ -6,7 +6,9 @@
 
 #include "chrome/browser/ui/autofill/autocheckout_bubble.h"
 #include "chrome/browser/ui/autofill/autocheckout_bubble_controller.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/rect.h"
+#include "ui/views/bubble/bubble_border.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/grid_layout.h"
@@ -16,16 +18,26 @@
 namespace autofill {
 
 AutocheckoutBubbleViews::AutocheckoutBubbleViews(
-    scoped_ptr<AutocheckoutBubbleController> controller)
-  : views::BubbleDelegateView(),
+    scoped_ptr<AutocheckoutBubbleController> controller,
+    views::View* anchor_view)
+  : views::BubbleDelegateView(anchor_view, views::BubbleBorder::TOP_LEFT),
     controller_(controller.Pass()),
     ok_button_(NULL),
     cancel_button_(NULL) {
+  set_parent_window(controller_->native_window());
   controller_->BubbleCreated();
 }
 
 AutocheckoutBubbleViews::~AutocheckoutBubbleViews() {
   controller_->BubbleDestroyed();
+}
+
+void AutocheckoutBubbleViews::ShowBubble() {
+  StartFade(true);
+}
+
+void AutocheckoutBubbleViews::HideBubble() {
+  StartFade(false);
 }
 
 void AutocheckoutBubbleViews::Init() {
@@ -35,11 +47,11 @@ void AutocheckoutBubbleViews::Init() {
   // Add the message label to the first row.
   views::ColumnSet* cs = layout->AddColumnSet(1);
   views::Label* message_label = new views::Label(
-      AutocheckoutBubbleController::PromptText());
+      l10n_util::GetStringUTF16(controller_->PromptTextID()));
 
   // Maximum width for the message field in pixels. The message text will be
   // wrapped when its width is wider than this.
-  const int kMaxMessageWidth = 400;
+  const int kMaxMessageWidth = 300;
 
   int message_width =
       std::min(kMaxMessageWidth, message_label->GetPreferredSize().width());
@@ -75,17 +87,30 @@ void AutocheckoutBubbleViews::Init() {
                 0);
   layout->StartRow(0, 2);
   ok_button_ =
-      new views::LabelButton(this, AutocheckoutBubbleController::AcceptText());
+      new views::LabelButton(
+          this,
+          l10n_util::GetStringUTF16(
+              AutocheckoutBubbleController::AcceptTextID()));
   ok_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
   layout->AddView(ok_button_);
   cancel_button_ =
-      new views::LabelButton(this, AutocheckoutBubbleController::CancelText());
+      new views::LabelButton(
+          this,
+          l10n_util::GetStringUTF16(
+              AutocheckoutBubbleController::CancelTextID()));
   cancel_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
   layout->AddView(cancel_button_);
 }
 
 gfx::Rect AutocheckoutBubbleViews::GetAnchorRect() {
   return controller_->anchor_rect();
+}
+
+void AutocheckoutBubbleViews::OnWidgetBoundsChanged(
+    views::Widget* widget,
+    const gfx::Rect& new_bounds) {
+  if (anchor_widget() == widget)
+    HideBubble();
 }
 
 void AutocheckoutBubbleViews::ButtonPressed(views::Button* sender,
@@ -100,17 +125,18 @@ void AutocheckoutBubbleViews::ButtonPressed(views::Button* sender,
   GetWidget()->Close();
 }
 
-void ShowAutocheckoutBubble(const gfx::RectF& anchor,
-                            const gfx::NativeView& native_view,
-                            const base::Closure& callback) {
+// static
+base::WeakPtr<AutocheckoutBubble> AutocheckoutBubble::Create(
+    scoped_ptr<AutocheckoutBubbleController> controller) {
+  views::Widget* widget = views::Widget::GetTopLevelWidgetForNativeView(
+      controller->native_window());
+  // The bubble owns itself.
   AutocheckoutBubbleViews* delegate =
-      new AutocheckoutBubbleViews(
-          scoped_ptr<AutocheckoutBubbleController>(
-              new AutocheckoutBubbleController(anchor, callback)));
-  delegate->set_parent_window(native_view);
+      new AutocheckoutBubbleViews(controller.Pass(),
+                                  widget ? widget->GetContentsView() : NULL);
   views::BubbleDelegateView::CreateBubble(delegate);
   delegate->SetAlignment(views::BubbleBorder::ALIGN_EDGE_TO_ANCHOR_EDGE);
-  delegate->StartFade(true);
+  return delegate->AsWeakPtr();
 }
 
 }  // namespace autofill

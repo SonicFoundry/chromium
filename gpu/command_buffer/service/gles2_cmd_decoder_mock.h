@@ -25,6 +25,7 @@ class StreamTextureManager;
 namespace gles2 {
 
 class ContextGroup;
+class ErrorState;
 class QueryManager;
 
 class MockGLES2Decoder : public GLES2Decoder {
@@ -52,6 +53,8 @@ class MockGLES2Decoder : public GLES2Decoder {
   MOCK_METHOD0(GetGLContext, gfx::GLContext*());
   MOCK_METHOD0(GetContextGroup, ContextGroup*());
   MOCK_METHOD0(ProcessPendingQueries, bool());
+  MOCK_METHOD0(HasMoreIdleWork, bool());
+  MOCK_METHOD0(PerformIdleWork, void());
   MOCK_CONST_METHOD0(RestoreState, void());
   MOCK_CONST_METHOD0(RestoreActiveTexture, void());
   MOCK_CONST_METHOD1(RestoreAttribute, void(unsigned index));
@@ -87,8 +90,11 @@ class MockGLES2Decoder : public GLES2Decoder {
       int width,
       int height,
       bool is_texture_immutable));
-  MOCK_METHOD0(GetGLError,  uint32());
-  MOCK_METHOD1(SetMsgCallback, void(const MsgCallback& callback));
+  MOCK_METHOD0(GetErrorState, ErrorState *());
+
+  MOCK_METHOD0(GetLogger, Logger*());
+  MOCK_METHOD1(SetShaderCacheCallback,
+               void(const ShaderCacheCallback& callback));
   MOCK_METHOD1(SetWaitSyncPointCallback,
                void(const WaitSyncPointCallback& callback));
   MOCK_METHOD0(GetTextureUploadCount, uint32());

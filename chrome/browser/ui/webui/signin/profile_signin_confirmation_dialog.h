@@ -8,7 +8,10 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/memory/weak_ptr.h"
 #include "base/string16.h"
+#include "chrome/browser/common/cancelable_request.h"
+#include "chrome/browser/history/history_types.h"
 #include "chrome/browser/ui/webui/constrained_web_dialog_ui.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/web_dialogs/web_dialog_delegate.h"
@@ -41,6 +44,11 @@ class ProfileSigninConfirmationDialog : public ui::WebDialogDelegate {
       const base::Closure& continue_signin);
   virtual ~ProfileSigninConfirmationDialog();
 
+  // Shows the dialog and releases ownership of this object. It will
+  // delete itself when the dialog is closed. If |prompt_for_new_profile|
+  // is true, the dialog will offer to create a new profile before signin.
+  void Show(bool prompt_for_new_profile);
+
   // WebDialogDelegate implementation.
   virtual ui::ModalType GetDialogModalType() const OVERRIDE;
   virtual string16 GetDialogTitle() const OVERRIDE;
@@ -60,14 +68,22 @@ class ProfileSigninConfirmationDialog : public ui::WebDialogDelegate {
   // The GAIA username being signed in.
   std::string username_;
 
+  // Whether to show the "Create a new profile" button.
+  bool prompt_for_new_profile_;
+
   // Dialog button callbacks.
   base::Closure cancel_signin_;
   base::Closure signin_with_new_profile_;
   base::Closure continue_signin_;
 
+  // Weak pointer to the profile being signed-in.
+  Profile* profile_;
+
   // Cleanup bookkeeping.  Labeled mutable to get around inherited const
   // label on GetWebUIMessageHandlers.
   mutable bool closed_by_handler_;
+
+  base::WeakPtrFactory<ProfileSigninConfirmationDialog> weak_pointer_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ProfileSigninConfirmationDialog);
 };

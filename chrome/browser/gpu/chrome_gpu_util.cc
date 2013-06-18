@@ -5,6 +5,9 @@
 #include "chrome/browser/gpu/chrome_gpu_util.h"
 
 #include "base/command_line.h"
+#if defined(OS_MACOSX)
+#include "base/mac/mac_util.h"
+#endif
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram.h"
 #include "base/version.h"
@@ -23,67 +26,6 @@
 using content::GpuDataManager;
 
 namespace gpu_util {
-
-// The BrowserMonitor class is used to track the number of currently open
-// browser windows, so that the gpu can be notified when they are created or
-// destroyed. We only count tabbed windows for this purpose.
-
-// There's no BrowserList on Android/
-#if !defined(OS_ANDROID)
-class BrowserMonitor : public chrome::BrowserListObserver {
- public:
-  static BrowserMonitor* GetInstance() {
-    static BrowserMonitor* instance = NULL;
-    if (!instance)
-      instance = new BrowserMonitor;
-    return instance;
-  }
-
-  void Install() {
-    if (!installed_) {
-      BrowserList::AddObserver(this);
-      installed_ = true;
-    }
-  }
-
-  void Uninstall() {
-    if (installed_) {
-      BrowserList::RemoveObserver(this);
-      installed_ = false;
-    }
-  }
-
- private:
-  BrowserMonitor() : num_browsers_(0), installed_(false) {
-  }
-
-  virtual ~BrowserMonitor() {
-  }
-
-  // BrowserListObserver implementation.
-  virtual void OnBrowserAdded(Browser* browser) OVERRIDE {
-    if (browser->type() == Browser::TYPE_TABBED)
-      content::GpuDataManager::GetInstance()->SetWindowCount(++num_browsers_);
-  }
-
-  virtual void OnBrowserRemoved(Browser* browser) OVERRIDE {
-    if (browser->type() == Browser::TYPE_TABBED)
-      content::GpuDataManager::GetInstance()->SetWindowCount(--num_browsers_);
-  }
-
-  uint32 num_browsers_;
-  bool installed_;
-};
-
-void InstallBrowserMonitor() {
-  BrowserMonitor::GetInstance()->Install();
-}
-
-void UninstallBrowserMonitor() {
-  BrowserMonitor::GetInstance()->Uninstall();
-}
-
-#endif // !defined(OS_ANDROID)
 
 void DisableCompositingFieldTrial() {
   base::FieldTrial* trial =
@@ -108,6 +50,20 @@ bool ShouldRunCompositingFieldTrial() {
   // Don't run the trial on Windows XP.
   if (base::win::GetVersion() < base::win::VERSION_VISTA)
     return false;
+#endif
+
+#if defined(OS_MACOSX)
+  // Browser and content shell tests hang on 10.7 when the Apple software
+  // renderer is used. These tests ignore the blacklist (which disables
+  // compositing both on 10.7 and when the Apple software renderer is used)
+  // by specifying the kSkipGpuDataLoading switch, so disable forced
+  // compositing here based on the switch and OS version.
+  // http://crbug.com/230931
+  if (base::mac::IsOSLion() &&
+      CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kSkipGpuDataLoading)) {
+    return false;
+  }
 #endif
 
   // Don't activate the field trial if force-compositing-mode has been
@@ -157,7 +113,7 @@ void InitializeCompositingFieldTrial() {
   // http://crbug.com/140866 for linux
 
 #if defined(OS_WIN) || defined(OS_MACOSX)
-  // Enable threaded compositing on Windows.
+  // Enable threaded compositing on Windows and Mac.
   threaded_compositing_probability = kDivisor;
 #endif
 

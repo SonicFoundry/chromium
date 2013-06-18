@@ -11,16 +11,9 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/json/json_writer.h"
-#include "base/path_service.h"
 #include "base/prefs/pref_service.h"
 #include "base/stl_util.h"
-#include "base/string_util.h"
-#include "base/strings/string_number_conversions.h"
-#include "base/utf_string_conversions.h"
-#include "base/values.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/media_galleries/media_file_system_context.h"
@@ -31,7 +24,6 @@
 #include "chrome/browser/storage_monitor/storage_monitor.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_set.h"
@@ -63,22 +55,9 @@ struct InvalidatedGalleriesInfo {
   std::set<MediaGalleryPrefId> pref_ids;
 };
 
-#if defined(SUPPORT_MTP_DEVICE_FILESYSTEM)
-// Returns true if the media transfer protocol (MTP) device operations are
-// allowed for this platform.
-// TODO(kmadhusu): Remove this function after fixing crbug.com/154835.
-bool IsMTPDeviceMediaOperationsEnabled() {
-#if defined(OS_WIN)
-  return CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kEnableMediaTransferProtocolDeviceOperations);
-#endif
-  return true;
-}
-#endif
-
 }  // namespace
 
-MediaFileSystemInfo::MediaFileSystemInfo(const std::string& fs_name,
+MediaFileSystemInfo::MediaFileSystemInfo(const string16& fs_name,
                                          const base::FilePath& fs_path,
                                          const std::string& filesystem_id,
                                          MediaGalleryPrefId pref_id,
@@ -274,7 +253,6 @@ class ExtensionGalleriesHost
     }
   }
 
-  // TODO(kmadhusu): Clean up this code. http://crbug.com/140340.
   // Revoke the file system for |id| if this extension has created one for |id|.
   void RevokeGalleryByPrefId(MediaGalleryPrefId id) {
     PrefIdFsInfoMap::iterator gallery = pref_id_map_.find(id);
@@ -285,12 +263,10 @@ class ExtensionGalleriesHost
     pref_id_map_.erase(gallery);
 
 #if defined(SUPPORT_MTP_DEVICE_FILESYSTEM)
-    if (IsMTPDeviceMediaOperationsEnabled()) {
-      MediaDeviceEntryReferencesMap::iterator mtp_device_host =
-          media_device_map_references_.find(id);
-      if (mtp_device_host != media_device_map_references_.end())
-        media_device_map_references_.erase(mtp_device_host);
-    }
+    MediaDeviceEntryReferencesMap::iterator mtp_device_host =
+        media_device_map_references_.find(id);
+    if (mtp_device_host != media_device_map_references_.end())
+      media_device_map_references_.erase(mtp_device_host);
 #endif
 
     if (pref_id_map_.empty()) {
@@ -361,9 +337,6 @@ class ExtensionGalleriesHost
             device_id, path);
       } else {
 #if defined(SUPPORT_MTP_DEVICE_FILESYSTEM)
-        if (!IsMTPDeviceMediaOperationsEnabled())
-          continue;
-
         scoped_refptr<ScopedMTPDeviceMapEntry> mtp_device_host;
         fsid = file_system_context_->RegisterFileSystemForMTPDevice(
             device_id, path, &mtp_device_host);
@@ -377,7 +350,7 @@ class ExtensionGalleriesHost
       DCHECK(!fsid.empty());
 
       MediaFileSystemInfo new_entry(
-          MakeJSONFileSystemName(gallery_info.display_name, pref_id, device_id),
+          gallery_info.display_name,
           path,
           fsid,
           pref_id,
@@ -409,46 +382,6 @@ class ExtensionGalleriesHost
       return std::string();
 
     return monitor->GetTransientIdForDeviceId(device_id);
-  }
-
-  // This code is deprecated and should be removed. See http://crbug.com/170138
-  // Make a JSON string out of |name|, |pref_id| and |device_id|. The IDs makes
-  // the combined name unique. The JSON string should not contain any slashes.
-  std::string MakeJSONFileSystemName(const string16& name,
-                                     const MediaGalleryPrefId& pref_id,
-                                     const std::string& device_id) {
-    string16 sanitized_name;
-    string16 separators =
-#if defined(FILE_PATH_USES_WIN_SEPARATORS)
-        base::FilePath::kSeparators
-#else
-        ASCIIToUTF16(base::FilePath::kSeparators)
-#endif
-        ;  // NOLINT
-    ReplaceChars(name, separators.c_str(), ASCIIToUTF16("_"), &sanitized_name);
-
-    base::DictionaryValue dict_value;
-    dict_value.SetStringWithoutPathExpansion(
-        MediaFileSystemRegistry::kNameKey, sanitized_name);
-
-    // This should have been a StringValue, but it's a bit late to change it.
-    dict_value.SetIntegerWithoutPathExpansion(
-        MediaFileSystemRegistry::kGalleryIdKey, pref_id);
-
-    // |device_id| can be empty, in which case, just omit it.
-    std::string transient_device_id =
-        GetTransientIdForRemovableDeviceId(device_id);
-    if (!transient_device_id.empty()) {
-      dict_value.SetStringWithoutPathExpansion(
-          MediaFileSystemRegistry::kDeviceIdKey, transient_device_id);
-    }
-    dict_value.SetStringWithoutPathExpansion(
-        "DEPRECATED",
-        "This JSON string is deprecated, use getMediaFileSystemMetadata.");
-
-    std::string json_string;
-    base::JSONWriter::Write(&dict_value, &json_string);
-    return json_string;
   }
 
   void CleanUp() {
@@ -493,10 +426,6 @@ class ExtensionGalleriesHost
 /******************
  * Public methods
  ******************/
-
-const char MediaFileSystemRegistry::kDeviceIdKey[] = "deviceId";
-const char MediaFileSystemRegistry::kGalleryIdKey[] = "galleryId";
-const char MediaFileSystemRegistry::kNameKey[] = "name";
 
 void MediaFileSystemRegistry::GetMediaFileSystemsForExtension(
     const content::RenderViewHost* rvh,
@@ -556,8 +485,7 @@ MediaGalleriesPreferences* MediaFileSystemRegistry::GetPreferences(
   StorageMonitor* monitor = StorageMonitor::GetInstance();
   if (!monitor)
     return preferences;
-  std::vector<StorageMonitor::StorageInfo> existing_devices =
-      monitor->GetAttachedStorage();
+  std::vector<StorageInfo> existing_devices = monitor->GetAttachedStorage();
   for (size_t i = 0; i < existing_devices.size(); i++) {
     if (!MediaStorageUtil::IsMediaDevice(existing_devices[i].device_id))
       continue;
@@ -570,7 +498,7 @@ MediaGalleriesPreferences* MediaFileSystemRegistry::GetPreferences(
 }
 
 void MediaFileSystemRegistry::OnRemovableStorageDetached(
-    const StorageMonitor::StorageInfo& info) {
+    const StorageInfo& info) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
   // Since revoking a gallery in the ExtensionGalleriesHost may cause it

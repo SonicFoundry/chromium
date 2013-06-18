@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+'use strict';
+
 /**
  * FileGrid constructor.
  *
@@ -29,6 +31,9 @@ FileGrid.decorate = function(self, metadataCache) {
   cr.ui.Grid.decorate(self);
   self.__proto__ = FileGrid.prototype;
   self.metadataCache_ = metadataCache;
+
+  if (util.platform.newUI())
+    ScrollBar.createVertical(self.parentNode, self);
 
   self.itemConstructor = function(entry) {
     var item = self.ownerDocument.createElement('LI');
@@ -121,12 +126,22 @@ FileGrid.decorateThumbnailBox = function(
     metadataTypes += '|media';
   }
 
+  var useEmbedded = util.platform.newUI() ?
+      ThumbnailLoader.UseEmbedded.NO_EMBEDDED :
+      ThumbnailLoader.UseEmbedded.USE_EMBEDDED;
+
   metadataCache.get(imageUrl, metadataTypes,
       function(metadata) {
         new ThumbnailLoader(imageUrl,
                             ThumbnailLoader.LoaderType.IMAGE,
-                            metadata).
-            load(box, fillMode, opt_imageLoadCallback, onImageLoadError);
+                            metadata,
+                            undefined,
+                            useEmbedded).
+            load(box,
+                 fillMode,
+                 ThumbnailLoader.OptimizationMode.DISCARD_DETACHED,
+                 opt_imageLoadCallback,
+                 onImageLoadError);
       });
 };
 

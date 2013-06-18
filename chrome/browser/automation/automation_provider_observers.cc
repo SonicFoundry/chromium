@@ -23,8 +23,6 @@
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/app/chrome_command_ids.h"
-#include "chrome/browser/api/infobars/confirm_infobar_delegate.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
 #include "chrome/browser/automation/automation_provider.h"
 #include "chrome/browser/automation/automation_provider_json.h"
 #include "chrome/browser/bookmarks/bookmark_model.h"
@@ -39,6 +37,8 @@
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/history/history_types.h"
 #include "chrome/browser/history/top_sites.h"
+#include "chrome/browser/infobars/confirm_infobar_delegate.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/metrics/metric_event_duration_details.h"
 #include "chrome/browser/notifications/balloon.h"
 #include "chrome/browser/notifications/balloon_collection.h"
@@ -71,7 +71,6 @@
 #include "chrome/common/content_settings_types.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/manifest.h"
-#include "chrome/common/view_type.h"
 #include "content/public/browser/dom_operation_notification_details.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/notification_service.h"
@@ -79,6 +78,7 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/process_type.h"
+#include "extensions/common/view_type.h"
 #include "googleurl/src/gurl.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/rect.h"
@@ -357,8 +357,8 @@ void NavigationNotificationObserver::ConditionMet(
             &dict);
       } else {
         AutomationJSONReply(automation_, reply_message_.release()).SendError(
-            StringPrintf("Navigation failed with error code=%d.",
-                         navigation_result));
+            base::StringPrintf("Navigation failed with error code=%d.",
+                               navigation_result));
       }
     } else {
       IPC::ParamTraits<int>::Write(
@@ -1239,7 +1239,7 @@ void InfoBarCountObserver::Observe(
 void InfoBarCountObserver::CheckCount() {
   InfoBarService* infobar_service =
       InfoBarService::FromWebContents(web_contents_);
-  if (infobar_service->GetInfoBarCount() != target_count_)
+  if (infobar_service->infobar_count() != target_count_)
     return;
 
   if (automation_) {
@@ -1349,7 +1349,7 @@ AutomationProviderDownloadModelChangedObserver(
     DownloadManager* download_manager)
     : provider_(provider->AsWeakPtr()),
       reply_message_(reply_message),
-      ALLOW_THIS_IN_INITIALIZER_LIST(notifier_(download_manager, this)) {
+      notifier_(download_manager, this) {
 }
 
 AutomationProviderDownloadModelChangedObserver::
@@ -1881,7 +1881,7 @@ std::vector<DictionaryValue*>* GetAppInfoFromExtensions(
     // Only return information about extensions that are actually apps.
     if ((*ext)->is_app()) {
       DictionaryValue* app_info = new DictionaryValue();
-      AppLauncherHandler::CreateAppInfo(*ext, NULL, ext_service, app_info);
+      AppLauncherHandler::CreateAppInfo(*ext, ext_service, app_info);
       app_info->SetBoolean("is_component_extension",
           (*ext)->location() == extensions::Manifest::COMPONENT);
 
@@ -2558,8 +2558,10 @@ void ProcessInfoObserver::OnDetailsAvailable() {
       std::string process_type = "Unknown";
       // The following condition avoids a DCHECK in debug builds when the
       // process type passed to |GetTypeNameInEnglish| is unknown.
-      if (iterator->type != content::PROCESS_TYPE_UNKNOWN)
-        process_type = content::GetProcessTypeNameInEnglish(iterator->type);
+      if (iterator->process_type != content::PROCESS_TYPE_UNKNOWN) {
+        process_type =
+            content::GetProcessTypeNameInEnglish(iterator->process_type);
+      }
       proc_data->SetString("child_process_type", process_type);
 
       // Renderer type, if this is a renderer process.
@@ -2770,7 +2772,7 @@ void ExtensionPopupObserver::Observe(
   extensions::ExtensionHost* host =
       content::Details<extensions::ExtensionHost>(details).ptr();
   if (host->extension_id() == extension_id_ &&
-      host->extension_host_type() == chrome::VIEW_TYPE_EXTENSION_POPUP) {
+      host->extension_host_type() == extensions::VIEW_TYPE_EXTENSION_POPUP) {
     AutomationJSONReply(automation_, reply_message_.release())
         .SendSuccess(NULL);
     delete this;

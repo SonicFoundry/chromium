@@ -66,6 +66,20 @@ def RunBisectionScript(config, working_directory, path_to_file, path_to_goma):
          '--working_directory', working_directory,
          '--output_buildbot_annotations']
 
+  if config['repeat_count']:
+    cmd.extend(['-r', config['repeat_count']])
+
+  if config['truncate_percent']:
+    cmd.extend(['-t', config['truncate_percent']])
+
+  if config['max_time_minutes']:
+    cmd.extend(['--repeat_test_max_time', config['max_time_minutes']])
+
+  if os.name == 'nt':
+    cmd.extend(['--build_preference', 'ninja'])
+  else:
+    cmd.extend(['--build_preference', 'make'])
+
   goma_file = ''
   if path_to_goma:
     path_to_goma = os.path.abspath(path_to_goma)
@@ -80,11 +94,18 @@ def RunBisectionScript(config, working_directory, path_to_file, path_to_goma):
 
     cmd.append('--use_goma')
 
+    # Sometimes goma is lingering around if something went bad on a previous
+    # run. Stop it before starting a new process. Can ignore the return code
+    # since it will return an error if it wasn't running.
+    subprocess.call([goma_file, 'stop'])
+
     return_code = subprocess.call([goma_file, 'start'])
     if return_code:
       print 'Error: goma failed to start.'
       print
       return return_code
+
+  cmd = [str(c) for c in cmd]
 
   return_code = subprocess.call(cmd)
 

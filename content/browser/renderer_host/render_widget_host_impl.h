@@ -10,17 +10,20 @@
 #include <map>
 #include <queue>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/observer_list.h"
 #include "base/process_util.h"
 #include "base/string16.h"
 #include "base/time.h"
 #include "base/timer.h"
 #include "build/build_config.h"
+#include "content/browser/renderer_host/smooth_scroll_gesture_controller.h"
 #include "content/common/view_message_enums.h"
 #include "content/port/common/input_event_ack_state.h"
 #include "content/public/browser/render_widget_host.h"
@@ -69,7 +72,7 @@ class MockRenderWidgetHost;
 class OverscrollController;
 class RenderWidgetHostDelegate;
 class RenderWidgetHostViewPort;
-class SmoothScrollGesture;
+class SmoothScrollGestureController;
 class TouchEventQueue;
 struct EditCommand;
 
@@ -91,6 +94,10 @@ class CONTENT_EXPORT RenderWidgetHostImpl : virtual public RenderWidgetHost,
   // RenderWidgetHost to a RenderWidgetHostImpl.  Internally, this
   // uses RenderWidgetHost::AsRenderWidgetHostImpl().
   static RenderWidgetHostImpl* From(RenderWidgetHost* rwh);
+
+  void set_hung_renderer_delay_ms(const base::TimeDelta& timeout) {
+    hung_renderer_delay_ms_ = timeout.InMilliseconds();
+  }
 
   // RenderWidgetHost implementation.
   virtual void Undo() OVERRIDE;
@@ -146,6 +153,11 @@ class CONTENT_EXPORT RenderWidgetHostImpl : virtual public RenderWidgetHost,
   virtual void AddKeyboardListener(KeyboardListener* listener) OVERRIDE;
   virtual void RemoveKeyboardListener(KeyboardListener* listener) OVERRIDE;
   virtual void GetWebScreenInfo(WebKit::WebScreenInfo* result) OVERRIDE;
+  virtual void GetSnapshotFromRenderer(
+      const gfx::Rect& src_subrect,
+      const base::Callback<void(bool, const SkBitmap&)>& callback) OVERRIDE;
+
+  const NativeWebKeyboardEvent* GetLastKeyboardEvent() const;
 
   // Notification that the screen info has changed.
   void NotifyScreenInfoChanged();
@@ -186,6 +198,9 @@ class CONTENT_EXPORT RenderWidgetHostImpl : virtual public RenderWidgetHost,
 
   // Called to notify the RenderWidget that it has lost the mouse lock.
   virtual void LostMouseLock();
+
+  // Noifies the RenderWidget of the current mouse cursor visibility state.
+  void SendCursorVisibilityState(bool is_visible);
 
   // Tells us whether the page is rendered directly via the GPU process.
   bool is_accelerated_compositing_active() {
@@ -328,6 +343,11 @@ class CONTENT_EXPORT RenderWidgetHostImpl : virtual public RenderWidgetHost,
   void SetEditCommandsForNextKeyEvent(
       const std::vector<EditCommand>& commands);
 
+  // Gets the accessibility mode.
+  AccessibilityMode accessibility_mode() const {
+    return accessibility_mode_;
+  }
+
   // Send a message to the renderer process to change the accessibility mode.
   void SetAccessibilityMode(AccessibilityMode mode);
 
@@ -354,6 +374,13 @@ class CONTENT_EXPORT RenderWidgetHostImpl : virtual public RenderWidgetHost,
   // Relay a request from assistive technology to set text selection.
   void AccessibilitySetTextSelection(
       int acc_obj_id, int start_offset, int end_offset);
+
+  // Kill the renderer because we got a fatal accessibility error.
+  void FatalAccessibilityTreeError();
+
+#if defined(OS_WIN) && defined(USE_AURA)
+  gfx::NativeViewAccessible GetParentNativeViewAccessible() const;
+#endif
 
   // Executes the edit command on the RenderView.
   void ExecuteEditCommand(const std::string& command,
@@ -433,7 +460,7 @@ class CONTENT_EXPORT RenderWidgetHostImpl : virtual public RenderWidgetHost,
     return overscroll_controller_.get();
   }
 
-  int SyntheticScrollMessageInterval() const;
+  base::TimeDelta GetSyntheticScrollMessageInterval() const;
 
   // Sets whether the overscroll controller should be enabled for this page.
   void SetOverscrollControllerEnabled(bool enabled);
@@ -441,6 +468,10 @@ class CONTENT_EXPORT RenderWidgetHostImpl : virtual public RenderWidgetHost,
   // Suppreses future char events until a keydown. See
   // suppress_next_char_events_.
   void SuppressNextCharEvents();
+
+  // Indicates whether the renderer drives the RenderWidgetHosts's size or the
+  // other way around.
+  bool should_auto_resize() { return should_auto_resize_; }
 
  protected:
   virtual RenderWidgetHostImpl* AsRenderWidgetHostImpl() OVERRIDE;
@@ -560,14 +591,13 @@ class CONTENT_EXPORT RenderWidgetHostImpl : virtual public RenderWidgetHost,
                                          int32 route_id,
                                          const gfx::Size& size,
                                          int32 gpu_process_host_id);
-  void OnSwapCompositorFrame(const cc::CompositorFrame& frame);
+  bool OnSwapCompositorFrame(const IPC::Message& message);
   void OnUpdateRect(const ViewHostMsg_UpdateRect_Params& params);
   void OnUpdateIsDelayed();
   void OnInputEventAck(WebKit::WebInputEvent::Type event_type,
                        InputEventAckState ack_result);
   void OnBeginSmoothScroll(
-      int gesture_id,
-      const ViewHostMsg_BeginSmoothScroll_Params &params);
+      const ViewHostMsg_BeginSmoothScroll_Params& params);
   void OnSelectRangeAck();
   void OnMsgMoveCaretAck();
   virtual void OnFocus();
@@ -594,6 +624,7 @@ class CONTENT_EXPORT RenderWidgetHostImpl : virtual public RenderWidgetHost,
   void OnWindowlessPluginDummyWindowDestroyed(
       gfx::NativeViewId dummy_activation_window);
 #endif
+  void OnSnapshot(bool success, const SkBitmap& bitmap);
 
   // Called (either immediately or asynchronously) after we're done with our
   // BackingStore and can send an ACK to the renderer so it can paint onto it
@@ -647,9 +678,6 @@ class CONTENT_EXPORT RenderWidgetHostImpl : virtual public RenderWidgetHost,
   // which may get in recursive loops).
   void DelayedAutoResized();
 
-  // Called periodically to advance the active scroll gesture after being
-  // initiated by OnBeginSmoothScroll.
-  void TickActiveSmoothScrollGesture();
 
   // Our delegate, which wants to know mainly about keyboard events.
   // It will remain non-NULL until DetachDelegate() is called.
@@ -693,6 +721,10 @@ class CONTENT_EXPORT RenderWidgetHostImpl : virtual public RenderWidgetHost,
   // The size of the view's backing surface in non-DPI-adjusted pixels.
   gfx::Size physical_backing_size_;
 
+  // The height of the physical backing surface that is overdrawn opaquely in
+  // the browser, for example by an on-screen-keyboard (in DPI-adjusted pixels).
+  float overdraw_bottom_height_;
+
   // The size we last sent as requested size to the renderer. |current_size_|
   // is only updated once the resize message has been ack'd. This on the other
   // hand is updated when the resize message is sent. This is very similar to
@@ -712,7 +744,7 @@ class CONTENT_EXPORT RenderWidgetHostImpl : virtual public RenderWidgetHost,
   gfx::Rect last_window_screen_rect_;
 
   // True if a mouse move event was sent to the render view and we are waiting
-  // for a corresponding ViewHostMsg_HandleInputEvent_ACK message.
+  // for a corresponding InputHostMsg_HandleInputEvent_ACK message.
   bool mouse_move_pending_;
 
   // The next mouse move event to send (only non-null while mouse_move_pending_
@@ -735,6 +767,8 @@ class CONTENT_EXPORT RenderWidgetHostImpl : virtual public RenderWidgetHost,
   // would be queued) results in very slow scrolling.
   WheelEventQueue coalesced_mouse_wheel_events_;
 
+  AccessibilityMode accessibility_mode_;
+
   // (Similar to |mouse_move_pending_|.) True while waiting for SelectRange_ACK.
   bool select_range_pending_;
 
@@ -754,7 +788,7 @@ class CONTENT_EXPORT RenderWidgetHostImpl : virtual public RenderWidgetHost,
   base::TimeTicks input_event_start_time_;
 
   // Keyboard event listeners.
-  std::list<KeyboardListener*> keyboard_listeners_;
+  ObserverList<KeyboardListener> keyboard_listeners_;
 
   // If true, then we should repaint when restoring even if we have a
   // backingstore.  This flag is set to true if we receive a paint message
@@ -837,12 +871,7 @@ class CONTENT_EXPORT RenderWidgetHostImpl : virtual public RenderWidgetHost,
 
   base::WeakPtrFactory<RenderWidgetHostImpl> weak_factory_;
 
-  typedef std::map<int, scoped_refptr<SmoothScrollGesture> >
-      SmoothScrollGestureMap;
-  SmoothScrollGestureMap active_smooth_scroll_gestures_;
-  base::TimeTicks last_smooth_scroll_gestures_tick_time_;
-  bool tick_active_smooth_scroll_gestures_task_posted_;
-
+  SmoothScrollGestureController smooth_scroll_gesture_controller_;
   scoped_ptr<TouchEventQueue> touch_event_queue_;
   scoped_ptr<GestureEventFilter> gesture_event_filter_;
   scoped_ptr<OverscrollController> overscroll_controller_;
@@ -850,6 +879,9 @@ class CONTENT_EXPORT RenderWidgetHostImpl : virtual public RenderWidgetHost,
 #if defined(OS_WIN)
   std::list<HWND> dummy_windows_for_activation_;
 #endif
+
+  // List of callbacks for pending snapshot requests to the renderer.
+  std::queue<base::Callback<void(bool, const SkBitmap&)> > pending_snapshots_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderWidgetHostImpl);
 };

@@ -61,11 +61,11 @@
 #include "base/path_service.h"
 #include "chrome/browser/chromeos/cros/cros_library.h"
 #include "chrome/browser/chromeos/drive/drive.pb.h"
-#include "chrome/browser/chromeos/drive/drive_file_system_interface.h"
-#include "chrome/browser/chromeos/drive/drive_file_system_util.h"
 #include "chrome/browser/chromeos/drive/drive_system_service.h"
+#include "chrome/browser/chromeos/drive/file_system_interface.h"
+#include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
-#include "chrome/browser/chromeos/system/syslogs_provider.h"
+#include "chrome/browser/chromeos/system_logs/system_logs_fetcher.h"
 #include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
 #endif
@@ -106,8 +106,8 @@ std::string GetUserEmail() {
     return manager->GetLoggedInUser()->display_email();
 }
 
-bool ScreenshotDriveTimestampComp(const drive::DriveEntryProto& entry1,
-                                  const drive::DriveEntryProto& entry2) {
+bool ScreenshotDriveTimestampComp(const drive::ResourceEntry& entry1,
+                                  const drive::ResourceEntry& entry2) {
   return entry1.file_info().last_modified() >
       entry2.file_info().last_modified();
 }
@@ -115,18 +115,18 @@ bool ScreenshotDriveTimestampComp(const drive::DriveEntryProto& entry1,
 void ReadDirectoryCallback(size_t max_saved,
                            std::vector<std::string>* saved_screenshots,
                            base::Closure callback,
-                           drive::DriveFileError error,
+                           drive::FileError error,
                            bool hide_hosted_documents,
-                           scoped_ptr<drive::DriveEntryProtoVector> entries) {
-  if (error != drive::DRIVE_FILE_OK) {
+                           scoped_ptr<drive::ResourceEntryVector> entries) {
+  if (error != drive::FILE_ERROR_OK) {
     callback.Run();
     return;
   }
 
   size_t max_scan = std::min(kMaxNumScanFiles, entries->size());
-  std::vector<drive::DriveEntryProto> screenshot_entries;
+  std::vector<drive::ResourceEntry> screenshot_entries;
   for (size_t i = 0; i < max_scan; ++i) {
-    const drive::DriveEntryProto& entry = (*entries)[i];
+    const drive::ResourceEntry& entry = (*entries)[i];
     if (StartsWithASCII(entry.base_name(),
                         ScreenshotSource::kScreenshotPrefix, true) &&
         EndsWith(entry.base_name(),
@@ -141,7 +141,7 @@ void ReadDirectoryCallback(size_t max_saved,
                     screenshot_entries.end(),
                     ScreenshotDriveTimestampComp);
   for (size_t i = 0; i < sort_size; ++i) {
-    const drive::DriveEntryProto& entry = screenshot_entries[i];
+    const drive::ResourceEntry& entry = screenshot_entries[i];
     saved_screenshots->push_back(
         std::string(ScreenshotSource::kScreenshotUrlRoot) +
         std::string(ScreenshotSource::kScreenshotSaved) +
@@ -203,28 +203,29 @@ void ShowFeedbackPage(Browser* browser,
     return;
   }
 
-  std::vector<unsigned char>* last_screenshot_png =
-      FeedbackUtil::GetScreenshotPng();
-  last_screenshot_png->clear();
+  if (category_tag != kAppLauncherCategoryTag) {
+    std::vector<unsigned char>* last_screenshot_png =
+        FeedbackUtil::GetScreenshotPng();
+    last_screenshot_png->clear();
 
-  gfx::NativeWindow native_window;
-  gfx::Rect snapshot_bounds;
+    gfx::NativeWindow native_window;
+    gfx::Rect snapshot_bounds;
 
 #if defined(OS_CHROMEOS)
-  // For ChromeOS, don't use the browser window but the root window
-  // instead to grab the screenshot. We want everything on the screen, not
-  // just the current browser.
-  native_window = ash::Shell::GetPrimaryRootWindow();
-  snapshot_bounds = gfx::Rect(native_window->bounds());
+    // For ChromeOS, don't use the browser window but the root window
+    // instead to grab the screenshot. We want everything on the screen, not
+    // just the current browser.
+    native_window = ash::Shell::GetPrimaryRootWindow();
+    snapshot_bounds = gfx::Rect(native_window->bounds());
 #else
-  native_window = browser->window()->GetNativeWindow();
-  snapshot_bounds = gfx::Rect(browser->window()->GetBounds().size());
+    native_window = browser->window()->GetNativeWindow();
+    snapshot_bounds = gfx::Rect(browser->window()->GetBounds().size());
 #endif
-  bool success = chrome::GrabWindowSnapshotForUser(native_window,
-                                                   last_screenshot_png,
-                                                   snapshot_bounds);
-  FeedbackUtil::SetScreenshotSize(success ? snapshot_bounds : gfx::Rect());
-
+    bool success = chrome::GrabWindowSnapshotForUser(native_window,
+                                                     last_screenshot_png,
+                                                     snapshot_bounds);
+    FeedbackUtil::SetScreenshotSize(success ? snapshot_bounds : gfx::Rect());
+  }
   std::string feedback_url = std::string(chrome::kChromeUIFeedbackURL) + "?" +
       kSessionIDParameter + base::IntToString(browser->session_id().id()) +
       "&" + kTabIndexParameter +
@@ -266,6 +267,7 @@ class FeedbackHandler : public WebUIMessageHandler,
       const base::FilePath& filepath,
       std::vector<std::string>* saved_screenshots,
       size_t max_saved, base::Closure callback);
+  void StartSyslogsCollection();
 #endif
   void HandleSendReport(const ListValue* args);
   void HandleCancel(const ListValue* args);
@@ -274,19 +276,15 @@ class FeedbackHandler : public WebUIMessageHandler,
   void SetupScreenshotsSource();
   void ClobberScreenshotsSource();
 
-  void CancelFeedbackCollection();
   void CloseFeedbackTab();
 
   WebContents* tab_;
   ScreenshotSource* screenshot_source_;
 
-  FeedbackData* feedback_data_;
+  scoped_refptr<FeedbackData> feedback_data_;
   std::string target_tab_url_;
+  std::string category_tag_;
 #if defined(OS_CHROMEOS)
-  // Variables to track SyslogsProvider::RequestSyslogs.
-  CancelableTaskTracker::TaskId syslogs_task_id_;
-  CancelableTaskTracker syslogs_tracker_;
-
   // Timestamp of when the feedback request was initiated.
   std::string timestamp_;
 #endif
@@ -320,7 +318,7 @@ content::WebUIDataSource* CreateFeedbackUIHTMLSource(bool successful_init) {
                              IDS_FEEDBACK_CHOOSE_DIFFERENT_SCREENSHOT);
   source->AddLocalizedString("choose-original-screenshot",
                              IDS_FEEDBACK_CHOOSE_ORIGINAL_SCREENSHOT);
-  source->AddLocalizedString("attach-file-custom-label",
+  source->AddLocalizedString("attach-file-label",
                              IDS_FEEDBACK_ATTACH_FILE_LABEL);
   source->AddLocalizedString("attach-file-note",
                              IDS_FEEDBACK_ATTACH_FILE_NOTE);
@@ -341,6 +339,9 @@ content::WebUIDataSource* CreateFeedbackUIHTMLSource(bool successful_init) {
   source->AddLocalizedString("no-saved-screenshots",
                              IDS_FEEDBACK_NO_SAVED_SCREENSHOTS_HELP);
   source->AddLocalizedString("privacy-note", IDS_FEEDBACK_PRIVACY_NOTE);
+  source->AddLocalizedString("launcher-title", IDS_FEEDBACK_LAUNCHER_TITLE);
+  source->AddLocalizedString("launcher-description",
+                             IDS_FEEDBACK_LAUNCHER_DESCRIPTION_LABEL);
 
   source->SetJsonPath("strings.js");
   source->AddResourcePath("feedback.js", IDR_FEEDBACK_JS);
@@ -358,19 +359,11 @@ content::WebUIDataSource* CreateFeedbackUIHTMLSource(bool successful_init) {
 FeedbackHandler::FeedbackHandler(WebContents* tab)
     : tab_(tab),
       screenshot_source_(NULL),
-      feedback_data_(NULL)
-#if defined(OS_CHROMEOS)
-      , syslogs_task_id_(CancelableTaskTracker::kBadTaskId)
-#endif
-{}
+      feedback_data_(NULL) {
+  DCHECK(tab);
+}
 
 FeedbackHandler::~FeedbackHandler() {
-  // Just in case we didn't send off feedback_data_ to SendReport
-  if (feedback_data_) {
-    // If we're deleting the report object, cancel feedback collection first
-    CancelFeedbackCollection();
-    delete feedback_data_;
-  }
   // Make sure we don't leave any screenshot data around.
   FeedbackUtil::ClearScreenshotPng();
 }
@@ -416,32 +409,31 @@ bool FeedbackHandler::Init() {
       std::string query_str = *it;
       if (StartsWithASCII(query_str, std::string(kSessionIDParameter), true)) {
         ReplaceFirstSubstringAfterOffset(
-            &query_str, 0, kSessionIDParameter, "");
+            &query_str, 0, kSessionIDParameter, std::string());
         if (!base::StringToInt(query_str, &session_id))
           return false;
-        continue;
-      }
-      if (StartsWithASCII(*it, std::string(kTabIndexParameter), true)) {
+      } else if (StartsWithASCII(*it, std::string(kTabIndexParameter), true)) {
         ReplaceFirstSubstringAfterOffset(
-            &query_str, 0, kTabIndexParameter, "");
+            &query_str, 0, kTabIndexParameter, std::string());
         if (!base::StringToInt(query_str, &index))
           return false;
-        continue;
-      }
-      if (StartsWithASCII(*it, std::string(kCustomPageUrlParameter), true)) {
+      } else if (StartsWithASCII(*it, std::string(kCustomPageUrlParameter),
+                                 true)) {
         ReplaceFirstSubstringAfterOffset(
-            &query_str, 0, kCustomPageUrlParameter, "");
+            &query_str, 0, kCustomPageUrlParameter, std::string());
         custom_page_url = query_str;
-        continue;
-      }
+      } else if (StartsWithASCII(*it, std::string(kCategoryTagParameter),
+                                 true)) {
+        ReplaceFirstSubstringAfterOffset(
+            &query_str, 0, kCategoryTagParameter, std::string());
+        category_tag_ = query_str;
 #if defined(OS_CHROMEOS)
-      if (StartsWithASCII(*it, std::string(kTimestampParameter), true)) {
+      } else if (StartsWithASCII(*it, std::string(kTimestampParameter), true)) {
         ReplaceFirstSubstringAfterOffset(
             &query_str, 0, kTimestampParameter, "");
         timestamp_ = query_str;
-        continue;
-      }
 #endif
+      }
     }
   }
 
@@ -497,11 +489,13 @@ void FeedbackHandler::RegisterMessages() {
 }
 
 void FeedbackHandler::HandleGetDialogDefaults(const ListValue*) {
-  // Will delete itself when feedback_data_->SendReport() is called.
   feedback_data_ = new FeedbackData();
 
   // Send back values which the dialog js needs initially.
   DictionaryValue dialog_defaults;
+
+  if (category_tag_ == chrome::kAppLauncherCategoryTag)
+    dialog_defaults.SetBoolean("launcherFeedback", true);
 
   // Current url.
   dialog_defaults.SetString("currentUrl", target_tab_url_);
@@ -526,17 +520,7 @@ void FeedbackHandler::HandleGetDialogDefaults(const ListValue*) {
 
 
 #if defined(OS_CHROMEOS)
-  // Trigger the request for system information here.
-  chromeos::system::SyslogsProvider* provider =
-      chromeos::system::SyslogsProvider::GetInstance();
-  if (provider) {
-    syslogs_task_id_ = provider->RequestSyslogs(
-        true,  // don't compress.
-        chromeos::system::SyslogsProvider::SYSLOGS_FEEDBACK,
-        base::Bind(&FeedbackData::SyslogsComplete,
-                   base::Unretained(feedback_data_)),
-        &syslogs_tracker_);
-  }
+  feedback_data_->StartSyslogsCollection();
 
   // On ChromeOS if the user's email is blank, it means we don't
   // have a logged in user, hence don't use saved screenshots.
@@ -585,7 +569,7 @@ void FeedbackHandler::RefreshSavedScreenshotsCallback(
 void FeedbackHandler::GetMostRecentScreenshotsDrive(
     const base::FilePath& filepath, std::vector<std::string>* saved_screenshots,
     size_t max_saved, base::Closure callback) {
-  drive::DriveFileSystemInterface* file_system =
+  drive::FileSystemInterface* file_system =
       drive::DriveSystemServiceFactory::GetForProfile(
           Profile::FromWebUI(web_ui()))->file_system();
   file_system->ReadDirectoryByPath(
@@ -625,12 +609,8 @@ void FeedbackHandler::HandleSendReport(const ListValue* list_value) {
   (*i++)->GetAsString(&sys_info_checkbox);
   bool send_sys_info = (sys_info_checkbox == "true");
 
-  // If we aren't sending the sys_info, cancel the gathering of the syslogs.
-  if (!send_sys_info)
-    CancelFeedbackCollection();
-
   std::string attached_filename;
-  std::string* attached_filedata = NULL;
+  scoped_ptr<std::string> attached_filedata;
   // If we have an attached file, we'll still have more data in the list.
   if (i != list_value->end()) {
     (*i++)->GetAsString(&attached_filename);
@@ -640,10 +620,10 @@ void FeedbackHandler::HandleSendReport(const ListValue* list_value) {
       i++;
     } else {
       std::string encoded_filedata;
-      attached_filedata = new std::string;
+      attached_filedata.reset(new std::string);
       (*i++)->GetAsString(&encoded_filedata);
       if (!base::Base64Decode(
-          base::StringPiece(encoded_filedata), attached_filedata)) {
+          base::StringPiece(encoded_filedata), attached_filedata.get())) {
         LOG(ERROR) << "Unable to attach file: " << attached_filename;
         // Clear the filename so feedback_util doesn't try to attach the file.
         attached_filename = "";
@@ -652,40 +632,26 @@ void FeedbackHandler::HandleSendReport(const ListValue* list_value) {
   }
 #endif
 
-  // Update the data in feedback_data_ so it can be sent
-  feedback_data_->UpdateData(Profile::FromWebUI(web_ui())
-                             , std::string()
-                             , page_url
-                             , description
-                             , user_email
-                             , image_ptr
+  // TODO(rkc): We are not setting the category tag here since this
+  // functionality is broken on the feedback server side. Fix this once the
+  // issue is resolved.
+  feedback_data_->set_category_tag(category_tag);
+  feedback_data_->set_description(description);
+  feedback_data_->set_image(image_ptr);
+  feedback_data_->set_page_url(page_url);
+  feedback_data_->set_profile(Profile::FromWebUI(web_ui()));
+  feedback_data_->set_user_email(user_email);
 #if defined(OS_CHROMEOS)
-                             , send_sys_info
-                             , false  // sent_report
-                             , timestamp_
-                             , attached_filename
-                             , attached_filedata
+  feedback_data_->set_attached_filedata(attached_filedata.Pass());
+  feedback_data_->set_attached_filename(attached_filename);
+  feedback_data_->set_send_sys_info(send_sys_info);
+  feedback_data_->set_timestamp(timestamp_);
 #endif
-                             );
 
-#if defined(OS_CHROMEOS)
-  // If we don't require sys_info, or we have it, or we never requested it
-  // (because libcros failed to load), then send the report now.
-  // Otherwise, the report will get sent when we receive sys_info.
-  if (!send_sys_info || feedback_data_->sys_info() != NULL ||
-      syslogs_task_id_ == CancelableTaskTracker::kBadTaskId) {
-    feedback_data_->SendReport();
-  }
-#else
-  feedback_data_->SendReport();
-#endif
-  // Lose the pointer to the FeedbackData object; the object will delete itself
-  // from SendReport, whether we called it, or will be called by the log
-  // completion routine.
-  feedback_data_ = NULL;
+  // Signal the feedback object that the data from the feedback page has been
+  // filled - the object will manage sending of the actual report.
+  feedback_data_->FeedbackPageDataComplete();
 
-  // Whether we sent the report, or if it will be sent by the Syslogs complete
-  // function, close our feedback tab anyway, we have no more use for it.
   CloseFeedbackTab();
 }
 
@@ -702,13 +668,6 @@ void FeedbackHandler::HandleOpenSystemTab(const ListValue* args) {
                              NEW_FOREGROUND_TAB,
                              content::PAGE_TRANSITION_LINK,
                              false));
-#endif
-}
-
-void FeedbackHandler::CancelFeedbackCollection() {
-#if defined(OS_CHROMEOS)
-  // Canceling a finished task ID or kBadTaskId is a noop.
-  syslogs_tracker_.TryCancel(syslogs_task_id_);
 #endif
 }
 

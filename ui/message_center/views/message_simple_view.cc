@@ -6,8 +6,8 @@
 
 #include "grit/ui_resources.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/message_center/message_center_constants.h"
 #include "ui/message_center/notification.h"
-#include "ui/message_center/notification_list.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/image_view.h"
@@ -20,10 +20,10 @@ namespace message_center {
 const SkColor kNotificationColor = SkColorSetRGB(0xfe, 0xfe, 0xfe);
 const SkColor kNotificationReadColor = SkColorSetRGB(0xfa, 0xfa, 0xfa);
 
-MessageSimpleView::MessageSimpleView(
-    NotificationList::Delegate* list_delegate,
-    const Notification& notification)
-    : MessageView(list_delegate, notification) {
+MessageSimpleView::MessageSimpleView(const Notification& notification,
+                                     MessageCenter* message_center)
+    : MessageView(notification, message_center, false) {
+  set_focusable(true);
   views::ImageButton* close = new views::ImageButton(this);
   close->SetImage(
       views::CustomButton::STATE_NORMAL,
@@ -60,11 +60,17 @@ gfx::Size MessageSimpleView::GetPreferredSize() {
   return size;
 }
 
+int MessageSimpleView::GetHeightForWidth(int width) {
+  if (!content_view_)
+    return 0;
+  return content_view_->GetHeightForWidth(width);
+}
+
 void MessageSimpleView::SetUpView(const Notification& notification) {
   views::ImageView* icon = new views::ImageView;
   icon->SetImageSize(
       gfx::Size(kWebNotificationIconSize, kWebNotificationIconSize));
-  icon->SetImage(notification.primary_icon());
+  icon->SetImage(notification.icon().AsImageSkia());
 
   views::Label* title = new views::Label(notification.title());
   title->SetHorizontalAlignment(gfx::ALIGN_LEFT);
@@ -96,7 +102,7 @@ void MessageSimpleView::SetUpView(const Notification& notification) {
   columns->AddPaddingColumn(0, padding_width);
 
   // Notification message text.
-  const int message_width = kWebNotificationWidth - kWebNotificationIconSize -
+  const int message_width = kNotificationWidth - kWebNotificationIconSize -
       kWebNotificationButtonWidth - (padding_width * 3) -
       (scroller() ? scroller()->GetScrollBarWidth() : 0);
   columns->AddColumn(views::GridLayout::FILL, views::GridLayout::FILL,

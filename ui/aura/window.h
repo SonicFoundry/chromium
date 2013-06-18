@@ -235,14 +235,14 @@ class AURA_EXPORT Window : public ui::LayerDelegate,
 
   void set_ignore_events(bool ignore_events) { ignore_events_ = ignore_events; }
 
-  // Sets the window to grab hits for an area extending -|insets| pixels outside
-  // its bounds. This can be used to create an invisible non-client area, for
-  // example if your windows have no visible frames but still need to have
-  // resize edges. It is possible to set a larger hit-region for touch-events.
+  // Sets the window to grab hits for mouse and touch to an area extending
+  // -|mouse_insets| and -|touch_insets| pixels outside its bounds. This can be
+  // used to create an invisible non-client area, for example if your windows
+  // have no visible frames but still need to have resize edges.
   void SetHitTestBoundsOverrideOuter(const gfx::Insets& mouse_insets,
-                                     int touch_scale) {
+                                     const gfx::Insets& touch_insets) {
     hit_test_bounds_override_outer_mouse_ = mouse_insets;
-    hit_test_bounds_override_outer_touch_ = mouse_insets.Scale(touch_scale);
+    hit_test_bounds_override_outer_touch_ = touch_insets;
   }
 
   gfx::Insets hit_test_bounds_override_outer_mouse() const {
@@ -424,6 +424,20 @@ class AURA_EXPORT Window : public ui::LayerDelegate,
   // Notifies this window's observers.
   void NotifyWindowHierarchyChangeAtReceiver(
       const WindowObserver::HierarchyChangeParams& params);
+
+  // Methods implementing visibility change notifications. See WindowObserver
+  // for more details.
+  void NotifyWindowVisibilityChanged(aura::Window* target, bool visible);
+  // Notifies this window's observers. Returns false if |this| was deleted
+  // during the call (by an observer), otherwise true.
+  bool NotifyWindowVisibilityChangedAtReceiver(aura::Window* target,
+                                               bool visible);
+  // Notifies this window and its child hierarchy. Returns false if
+  // |this| was deleted during the call (by an observer), otherwise
+  // true.
+  bool NotifyWindowVisibilityChangedDown(aura::Window* target, bool visible);
+  // Notifies this window and its parent hierarchy.
+  void NotifyWindowVisibilityChangedUp(aura::Window* target, bool visible);
 
   // Invoked from the closure returned by PrepareForLayerBoundsChange() after
   // the bounds of the layer has changed. |old_bounds| is the previous bounds of

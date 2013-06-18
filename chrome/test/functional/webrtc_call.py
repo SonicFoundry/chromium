@@ -152,6 +152,8 @@ class WebrtcCallTest(webrtc_test_base.WebrtcTestBase):
     self.Connect("user_1", tab_index=0)
     self.Connect("user_2", tab_index=1)
 
+    self.CreatePeerConnection(tab_index=0)
+    self.AddUserMediaLocalStream(tab_index=0)
     self.EstablishCall(from_tab_with_index=0, to_tab_with_index=1)
 
     self.assertEquals('failed-with-error-1',
@@ -165,6 +167,9 @@ class WebrtcCallTest(webrtc_test_base.WebrtcTestBase):
     This test will check that if a local track is muted, the remote end don't
     get video. Also test that if a remote track is disabled, the video is not
     updated in the video tag."""
+    if self.PlatformIsWinXP():
+      print 'Skipping this test on Windows XP due to flakiness.'
+      return
 
     # TODO(perkj): Also verify that the local preview is muted when the
     # feature is implemented.
@@ -211,6 +216,8 @@ class WebrtcCallTest(webrtc_test_base.WebrtcTestBase):
     self.Connect('user_1', tab_index=0)
     self.Connect('user_2', tab_index=1)
 
+    self.CreatePeerConnection(tab_index=0)
+    self.AddUserMediaLocalStream(tab_index=0)
     self.EstablishCall(from_tab_with_index=0, to_tab_with_index=1)
 
     if request_video:

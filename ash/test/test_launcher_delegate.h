@@ -36,16 +36,21 @@ class TestLauncherDelegate : public LauncherDelegate,
 
   // LauncherDelegate implementation.
   virtual void OnBrowserShortcutClicked(int event_flags) OVERRIDE;
-  virtual void ItemClicked(const LauncherItem& item,
+  virtual void ItemSelected(const LauncherItem& item,
                            const ui::Event& event) OVERRIDE;
   virtual int GetBrowserShortcutResourceId() OVERRIDE;
-  virtual string16 GetTitle(const LauncherItem& item) OVERRIDE;
+  virtual base::string16 GetTitle(const LauncherItem& item) OVERRIDE;
   virtual ui::MenuModel* CreateContextMenu(const LauncherItem& item,
                                            aura::RootWindow* root) OVERRIDE;
   virtual ash::LauncherMenuModel* CreateApplicationMenu(
-      const LauncherItem& item) OVERRIDE;
+      const LauncherItem& item,
+      int event_flags) OVERRIDE;
   virtual ash::LauncherID GetIDByWindow(aura::Window* window) OVERRIDE;
   virtual bool IsDraggable(const ash::LauncherItem& item) OVERRIDE;
+  virtual bool ShouldShowTooltip(const LauncherItem& item) OVERRIDE;
+  virtual void OnLauncherCreated(Launcher* launcher) OVERRIDE;
+  virtual void OnLauncherDestroyed(Launcher* launcher) OVERRIDE;
+  virtual bool IsPerAppLauncher() OVERRIDE;
 
  private:
   typedef std::map<aura::Window*, ash::LauncherID> WindowToID;

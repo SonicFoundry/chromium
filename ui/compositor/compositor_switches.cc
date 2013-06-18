@@ -8,19 +8,14 @@ namespace switches {
 
 const char kDisableTestCompositor[] = "disable-test-compositor";
 
-const char kUIEnablePartialSwap[] = "ui-enable-partial-swap";
+const char kUIDisableThreadedCompositing[] = "ui-disable-threaded-compositing";
 
-// Show FPS counter.
-const char kUIShowFPSCounter[] = "ui-show-fps-counter";
-
-// Show colored borders around layers.
-const char kUIShowLayerBorders[] = "ui-show-layer-borders";
-
-// Show layer tree.
-const char kUIShowLayerTree[] = "ui-show-layer-tree";
-
-const char kUIEnablePerTilePainting[] = "ui-enable-per-tile-painting";
+const char kUIEnableSoftwareCompositing[] = "ui-enable-software-compositing";
 
 const char kUIEnableThreadedCompositing[] = "ui-enable-threaded-compositing";
+
+const char kUIMaxFramesPending[] = "ui-max-frames-pending";
+
+const char kUIShowPaintRects[] = "ui-show-paint-rects";
 
 }  // namespace switches

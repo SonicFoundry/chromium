@@ -8,7 +8,7 @@
 #include "base/i18n/icu_util.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop.h"
-#include "base/string_split.h"
+#include "base/strings/string_split.h"
 #include "base/time.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "third_party/skia/include/core/SkXfermode.h"
@@ -111,7 +111,7 @@ class BenchCompositorObserver : public ui::CompositorObserver {
       }
     }
     if (max_frames_ && frames_ == max_frames_) {
-      MessageLoop::current()->Quit();
+      base::MessageLoop::current()->Quit();
     } else {
       Draw();
     }
@@ -301,7 +301,7 @@ int main(int argc, char** argv) {
   icu_util::Initialize();
   ResourceBundle::InitSharedInstanceWithLocale("en-US", NULL);
 
-  MessageLoop message_loop(MessageLoop::TYPE_UI);
+  base::MessageLoop message_loop(base::MessageLoop::TYPE_UI);
   ui::CompositorTestSupport::Initialize();
   aura::Env::GetInstance();
   scoped_ptr<aura::TestScreen> test_screen(
@@ -357,7 +357,7 @@ int main(int argc, char** argv) {
 #endif
 
   root_window->ShowRootWindow();
-  MessageLoopForUI::current()->Run();
+  base::MessageLoopForUI::current()->Run();
   focus_client.reset();
   root_window.reset();
 

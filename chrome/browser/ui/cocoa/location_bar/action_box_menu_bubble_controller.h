@@ -10,10 +10,9 @@
 #include "base/memory/scoped_nsobject.h"
 #include "base/memory/scoped_ptr.h"
 #import "chrome/browser/ui/cocoa/base_bubble_controller.h"
-#import "chrome/browser/ui/cocoa/tracking_area.h"
+#import "ui/base/cocoa/tracking_area.h"
 
 class ActionBoxMenuModel;
-@class HoverImageButton;
 class ExtensionIconLoaderBridge;
 class Profile;
 
@@ -98,7 +97,7 @@ class Profile;
   IBOutlet __weak ActionBoxMenuItemController* viewController_;
 
   // Used to highlight the background on hover.
-  ScopedCrTrackingArea trackingArea_;
+  ui::ScopedCrTrackingArea trackingArea_;
 }
 
 @property(assign, nonatomic) ActionBoxMenuItemController* viewController;

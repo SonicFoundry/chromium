@@ -5,13 +5,13 @@
 #include "chrome/browser/ui/views/password_generation_bubble_view.h"
 
 #include "base/utf_string_conversions.h"
-#include "chrome/browser/autofill/password_generator.h"
 #include "chrome/browser/password_manager/password_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
-#include "chrome/common/autofill_messages.h"
-#include "chrome/common/password_generation_util.h"
 #include "chrome/common/url_constants.h"
+#include "components/autofill/browser/password_generator.h"
+#include "components/autofill/common/autofill_messages.h"
+#include "components/autofill/common/password_generation_util.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/render_view_host.h"
 #include "googleurl/src/gurl.h"
@@ -24,7 +24,7 @@
 #include "ui/gfx/canvas.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/button/image_button.h"
-#include "ui/views/controls/button/text_button.h"
+#include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/link.h"
 #include "ui/views/controls/textfield/textfield.h"
@@ -175,9 +175,10 @@ void PasswordGenerationBubbleView::Init() {
                                             regenerate_button_);
   AddChildView(textfield_wrapper_);
 
-  accept_button_ = new views::NativeTextButton(
+  accept_button_ = new views::LabelButton(
       this,
       l10n_util::GetStringUTF16(IDS_PASSWORD_GENERATION_BUTTON_TEXT));
+  accept_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
   AddChildView(accept_button_);
 }
 
@@ -246,5 +247,5 @@ views::View* PasswordGenerationBubbleView::GetInitiallyFocusedView() {
 }
 
 void PasswordGenerationBubbleView::WindowClosing() {
-  password_generation::LogUserActions(actions_);
+  autofill::password_generation::LogUserActions(actions_);
 }

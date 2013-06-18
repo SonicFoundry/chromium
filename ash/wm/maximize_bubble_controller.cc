@@ -35,7 +35,7 @@ namespace {
 const int kLayoutSpacing = -1;
 
 // The background color.
-const SkColor kBubbleBackgroundColor = 0xc8141414;
+const SkColor kBubbleBackgroundColor = 0xFF141414;
 
 // The text color within the bubble.
 const SkColor kBubbleTextColor = SK_ColorWHITE;
@@ -391,13 +391,12 @@ MaximizeBubbleController::Bubble::Bubble(
   // cover it upon animation.
   aura::Window* parent = Shell::GetContainer(
       Shell::GetActiveRootWindow(),
-      internal::kShellWindowId_LauncherContainer);
+      internal::kShellWindowId_ShelfContainer);
   set_parent_window(parent);
 
   set_notify_enter_exit_on_child(true);
   set_adjust_if_offscreen(false);
   SetPaintToLayer(true);
-  SetFillsBoundsOpaquely(false);
   set_color(kBubbleBackgroundColor);
   set_close_on_deactivate(false);
   set_background(
@@ -425,12 +424,12 @@ MaximizeBubbleController::Bubble::Bubble(
   SizeToContents();
 
   if (!appearance_delay_ms_)
-    Show();
+    GetWidget()->Show();
   else
     StartFade(true);
 
   ash::Shell::GetInstance()->delegate()->RecordUserMetricsAction(
-      ash::UMA_MAXIMIZE_BUTTON_SHOW_BUBBLE);
+      ash::UMA_WINDOW_MAXIMIZE_BUTTON_SHOW_BUBBLE);
 
   mouse_watcher_.reset(new views::MouseWatcher(
       new BubbleMouseWatcherHost(this),
@@ -799,7 +798,7 @@ views::CustomButton* MaximizeBubbleController::GetButtonForUnitTest(
 
 void MaximizeBubbleController::RequestDestructionThroughOwner() {
   // Tell the parent to destroy us (if this didn't happen yet).
-  if (timer_.get()) {
+  if (timer_) {
     timer_.reset(NULL);
     // Informs the owner that the menu is gone and requests |this| destruction.
     frame_maximize_button_->DestroyMaximizeMenu();

@@ -35,6 +35,13 @@ Status ExecuteSessionCommand(
     scoped_ptr<base::Value>* out_value,
     std::string* out_session_id);
 
+// Gets the capabilities of a particular session.
+Status ExecuteGetSessionCapabilities(
+    SessionMap* session_map,
+    Session* session,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value);
+
 // Quits a particular session.
 Status ExecuteQuit(
     SessionMap* session_map,
@@ -50,6 +57,7 @@ Status ExecuteGetCurrentWindowHandle(
 
 // Close the target window.
 Status ExecuteClose(
+    SessionMap* session_map,
     Session* session,
     const base::DictionaryValue& params,
     scoped_ptr<base::Value>* value);
@@ -70,6 +78,18 @@ Status ExecuteSwitchToWindow(
 // Configure the amount of time that a particular type of operation can execute
 // for before they are aborted and a timeout error is returned to the client.
 Status ExecuteSetTimeout(
+    Session* session,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value);
+
+// Set the timeout for asynchronous scripts.
+Status ExecuteSetScriptTimeout(
+    Session* session,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value);
+
+// Set the amount of time the driver should wait when searching for elements.
+Status ExecuteImplicitlyWait(
     Session* session,
     const base::DictionaryValue& params,
     scoped_ptr<base::Value>* value);
@@ -100,6 +120,56 @@ Status ExecuteAcceptAlert(
 
 // Dismisses the open alert.
 Status ExecuteDismissAlert(
+    Session* session,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value);
+
+Status ExecuteIsLoading(
+    Session* session,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value);
+
+Status ExecuteGetLocation(
+    Session* session,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value);
+
+Status ExecuteGetWindowPosition(
+    Session* session,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value);
+
+Status ExecuteSetWindowPosition(
+    Session* session,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value);
+
+Status ExecuteGetWindowSize(
+    Session* session,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value);
+
+Status ExecuteSetWindowSize(
+    Session* session,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value);
+
+Status ExecuteMaximizeWindow(
+    Session* session,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value);
+
+Status ExecuteGetAvailableLogTypes(
+    Session* session,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value);
+
+Status ExecuteGetLog(
+    Session* session,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value);
+
+Status ExecuteUploadFile(
     Session* session,
     const base::DictionaryValue& params,
     scoped_ptr<base::Value>* value);

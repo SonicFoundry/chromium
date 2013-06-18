@@ -4,21 +4,22 @@
 
 #include "webkit/compositor_bindings/web_transform_animation_curve_impl.h"
 
-#include "cc/keyframed_animation_curve.h"
-#include "cc/timing_function.h"
-#include "cc/transform_operations.h"
+#include "cc/animation/keyframed_animation_curve.h"
+#include "cc/animation/timing_function.h"
+#include "cc/animation/transform_operations.h"
 #include "webkit/compositor_bindings/web_animation_curve_common.h"
 #include "webkit/compositor_bindings/web_transform_operations_impl.h"
-#include "webkit/compositor_bindings/web_transformation_matrix_util.h"
 
-namespace WebKit {
+using WebKit::WebTransformKeyframe;
+
+namespace webkit {
 
 WebTransformAnimationCurveImpl::WebTransformAnimationCurveImpl()
-    : curve_(cc::KeyframedTransformAnimationCurve::create()) {}
+    : curve_(cc::KeyframedTransformAnimationCurve::Create()) {}
 
 WebTransformAnimationCurveImpl::~WebTransformAnimationCurveImpl() {}
 
-WebAnimationCurve::AnimationCurveType
+WebKit::WebAnimationCurve::AnimationCurveType
 WebTransformAnimationCurveImpl::type() const {
   return WebAnimationCurve::AnimationCurveTypeTransform;
 }
@@ -32,8 +33,8 @@ void WebTransformAnimationCurveImpl::add(const WebTransformKeyframe& keyframe,
   const cc::TransformOperations& transform_operations =
       static_cast<const webkit::WebTransformOperationsImpl&>(keyframe.value())
       .AsTransformOperations();
-  curve_->addKeyframe(cc::TransformKeyframe::create(
-      keyframe.time(), transform_operations, createTimingFunction(type)));
+  curve_->AddKeyframe(cc::TransformKeyframe::Create(
+      keyframe.time(), transform_operations, CreateTimingFunction(type)));
 }
 
 void WebTransformAnimationCurveImpl::add(const WebTransformKeyframe& keyframe,
@@ -44,22 +45,16 @@ void WebTransformAnimationCurveImpl::add(const WebTransformKeyframe& keyframe,
   const cc::TransformOperations& transform_operations =
       static_cast<const webkit::WebTransformOperationsImpl&>(keyframe.value())
       .AsTransformOperations();
-  curve_->addKeyframe(cc::TransformKeyframe::create(
+  curve_->AddKeyframe(cc::TransformKeyframe::Create(
       keyframe.time(),
       transform_operations,
-      cc::CubicBezierTimingFunction::create(x1, y1, x2, y2)
+      cc::CubicBezierTimingFunction::Create(x1, y1, x2, y2)
           .PassAs<cc::TimingFunction>()));
 }
 
-WebTransformationMatrix WebTransformAnimationCurveImpl::getValue(
-    double time) const {
-  return webkit::WebTransformationMatrixUtil::ToWebTransformationMatrix(
-      curve_->getValue(time));
-}
-
 scoped_ptr<cc::AnimationCurve>
-WebTransformAnimationCurveImpl::cloneToAnimationCurve() const {
-  return curve_->clone();
+WebTransformAnimationCurveImpl::CloneToAnimationCurve() const {
+  return curve_->Clone();
 }
 
-}  // namespace WebKit
+}  // namespace webkit

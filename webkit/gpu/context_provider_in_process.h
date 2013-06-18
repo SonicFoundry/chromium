@@ -5,41 +5,47 @@
 #ifndef WEBKIT_GPU_CONTEXT_PROVIDER_IN_PROCESS_H_
 #define WEBKIT_GPU_CONTEXT_PROVIDER_IN_PROCESS_H_
 
+#include "base/compiler_specific.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/synchronization/lock.h"
-#include "cc/context_provider.h"
+#include "cc/output/context_provider.h"
+#include "webkit/gpu/webgraphicscontext3d_in_process_command_buffer_impl.h"
+#include "webkit/gpu/webkit_gpu_export.h"
 
 namespace webkit {
 namespace gpu {
 class GrContextForWebGraphicsContext3D;
 
-class ContextProviderInProcess : public cc::ContextProvider {
+class WEBKIT_GPU_EXPORT ContextProviderInProcess
+    : NON_EXPORTED_BASE(public cc::ContextProvider) {
  public:
-  enum InProcessType {
-    IN_PROCESS,
-    IN_PROCESS_COMMAND_BUFFER,
-  };
-  explicit ContextProviderInProcess(InProcessType type);
+  static scoped_refptr<ContextProviderInProcess> Create() {
+    scoped_refptr<ContextProviderInProcess> provider =
+        new ContextProviderInProcess;
+    if (!provider->InitializeOnMainThread())
+      return NULL;
+    return provider;
+  }
 
-  virtual bool InitializeOnMainThread() OVERRIDE;
   virtual bool BindToCurrentThread() OVERRIDE;
   virtual WebKit::WebGraphicsContext3D* Context3d() OVERRIDE;
   virtual class GrContext* GrContext() OVERRIDE;
   virtual void VerifyContexts() OVERRIDE;
-
-  bool DestroyedOnMainThread();
+  virtual bool DestroyedOnMainThread() OVERRIDE;
 
  protected:
+  ContextProviderInProcess();
   virtual ~ContextProviderInProcess();
 
-  scoped_ptr<WebKit::WebGraphicsContext3D> CreateOffscreenContext3d();
+  bool InitializeOnMainThread();
 
-  virtual void OnLostContext();
+  void OnLostContextInternal();
+  virtual void OnLostContext() {}
   virtual void OnMemoryAllocationChanged(bool nonzero_allocation);
 
  private:
-  InProcessType type_;
-  scoped_ptr<WebKit::WebGraphicsContext3D> context3d_;
+  scoped_ptr<webkit::gpu::WebGraphicsContext3DInProcessCommandBufferImpl>
+      context3d_;
   scoped_ptr<webkit::gpu::GrContextForWebGraphicsContext3D> gr_context_;
 
   base::Lock destroyed_lock_;

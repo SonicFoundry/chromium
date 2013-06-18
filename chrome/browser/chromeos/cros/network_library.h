@@ -16,17 +16,12 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/timer.h"
+#include "base/values.h"
 #include "chrome/browser/chromeos/cros/network_constants.h"
-#include "chrome/browser/chromeos/cros/network_ui_data.h"
 #include "chromeos/network/network_ip_config.h"
+#include "chromeos/network/network_ui_data.h"
 #include "chromeos/network/network_util.h"
 #include "chromeos/network/onc/onc_constants.h"
-#include "googleurl/src/gurl.h"
-
-namespace base {
-class DictionaryValue;
-class Value;
-}  // namespace base
 
 namespace chromeos {
 
@@ -563,9 +558,7 @@ class Network {
   }
   void set_name(const std::string& name) { name_ = name; }
   void set_mode(ConnectionMode mode) { mode_ = mode; }
-  void set_connecting() {
-    state_ = STATE_CONNECT_REQUESTED;
-  }
+  void set_connecting();
   void set_is_behind_portal_for_testing(bool value) {
     is_behind_portal_for_testing_ = value;
   }
@@ -891,6 +884,7 @@ class CellularNetwork : public WirelessNetwork {
   const std::string& operator_name() const { return operator_name_; }
   const std::string& operator_code() const { return operator_code_; }
   const std::string& operator_country() const { return operator_country_; }
+  bool out_of_credits() const { return out_of_credits_; }
   const std::string& payment_url() const { return payment_url_; }
   const std::string& usage_url() const { return usage_url_; }
   const std::string& post_data() const { return post_data_; }
@@ -910,8 +904,6 @@ class CellularNetwork : public WirelessNetwork {
   // Returns whether the network needs to be activated.
   bool NeedsActivation() const;
 
-  // Return a URL for account info page.
-  GURL GetAccountInfoUrl() const;
   // Return a string representation of network technology.
   std::string GetNetworkTechnologyString() const;
   // Return a string representation of activation state.
@@ -960,6 +952,9 @@ class CellularNetwork : public WirelessNetwork {
   void set_operator_country(const std::string& operator_country) {
     operator_country_ = operator_country;
   }
+  void set_out_of_credits(bool out_of_credits) {
+    out_of_credits_ = out_of_credits;
+  }
   void set_payment_url(const std::string& payment_url) {
     payment_url_ = payment_url;
   }
@@ -976,6 +971,7 @@ class CellularNetwork : public WirelessNetwork {
   }
 
   bool activate_over_non_cellular_network_;
+  bool out_of_credits_;
   ActivationState activation_state_;
   NetworkTechnology network_technology_;
   NetworkRoamingState roaming_state_;
@@ -1723,12 +1719,9 @@ class NetworkLibrary {
   // changes.
   virtual void SwitchToPreferredNetwork() = 0;
 
-  // Load networks from an Open Network Configuration blob.
-  // If there was an error, returns false.
-  virtual bool LoadOncNetworks(const std::string& onc_blob,
-                               const std::string& passcode,
-                               onc::ONCSource source,
-                               bool allow_web_trust_from_policy) = 0;
+  // Load networks from an NetworkConfigurations list of ONC.
+  virtual void LoadOncNetworks(const base::ListValue& network_configs,
+                               onc::ONCSource source) = 0;
 
   // This sets the active network for the network type. Note: priority order
   // is unchanged (i.e. if a wifi network is set to active, but an ethernet

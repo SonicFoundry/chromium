@@ -66,8 +66,8 @@ bool WebPluginDelegateImpl::Initialize(
     webkit_glue::SetForcefullyTerminatePluginProcess(true);
 
   int argc = 0;
-  scoped_array<char*> argn(new char*[arg_names.size()]);
-  scoped_array<char*> argv(new char*[arg_names.size()]);
+  scoped_ptr<char*[]> argn(new char*[arg_names.size()]);
+  scoped_ptr<char*[]> argv(new char*[arg_names.size()]);
   for (size_t i = 0; i < arg_names.size(); ++i) {
     if (quirks_ & PLUGIN_QUIRK_NO_WINDOWLESS &&
         LowerCaseEqualsASCII(arg_names[i], "windowlessvideo")) {
@@ -157,7 +157,7 @@ void WebPluginDelegateImpl::SetFocus(bool focused) {
   // mode when it loses focus, and its full screen window causes the browser to
   // lose focus.
   has_webkit_focus_ = focused;
-#ifndef OS_WIN
+#if !defined(OS_WIN)
   if (containing_view_has_focus_)
     SetPluginHasFocus(focused);
 #else
@@ -176,7 +176,7 @@ void WebPluginDelegateImpl::SetContentAreaHasFocus(bool has_focus) {
   containing_view_has_focus_ = has_focus;
   if (!windowless_)
     return;
-#ifndef OS_WIN  // See SetFocus above.
+#if !defined(OS_WIN)  // See SetFocus above.
   SetPluginHasFocus(containing_view_has_focus_ && has_webkit_focus_);
 #endif
 }
@@ -185,7 +185,7 @@ NPObject* WebPluginDelegateImpl::GetPluginScriptableObject() {
   return instance_->GetPluginScriptableObject();
 }
 
-bool WebPluginDelegateImpl::GetFormValue(string16* value) {
+bool WebPluginDelegateImpl::GetFormValue(base::string16* value) {
   return instance_->GetFormValue(value);
 }
 

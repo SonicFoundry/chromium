@@ -186,7 +186,7 @@ class TabScrubberTest : public InProcessBrowserTest,
   virtual void ActiveTabChanged(content::WebContents* old_contents,
                                 content::WebContents* new_contents,
                                 int index,
-                                bool user_gesture) OVERRIDE {
+                                int reason) OVERRIDE {
     activation_order_.push_back(index);
     if (index == target_index_)
       quit_closure_.Run();
@@ -405,6 +405,16 @@ IN_PROC_BROWSER_TEST_F(TabScrubberTest, MoveAfter) {
   EXPECT_TRUE(TabScrubber::GetInstance()->IsActivationPending());
   browser()->tab_strip_model()->MoveSelectedTabsTo(0);
   EXPECT_EQ(2, TabScrubber::GetInstance()->highlighted_tab());
+}
+
+// Close the browser while an activation is pending.
+IN_PROC_BROWSER_TEST_F(TabScrubberTest, CloseBrowser) {
+  AddTabs(browser(), 1);
+
+  SendScrubEvent(browser(), 0);
+  EXPECT_TRUE(TabScrubber::GetInstance()->IsActivationPending());
+  browser()->window()->Close();
+  EXPECT_FALSE(TabScrubber::GetInstance()->IsActivationPending());
 }
 
 #endif // OS_CHROMEOS

@@ -381,6 +381,7 @@ bool Plugin::LoadNaClModuleCommon(nacl::DescWrapper* wrapper,
                                   bool should_report_uma,
                                   bool uses_irt,
                                   bool uses_ppapi,
+                                  bool enable_dyncode_syscalls,
                                   ErrorInfo* error_info,
                                   pp::CompletionCallback init_done_cb,
                                   pp::CompletionCallback crash_cb) {
@@ -403,6 +404,7 @@ bool Plugin::LoadNaClModuleCommon(nacl::DescWrapper* wrapper,
                                  uses_irt,
                                  uses_ppapi,
                                  enable_dev_interfaces_,
+                                 enable_dyncode_syscalls,
                                  crash_cb);
   PLUGIN_PRINTF(("Plugin::LoadNaClModuleCommon (service_runtime_started=%d)\n",
                  service_runtime_started));
@@ -414,6 +416,7 @@ bool Plugin::LoadNaClModuleCommon(nacl::DescWrapper* wrapper,
 
 bool Plugin::LoadNaClModule(nacl::DescWrapper* wrapper,
                             ErrorInfo* error_info,
+                            bool enable_dyncode_syscalls,
                             pp::CompletionCallback init_done_cb,
                             pp::CompletionCallback crash_cb) {
   // Before forking a new sel_ldr process, ensure that we do not leak
@@ -425,6 +428,7 @@ bool Plugin::LoadNaClModule(nacl::DescWrapper* wrapper,
                             true /* should_report_uma */,
                             true /* uses_irt */,
                             true /* uses_ppapi */,
+                            enable_dyncode_syscalls,
                             error_info, init_done_cb, crash_cb)) {
     return false;
   }
@@ -491,6 +495,7 @@ NaClSubprocess* Plugin::LoadHelperNaClModule(nacl::DescWrapper* wrapper,
                             false /* should_report_uma */,
                             false /* uses_irt */,
                             false /* uses_ppapi */,
+                            false /* enable_dyncode_syscalls */,
                             error_info,
                             pp::BlockUntilComplete(),
                             pp::BlockUntilComplete())) {
@@ -677,7 +682,6 @@ bool Plugin::Init(uint32_t argc, const char* argn[], const char* argv[]) {
   return status;
 }
 
-
 Plugin::Plugin(PP_Instance pp_instance)
     : pp::InstancePrivate(pp_instance),
       scriptable_plugin_(NULL),
@@ -688,7 +692,6 @@ Plugin::Plugin(PP_Instance pp_instance)
       nacl_ready_state_(UNSENT),
       nexe_error_reported_(false),
       wrapper_factory_(NULL),
-      last_error_string_(""),
       enable_dev_interfaces_(false),
       is_installed_(false),
       init_time_(0),
@@ -861,6 +864,7 @@ void Plugin::NexeFileDidOpen(int32_t pp_error) {
   NaClLog(4, "NexeFileDidOpen: invoking LoadNaClModule\n");
   bool was_successful = LoadNaClModule(
       wrapper.get(), &error_info,
+      true, /* enable_dyncode_syscalls */
       callback_factory_.NewCallback(&Plugin::NexeFileDidOpenContinuation),
       callback_factory_.NewCallback(&Plugin::NexeDidCrash));
 
@@ -981,6 +985,7 @@ void Plugin::BitcodeDidTranslate(int32_t pp_error) {
   ErrorInfo error_info;
   bool was_successful = LoadNaClModule(
       wrapper.get(), &error_info,
+      false, /* enable_dyncode_syscalls */
       callback_factory_.NewCallback(&Plugin::BitcodeDidTranslateContinuation),
       callback_factory_.NewCallback(&Plugin::NexeDidCrash));
 
@@ -1174,21 +1179,19 @@ void Plugin::ProcessNaClManifest(const nacl::string& manifest_json) {
   HistogramSizeKB("NaCl.Perf.Size.Manifest",
                   static_cast<int32_t>(manifest_json.length() / 1024));
   nacl::string program_url;
-  nacl::string cache_identity;
-  bool is_portable;
+  PnaclOptions pnacl_options;
   ErrorInfo error_info;
   if (!SetManifestObject(manifest_json, &error_info)) {
     ReportLoadError(error_info);
     return;
   }
 
-  if (manifest_->GetProgramURL(&program_url, &cache_identity,
-                               &error_info, &is_portable)) {
+  if (manifest_->GetProgramURL(&program_url, &pnacl_options, &error_info)) {
     is_installed_ = GetUrlScheme(program_url) == SCHEME_CHROME_EXTENSION;
     set_nacl_ready_state(LOADING);
     // Inform JavaScript that we found a nexe URL to load.
     EnqueueProgressEvent(kProgressEventProgress);
-    if (is_portable) {
+    if (pnacl_options.translate()) {
       if (this->nacl_interface()->IsPnaclEnabled()) {
         pp::CompletionCallback translate_callback =
             callback_factory_.NewCallback(&Plugin::BitcodeDidTranslate);
@@ -1196,7 +1199,7 @@ void Plugin::ProcessNaClManifest(const nacl::string& manifest_json) {
         pnacl_coordinator_.reset(
             PnaclCoordinator::BitcodeToNative(this,
                                               program_url,
-                                              cache_identity,
+                                              pnacl_options,
                                               translate_callback));
         return;
       } else {
@@ -1205,15 +1208,20 @@ void Plugin::ProcessNaClManifest(const nacl::string& manifest_json) {
                              "the --enable-pnacl flag).");
       }
     } else {
-      pp::CompletionCallback open_callback =
-          callback_factory_.NewCallback(&Plugin::NexeFileDidOpen);
-      // Will always call the callback on success or failure.
-      CHECK(
-          nexe_downloader_.Open(program_url,
-                                DOWNLOAD_TO_FILE,
-                                open_callback,
-                                true,
-                                &UpdateDownloadProgress));
+      // Try the fast path first. This will only block if the file is installed.
+      if (OpenURLFast(program_url, &nexe_downloader_)) {
+        NexeFileDidOpen(PP_OK);
+      } else {
+        pp::CompletionCallback open_callback =
+            callback_factory_.NewCallback(&Plugin::NexeFileDidOpen);
+        // Will always call the callback on success or failure.
+        CHECK(
+            nexe_downloader_.Open(program_url,
+                                  DOWNLOAD_TO_FILE,
+                                  open_callback,
+                                  true,
+                                  &UpdateDownloadProgress));
+      }
       return;
     }
   }
@@ -1329,8 +1337,6 @@ bool Plugin::StreamAsFile(const nacl::string& url,
   FileDownloader* downloader = new FileDownloader();
   downloader->Initialize(this);
   url_downloaders_.insert(downloader);
-  pp::CompletionCallback open_callback = callback_factory_.NewCallback(
-      &Plugin::UrlDidOpenForStreamAsFile, downloader, callback);
   // Untrusted loads are always relative to the page's origin.
   CHECK(url_util_ != NULL);
   pp::Var resolved_url =
@@ -1342,6 +1348,15 @@ bool Plugin::StreamAsFile(const nacl::string& url,
                    plugin_base_url().c_str()));
     return false;
   }
+
+  // Try the fast path first. This will only block if the file is installed.
+  if (OpenURLFast(url, downloader)) {
+    UrlDidOpenForStreamAsFile(PP_OK, downloader, callback);
+    return true;
+  }
+
+  pp::CompletionCallback open_callback = callback_factory_.NewCallback(
+      &Plugin::UrlDidOpenForStreamAsFile, downloader, callback);
   // If true, will always call the callback on success or failure.
   return downloader->Open(url,
                           DOWNLOAD_TO_FILE,
@@ -1582,6 +1597,40 @@ void Plugin::DispatchProgressEvent(int32_t result) {
   }
 }
 
+bool Plugin::OpenURLFast(const nacl::string& url,
+                         FileDownloader* downloader) {
+  // Fast path only works for installed file URLs.
+  if (GetUrlScheme(url) != SCHEME_CHROME_EXTENSION)
+    return false;
+  // IMPORTANT: Make sure the document can request the given URL. If we don't
+  // check, a malicious app could probe the extension system. This enforces a
+  // same-origin policy which prevents the app from requesting resources from
+  // another app.
+  if (!DocumentCanRequest(url))
+    return false;
+
+  PP_NaClExecutableMetadata file_metadata;
+  PP_FileHandle file_handle =
+      nacl_interface()->OpenNaClExecutable(pp_instance(),
+                                           url.c_str(),
+                                           &file_metadata);
+  // We shouldn't hit this if the file URL is in an installed app.
+  if (file_handle == PP_kInvalidFileHandle)
+    return false;
+
+  // Release the PP_Var in the metadata struct.
+  pp::Module* module = pp::Module::Get();
+  const PPB_Var* var_interface =
+      static_cast<const PPB_Var*>(
+          module->GetBrowserInterface(PPB_VAR_INTERFACE));
+  var_interface->Release(file_metadata.file_path);
+
+  // FileDownloader takes ownership of the file handle.
+  // TODO(bbudge) Consume metadata once we have the final format.
+  downloader->OpenFast(url, file_handle);
+  return true;
+}
+
 UrlSchemeType Plugin::GetUrlScheme(const std::string& url) {
   CHECK(url_util_ != NULL);
   PP_URLComponents_Dev comps;
@@ -1606,6 +1655,11 @@ UrlSchemeType Plugin::GetUrlScheme(const std::string& url) {
   if (scheme == kDataUriScheme)
     return SCHEME_DATA;
   return SCHEME_OTHER;
+}
+
+bool Plugin::DocumentCanRequest(const std::string& url) {
+  CHECK(url_util_ != NULL);
+  return url_util_->DocumentCanRequest(this, pp::Var(url));
 }
 
 void Plugin::AddToConsole(const nacl::string& text) {

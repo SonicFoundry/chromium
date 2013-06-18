@@ -51,7 +51,7 @@ class BrowserEventRouter : public TabStripModelObserver,
   virtual void ActiveTabChanged(content::WebContents* old_contents,
                                 content::WebContents* new_contents,
                                 int index,
-                                bool user_gesture) OVERRIDE;
+                                int reason) OVERRIDE;
   virtual void TabSelectionChanged(
       TabStripModel* tab_strip_model,
       const ui::ListSelectionModel& old_model) OVERRIDE;
@@ -96,6 +96,10 @@ class BrowserEventRouter : public TabStripModelObserver,
   // Internal processing of tab updated events. Is called by both TabChangedAt
   // and Observe/NAV_ENTRY_COMMITTED.
   void TabUpdated(content::WebContents* contents, bool did_navigate);
+
+  // Triggers a tab updated event if the favicon URL changes.
+  void FaviconUrlUpdated(content::WebContents* contents,
+                         const bool* icon_url_changed);
 
   // The DispatchEvent methods forward events to the |profile|'s event router.
   // The BrowserEventRouter listens to events for all profiles,

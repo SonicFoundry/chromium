@@ -106,7 +106,7 @@ URLRequestAutomationJob::URLRequestAutomationJob(
       request_id_(request_id),
       is_pending_(is_pending),
       upload_size_(0),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+      weak_factory_(this) {
   DVLOG(1) << "URLRequestAutomationJob create. Count: " << ++instance_count_;
   DCHECK(message_filter_ != NULL);
 
@@ -460,8 +460,7 @@ void URLRequestAutomationJob::StartAsync() {
   for (size_t i = 0; i < arraysize(kFilteredHeaderStrings); ++i)
     new_request_headers.RemoveHeader(kFilteredHeaderStrings[i]);
 
-  // Only add default Accept-Language and Accept-Charset if the request
-  // didn't have them specified.
+  // Only add default Accept-Language if the request didn't have it specified.
   if (!new_request_headers.HasHeader(
       net::HttpRequestHeaders::kAcceptLanguage) &&
       http_user_agent_settings_) {
@@ -472,18 +471,10 @@ void URLRequestAutomationJob::StartAsync() {
                                     accept_language);
     }
   }
-  if (!new_request_headers.HasHeader(
-      net::HttpRequestHeaders::kAcceptCharset) &&
-      http_user_agent_settings_) {
-    std::string accept_charset = http_user_agent_settings_->GetAcceptCharset();
-    if (!accept_charset.empty()) {
-      new_request_headers.SetHeader(net::HttpRequestHeaders::kAcceptCharset,
-                                    accept_charset);
-    }
-  }
 
-  // Ensure that we do not send username and password fields in the referrer.
-  GURL referrer(request_->GetSanitizedReferrer());
+  // URLRequest::SetReferrer() ensures that we do not send username and
+  // password fields in the referrer.
+  GURL referrer(request_->referrer());
 
   // The referrer header must be suppressed if the preceding URL was
   // a secure one and the new one is not.

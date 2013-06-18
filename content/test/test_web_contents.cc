@@ -88,7 +88,7 @@ void TestWebContents::TestDidNavigateWithReferrer(
   DidNavigate(render_view_host, params);
 }
 
-webkit_glue::WebPreferences TestWebContents::TestGetWebkitPrefs() {
+WebPreferences TestWebContents::TestGetWebkitPrefs() {
   return GetWebkitPrefs();
 }
 
@@ -172,6 +172,13 @@ void TestWebContents::SetOpener(TestWebContents* opener) {
   opener_ = opener;
   registrar_.Add(this, NOTIFICATION_WEB_CONTENTS_DESTROYED,
                  Source<WebContents>(opener_));
+}
+
+void TestWebContents::AddPendingContents(TestWebContents* contents) {
+  // This is normally only done in WebContentsImpl::CreateNewWindow.
+  pending_contents_[contents->GetRenderViewHost()->GetRoutingID()] = contents;
+  registrar_.Add(this, NOTIFICATION_WEB_CONTENTS_DESTROYED,
+                 Source<WebContents>(contents));
 }
 
 void TestWebContents::ExpectSetHistoryLengthAndPrune(

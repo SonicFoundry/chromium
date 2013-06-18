@@ -49,8 +49,7 @@ ContentsView::ContentsView(AppListMainView* app_list_main_view,
     : show_state_(SHOW_APPS),
       pagination_model_(pagination_model),
       view_model_(new views::ViewModel),
-      ALLOW_THIS_IN_INITIALIZER_LIST(
-          bounds_animator_(new views::BoundsAnimator(this))) {
+      bounds_animator_(new views::BoundsAnimator(this)) {
   pagination_model_->SetTransitionDurations(
       kPageTransitionDurationInMs,
       kOverscrollPageTransitionDurationMs);
@@ -142,6 +141,11 @@ void ContentsView::ShowSearchResults(bool show) {
   SetShowState(show ? SHOW_SEARCH_RESULTS : SHOW_APPS);
 }
 
+void ContentsView::Prerender() {
+  const int selected_page = std::max(0, pagination_model_->selected_page());
+  GetAppsGridView(view_model_.get())->Prerender(selected_page);
+}
+
 gfx::Size ContentsView::GetPreferredSize() {
   const gfx::Size grid_size =
       GetAppsGridView(view_model_.get())->GetPreferredSize();
@@ -174,9 +178,11 @@ bool ContentsView::OnMouseWheel(const ui::MouseWheelEvent& event) {
   if (show_state_ != SHOW_APPS)
     return false;
 
-  if (abs(event.offset()) > kMinMouseWheelToSwitchPage) {
-    if (!pagination_model_->has_transition())
-      pagination_model_->SelectPageRelative(event.offset() > 0 ? -1 : 1, true);
+  if (abs(event.y_offset()) > kMinMouseWheelToSwitchPage) {
+    if (!pagination_model_->has_transition()) {
+      pagination_model_->SelectPageRelative(
+          event.y_offset() > 0 ? -1 : 1, true);
+    }
     return true;
   }
 

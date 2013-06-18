@@ -12,60 +12,17 @@
 #include "chrome/browser/bookmarks/bookmark_editor.h"
 #include "chrome/browser/bookmarks/bookmark_node_data.h"
 #include "chrome/browser/history/snippet.h"
-#include "ui/gfx/native_widget_types.h"
 
 class BookmarkModel;
 class BookmarkNode;
-class Browser;
+
+namespace user_prefs {
 class PrefRegistrySyncable;
-class Profile;
-
-namespace content {
-class BrowserContext;
-}
-
-namespace ui {
-class DropTargetEvent;
 }
 
 // A collection of bookmark utility functions used by various parts of the UI
 // that show bookmarks: bookmark manager, bookmark bar view ...
 namespace bookmark_utils {
-
-// Calculates the drop operation given |source_operations| and the ideal
-// set of drop operations (|operations|). This prefers the following ordering:
-// COPY, LINK then MOVE.
-int PreferredDropOperation(int source_operations, int operations);
-
-// Returns the drag operations for the specified node.
-int BookmarkDragOperation(content::BrowserContext* browser_context,
-                          const BookmarkNode* node);
-
-// Returns the preferred drop operation on a bookmark menu/bar.
-// |parent| is the parent node the drop is to occur on and |index| the index the
-// drop is over.
-int BookmarkDropOperation(Profile* profile,
-                          const ui::DropTargetEvent& event,
-                          const BookmarkNodeData& data,
-                          const BookmarkNode* parent,
-                          int index);
-
-// Performs a drop of bookmark data onto |parent_node| at |index|. Returns the
-// type of drop the resulted.
-int PerformBookmarkDrop(Profile* profile,
-                        const BookmarkNodeData& data,
-                        const BookmarkNode* parent_node,
-                        int index);
-
-// Returns true if the bookmark data can be dropped on |drop_parent| at
-// |index|. A drop from a separate profile is always allowed, where as
-// a drop from the same profile is only allowed if none of the nodes in
-// |data| are an ancestor of |drop_parent| and one of the nodes isn't already
-// a child of |drop_parent| at |index|.
-bool IsValidDropLocation(Profile* profile,
-                         const BookmarkNodeData& data,
-                         const BookmarkNode* drop_parent,
-                         int index);
 
 // Clones bookmark node, adding newly created nodes to |parent| starting at
 // |index_to_add_at|.
@@ -73,11 +30,6 @@ void CloneBookmarkNode(BookmarkModel* model,
                        const std::vector<BookmarkNodeData::Element>& elements,
                        const BookmarkNode* parent,
                        int index_to_add_at);
-
-// Begins dragging a folder of bookmarks.
-void DragBookmarks(Profile* profile,
-                   const std::vector<const BookmarkNode*>& nodes,
-                   gfx::NativeView view);
 
 // Copies nodes onto the clipboard. If |remove_nodes| is true the nodes are
 // removed after copied to the clipboard. The nodes are copied in such a way
@@ -159,8 +111,8 @@ const BookmarkNode* ApplyEditsWithPossibleFolderChange(
     const string16& new_title,
     const GURL& new_url);
 
-// Register user preferences for BookmarksBar.
-void RegisterUserPrefs(PrefRegistrySyncable* registry);
+// Register user preferences for Bookmarks Bar.
+void RegisterUserPrefs(user_prefs::PrefRegistrySyncable* registry);
 
 // Returns the parent for newly created folders/bookmarks. If |selection| has
 // one element and it is a folder, |selection[0]| is returned, otherwise
@@ -220,10 +172,8 @@ void RecordBookmarkLaunch(BookmarkLaunchLocation location);
 // Records the user opening a folder of bookmarks for UMA purposes.
 void RecordBookmarkFolderOpen(BookmarkLaunchLocation location);
 
-#if defined(OS_WIN) || defined(OS_CHROMEOS) || defined(USE_AURA)
-void DisableBookmarkBarViewAnimationsForTesting(bool disabled);
-bool IsBookmarkBarViewAnimationsDisabled();
-#endif
+// Records the user opening the apps page for UMA purposes.
+void RecordAppsPageOpen(BookmarkLaunchLocation location);
 
 }  // namespace bookmark_utils
 

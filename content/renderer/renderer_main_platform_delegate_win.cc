@@ -14,9 +14,9 @@
 #include "content/public/renderer/render_thread.h"
 #include "content/renderer/render_thread_impl.h"
 #include "sandbox/win/src/sandbox.h"
-#include "skia/ext/skia_sandbox_support_win.h"
 #include "skia/ext/vector_platform_device_emf_win.h"
 #include "third_party/icu/public/i18n/unicode/timezone.h"
+#include "third_party/skia/include/ports/SkTypeface_win.h"
 
 namespace content {
 namespace {
@@ -47,6 +47,15 @@ void InitExitInterceptions() {
   base::win::SetAbortBehaviorForCrashReporting();
 }
 
+#if !defined(NDEBUG)
+LRESULT CALLBACK WindowsHookCBT(int code, WPARAM w_param, LPARAM l_param) {
+  CHECK_NE(code, HCBT_CREATEWND)
+      << "Should not be creating windows in the renderer!";
+  return CallNextHookEx(NULL, code, w_param, l_param);
+}
+#endif  // !NDEBUG
+
+
 }  // namespace
 
 RendererMainPlatformDelegate::RendererMainPlatformDelegate(
@@ -59,6 +68,15 @@ RendererMainPlatformDelegate::~RendererMainPlatformDelegate() {
 }
 
 void RendererMainPlatformDelegate::PlatformInitialize() {
+#if !defined(NDEBUG)
+  // Install a check that we're not creating windows in the renderer. See
+  // http://crbug.com/230122 for background. TODO(scottmg): Ideally this would
+  // check all threads in the renderer, but it currently only checks the main
+  // thread.
+  PCHECK(
+      SetWindowsHookEx(WH_CBT, WindowsHookCBT, NULL, ::GetCurrentThreadId()));
+#endif  // !NDEBUG
+
   InitExitInterceptions();
 
   // Be mindful of what resources you acquire here. They can be used by
@@ -74,7 +92,7 @@ void RendererMainPlatformDelegate::PlatformInitialize() {
     // cached and there's no more need to access the registry. If the sandbox
     // is disabled, we don't have to make this dummy call.
     scoped_ptr<icu::TimeZone> zone(icu::TimeZone::createDefault());
-    SetSkiaEnsureTypefaceAccessible(SkiaPreCacheFont);
+    SkTypeface_SetEnsureLOGFONTAccessibleProc(SkiaPreCacheFont);
     skia::SetSkiaEnsureTypefaceCharactersAccessible(
         SkiaPreCacheFontCharacters);
   }

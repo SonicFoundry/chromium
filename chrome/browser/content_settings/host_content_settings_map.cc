@@ -23,12 +23,12 @@
 #include "chrome/browser/content_settings/content_settings_rule.h"
 #include "chrome/browser/content_settings/content_settings_utils.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/content_settings_pattern.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
@@ -79,7 +79,7 @@ HostContentSettingsMap::HostContentSettingsMap(
     PrefService* prefs,
     bool incognito) :
 #ifndef NDEBUG
-      used_content_settings_providers_(false),
+      used_from_thread_id_(base::PlatformThread::CurrentId()),
 #endif
       prefs_(prefs),
       is_off_the_record_(incognito) {
@@ -108,10 +108,6 @@ HostContentSettingsMap::HostContentSettingsMap(
 void HostContentSettingsMap::RegisterExtensionService(
     ExtensionService* extension_service) {
   DCHECK(extension_service);
-  // http://crbug.com/176315
-  // #ifndef NDEBUG
-  //   DCHECK(!used_content_settings_providers_);
-  // #endif
   DCHECK(!content_settings_providers_[INTERNAL_EXTENSION_PROVIDER]);
   DCHECK(!content_settings_providers_[CUSTOM_EXTENSION_PROVIDER]);
 
@@ -129,24 +125,33 @@ void HostContentSettingsMap::RegisterExtensionService(
   content_settings_providers_[CUSTOM_EXTENSION_PROVIDER] =
       custom_extension_provider;
 
+#ifndef NDEBUG
+  DCHECK(used_from_thread_id_ != base::kInvalidThreadId)
+      << "Used from multiple threads before initialization complete.";
+#endif
+
   OnContentSettingChanged(ContentSettingsPattern(),
                           ContentSettingsPattern(),
                           CONTENT_SETTINGS_TYPE_DEFAULT,
-                          "");
+                          std::string());
 }
 #endif
 
 // static
-void HostContentSettingsMap::RegisterUserPrefs(PrefRegistrySyncable* registry) {
-  registry->RegisterIntegerPref(prefs::kContentSettingsWindowLastTabIndex,
-                                0,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterIntegerPref(prefs::kContentSettingsDefaultWhitelistVersion,
-                                0,
-                                PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterBooleanPref(prefs::kContentSettingsClearOnExitMigrated,
-                                false,
-                                PrefRegistrySyncable::SYNCABLE_PREF);
+void HostContentSettingsMap::RegisterUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterIntegerPref(
+      prefs::kContentSettingsWindowLastTabIndex,
+      0,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterIntegerPref(
+      prefs::kContentSettingsDefaultWhitelistVersion,
+      0,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kContentSettingsClearOnExitMigrated,
+      false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
 
   // Register the prefs for the content settings providers.
   content_settings::DefaultProvider::RegisterUserPrefs(registry);
@@ -158,7 +163,7 @@ ContentSetting HostContentSettingsMap::GetDefaultContentSettingFromProvider(
     ContentSettingsType content_type,
     content_settings::ProviderInterface* provider) const {
   scoped_ptr<content_settings::RuleIterator> rule_iterator(
-      provider->GetRuleIterator(content_type, "", false));
+      provider->GetRuleIterator(content_type, std::string(), false));
 
   ContentSettingsPattern wildcard = ContentSettingsPattern::Wildcard();
   while (rule_iterator->HasNext()) {
@@ -459,19 +464,18 @@ void HostContentSettingsMap::MigrateObsoleteClearOnExitPref() {
   AddSettingsForOneType(content_settings_providers_[PREF_PROVIDER],
                         PREF_PROVIDER,
                         CONTENT_SETTINGS_TYPE_COOKIES,
-                        "",
+                        std::string(),
                         &exceptions,
                         false);
   for (ContentSettingsForOneType::iterator it = exceptions.begin();
        it != exceptions.end(); ++it) {
     if (it->setting != CONTENT_SETTING_ALLOW)
       continue;
-    SetWebsiteSetting(
-        it->primary_pattern,
-        it->secondary_pattern,
-        CONTENT_SETTINGS_TYPE_COOKIES,
-        "",
-        Value::CreateIntegerValue(CONTENT_SETTING_SESSION_ONLY));
+    SetWebsiteSetting(it->primary_pattern,
+                      it->secondary_pattern,
+                      CONTENT_SETTINGS_TYPE_COOKIES,
+                      std::string(),
+                      Value::CreateIntegerValue(CONTENT_SETTING_SESSION_ONLY));
   }
 
   prefs_->SetBoolean(prefs::kContentSettingsClearOnExitMigrated, true);
@@ -512,7 +516,11 @@ void HostContentSettingsMap::AddSettingsForOneType(
 
 void HostContentSettingsMap::UsedContentSettingsProviders() const {
 #ifndef NDEBUG
-  used_content_settings_providers_ = true;
+  if (used_from_thread_id_ == base::kInvalidThreadId)
+    return;
+
+  if (base::PlatformThread::CurrentId() != used_from_thread_id_)
+    used_from_thread_id_ = base::kInvalidThreadId;
 #endif
 }
 

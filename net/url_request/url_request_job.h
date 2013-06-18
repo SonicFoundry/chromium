@@ -11,12 +11,14 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/system_monitor/system_monitor.h"
+#include "base/message_loop.h"
+#include "base/power_monitor/power_observer.h"
 #include "googleurl/src/gurl.h"
 #include "net/base/filter.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/load_states.h"
 #include "net/base/net_export.h"
+#include "net/base/request_priority.h"
 #include "net/base/upload_progress.h"
 #include "net/cookies/canonical_cookie.h"
 
@@ -37,8 +39,9 @@ class UploadDataStream;
 class URLRequestStatus;
 class X509Certificate;
 
-class NET_EXPORT URLRequestJob : public base::RefCounted<URLRequestJob>,
-                                 public base::SystemMonitor::PowerObserver {
+class NET_EXPORT URLRequestJob
+    : public base::RefCounted<URLRequestJob>,
+      public base::PowerObserver {
  public:
   explicit URLRequestJob(URLRequest* request,
                          NetworkDelegate* network_delegate);
@@ -53,8 +56,13 @@ class NET_EXPORT URLRequestJob : public base::RefCounted<URLRequestJob>,
   // Job types supporting upload data will override this.
   virtual void SetUpload(UploadDataStream* upload_data_stream);
 
-  // Sets extra request headers for Job types that support request headers.
+  // Sets extra request headers for Job types that support request
+  // headers. Called once before Start() is called.
   virtual void SetExtraRequestHeaders(const HttpRequestHeaders& headers);
+
+  // Sets the priority of the job. Called once before Start() is
+  // called, but also when the priority of the parent request changes.
+  virtual void SetPriority(RequestPriority priority);
 
   // If any error occurs while starting the Job, NotifyStartError should be
   // called.
@@ -111,6 +119,9 @@ class NET_EXPORT URLRequestJob : public base::RefCounted<URLRequestJob>,
   // Called to get response info.
   virtual void GetResponseInfo(HttpResponseInfo* info);
 
+  // This returns the times when events actually occurred, rather than the time
+  // each event blocked the request.  See FixupLoadTimingInfo in url_request.h
+  // for more information on the difference.
   virtual void GetLoadTimingInfo(LoadTimingInfo* load_timing_info) const;
 
   // Returns the cookie values included in the response, if applicable.
@@ -189,7 +200,7 @@ class NET_EXPORT URLRequestJob : public base::RefCounted<URLRequestJob>,
   // See url_request.h for details.
   virtual HostPortPair GetSocketAddress() const;
 
-  // base::SystemMonitor::PowerObserver methods:
+  // base::PowerObserver methods:
   // We invoke URLRequestJob::Kill on suspend (crbug.com/4606).
   virtual void OnSuspend() OVERRIDE;
 
@@ -283,6 +294,9 @@ class NET_EXPORT URLRequestJob : public base::RefCounted<URLRequestJob>,
   // still present to assist in calculations.  This is used by URLRequestHttpJob
   // to get SDCH to emit stats.
   void DestroyFilters() { filter_.reset(); }
+
+  // Provides derived classes with access to the request's network delegate.
+  NetworkDelegate* network_delegate() { return network_delegate_; }
 
   // The status of the job.
   const URLRequestStatus GetStatus();
@@ -379,6 +393,7 @@ class NET_EXPORT URLRequestJob : public base::RefCounted<URLRequestJob>,
   GURL deferred_redirect_url_;
   int deferred_redirect_status_code_;
 
+  // The network delegate to use with this request, if any.
   NetworkDelegate* network_delegate_;
 
   base::WeakPtrFactory<URLRequestJob> weak_factory_;

@@ -29,6 +29,7 @@
 #include "chrome/browser/chromeos/choose_mobile_network_dialog.h"
 #include "chrome/browser/chromeos/cros/cros_library.h"
 #include "chrome/browser/chromeos/cros/network_library.h"
+#include "chrome/browser/chromeos/cros/network_property_ui_data.h"
 #include "chrome/browser/chromeos/enrollment_dialog_view.h"
 #include "chrome/browser/chromeos/mobile_config.h"
 #include "chrome/browser/chromeos/options/network_config_view.h"
@@ -54,6 +55,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "grit/ash_resources.h"
+#include "grit/ash_strings.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 #include "grit/locale_settings.h"
@@ -175,6 +177,7 @@ const char kTagGsm[] = "gsm";
 const char kTagHardwareAddress[] = "hardwareAddress";
 const char kTagHardwareRevision[] = "hardwareRevision";
 const char kTagIdentity[] = "identity";
+const char kTagIccid[] = "iccid";
 const char kTagImei[] = "imei";
 const char kTagImsi[] = "imsi";
 const char kTagLanguage[] = "language";
@@ -591,7 +594,7 @@ int FindCurrentCarrierIndex(const base::ListValue* carriers,
 namespace options {
 
 InternetOptionsHandler::InternetOptionsHandler()
-  : ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+  : weak_factory_(this) {
   registrar_.Add(this, chrome::NOTIFICATION_REQUIRE_PIN_SETTING_CHANGE_ENDED,
       content::NotificationService::AllSources());
   registrar_.Add(this, chrome::NOTIFICATION_ENTER_PIN_ENDED,
@@ -918,11 +921,7 @@ void InternetOptionsHandler::ShowMorePlanInfoCallback(const ListValue* args) {
       cros_->FindCellularNetworkByPath(service_path);
   if (!cellular)
     return;
-
-  web_ui()->GetWebContents()->OpenURL(content::OpenURLParams(
-      cellular->GetAccountInfoUrl(), content::Referrer(),
-      NEW_FOREGROUND_TAB,
-      content::PAGE_TRANSITION_LINK, false));
+  ash::Shell::GetInstance()->delegate()->OpenMobileSetup(service_path);
 }
 
 void InternetOptionsHandler::BuyDataPlanCallback(const ListValue* args) {
@@ -1501,6 +1500,7 @@ void InternetOptionsHandler::PopulateCellularDetails(
     dictionary->SetString(kTagPrlVersion,
                           base::StringPrintf("%u", device->prl_version()));
     dictionary->SetString(kTagMeid, device->meid());
+    dictionary->SetString(kTagIccid, device->iccid());
     dictionary->SetString(kTagImei, device->imei());
     dictionary->SetString(kTagMdn, device->mdn());
     dictionary->SetString(kTagImsi, device->imsi());

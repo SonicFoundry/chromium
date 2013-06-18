@@ -7,7 +7,7 @@
 #include "base/string_number_conversions.h"
 #include "base/test/test_file_util.h"
 #include "content/browser/browser_thread_impl.h"
-#include "content/browser/download/byte_stream.h"
+#include "content/browser/byte_stream.h"
 #include "content/browser/download/download_create_info.h"
 #include "content/browser/download/download_file_impl.h"
 #include "content/browser/download/download_request_handle.h"
@@ -77,7 +77,7 @@ class DownloadFileTest : public testing::Test {
 
   DownloadFileTest() :
       observer_(new StrictMock<MockDownloadDestinationObserver>),
-      observer_factory_(ALLOW_THIS_IN_INITIALIZER_LIST(observer_.get())),
+      observer_factory_(observer_.get()),
       bytes_(-1),
       bytes_per_sec_(-1),
       hash_state_("xyzzy"),
@@ -302,7 +302,7 @@ class DownloadFileTest : public testing::Test {
   int64 bytes_per_sec_;
   std::string hash_state_;
 
-  MessageLoop loop_;
+  base::MessageLoop loop_;
 
  private:
   void SetRenameResult(bool* called_p,
@@ -592,8 +592,9 @@ TEST_F(DownloadFileTest, ConfirmUpdate) {
   AppendDataToFile(chunks1, 2);
 
   // Run the message loops for 750ms and check for results.
-  loop_.PostDelayedTask(FROM_HERE, MessageLoop::QuitClosure(),
-                         base::TimeDelta::FromMilliseconds(750));
+  loop_.PostDelayedTask(FROM_HERE,
+                        base::MessageLoop::QuitClosure(),
+                        base::TimeDelta::FromMilliseconds(750));
   loop_.Run();
 
   EXPECT_EQ(static_cast<int64>(strlen(kTestData1) + strlen(kTestData2)),

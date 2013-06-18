@@ -18,7 +18,6 @@
 #include "base/android/jni_helper.h"
 #include "base/callback_forward.h"
 #include "base/memory/scoped_ptr.h"
-#include "content/public/browser/javascript_dialog_manager.h"
 
 class SkBitmap;
 class TabContents;
@@ -63,18 +62,6 @@ class AwContents : public FindHelper::Listener,
   AwRenderViewHostExt* render_view_host_ext() {
     return render_view_host_ext_.get();
   }
-
-  void RunJavaScriptDialog(
-      content::JavaScriptMessageType message_type,
-      const GURL& origin_url,
-      const string16& message_text,
-      const string16& default_prompt_text,
-      const base::android::ScopedJavaLocalRef<jobject>& js_result);
-
-  void RunBeforeUnloadDialog(
-      const GURL& origin_url,
-      const string16& message_text,
-      const base::android::ScopedJavaLocalRef<jobject>& js_result);
 
   void PerformLongClick();
 
@@ -138,7 +125,6 @@ class AwContents : public FindHelper::Listener,
                                  jstring origin);
 
   // Find-in-page API and related methods.
-  jint FindAllSync(JNIEnv* env, jobject obj, jstring search_string);
   void FindAllAsync(JNIEnv* env, jobject obj, jstring search_string);
   void FindNext(JNIEnv* env, jobject obj, jboolean forward);
   void ClearMatches(JNIEnv* env, jobject obj);
@@ -157,6 +143,8 @@ class AwContents : public FindHelper::Listener,
   virtual void Invalidate() OVERRIDE;
   virtual void OnNewPicture(
       const base::android::JavaRef<jobject>& picture) OVERRIDE;
+  virtual gfx::Point GetLocationOnScreen() OVERRIDE;
+  virtual void OnPageScaleFactorChanged(float page_scale_factor) OVERRIDE;
 
   void ClearCache(JNIEnv* env, jobject obj, jboolean include_disk_files);
   void SetPendingWebContentsForPopup(scoped_ptr<content::WebContents> pending);

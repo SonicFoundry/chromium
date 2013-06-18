@@ -8,6 +8,9 @@
 #include "chrome/common/render_messages.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/notification_details.h"
+#include "content/public/browser/notification_source.h"
+#include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
@@ -59,6 +62,10 @@ void WebContentsModalDialogManager::FocusTopmostDialog() {
   native_manager_->FocusDialog(*dialog_begin());
 }
 
+content::WebContents* WebContentsModalDialogManager::GetWebContents() const {
+  return web_contents();
+}
+
 void WebContentsModalDialogManager::WillClose(
     NativeWebContentsModalDialog dialog) {
   WebContentsModalDialogList::iterator i(
@@ -71,22 +78,43 @@ void WebContentsModalDialogManager::WillClose(
   if (child_dialogs_.empty()) {
     BlockWebContentsInteraction(false);
   } else {
-    if (removed_topmost_dialog)
+    if (removed_topmost_dialog && !closing_all_dialogs_)
       native_manager_->ShowDialog(child_dialogs_[0]);
     BlockWebContentsInteraction(true);
   }
+}
+
+void WebContentsModalDialogManager::Observe(
+    int type,
+    const content::NotificationSource& source,
+    const content::NotificationDetails& details) {
+  DCHECK(type == content::NOTIFICATION_WEB_CONTENTS_VISIBILITY_CHANGED);
+
+  if (child_dialogs_.empty())
+    return;
+
+  bool visible = *content::Details<bool>(details).ptr();
+  if (visible)
+    native_manager_->ShowDialog(child_dialogs_[0]);
+  else
+    native_manager_->HideDialog(child_dialogs_[0]);
 }
 
 WebContentsModalDialogManager::WebContentsModalDialogManager(
     content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
       delegate_(NULL),
-      native_manager_(
-          ALLOW_THIS_IN_INITIALIZER_LIST(CreateNativeManager(this))) {
+      native_manager_(CreateNativeManager(this)),
+      closing_all_dialogs_(false) {
   DCHECK(native_manager_);
+  registrar_.Add(this,
+                 content::NOTIFICATION_WEB_CONTENTS_VISIBILITY_CHANGED,
+                 content::Source<content::WebContents>(web_contents));
 }
 
 void WebContentsModalDialogManager::CloseAllDialogs() {
+  closing_all_dialogs_ = true;
+
   // Clear out any dialogs since we are leaving this page entirely.  To ensure
   // that we iterate over every element in child_dialogs_ we need to use a copy
   // of child_dialogs_. Otherwise if closing a dialog causes child_dialogs_ to
@@ -97,6 +125,8 @@ void WebContentsModalDialogManager::CloseAllDialogs() {
     native_manager_->CloseDialog(*it);
     BlockWebContentsInteraction(false);
   }
+
+  closing_all_dialogs_ = false;
 }
 
 void WebContentsModalDialogManager::DidNavigateMainFrame(

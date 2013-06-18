@@ -102,6 +102,7 @@ class Plugin : public pp::InstancePrivate {
   //
   // Updates nacl_module_origin() and nacl_module_url().
   bool LoadNaClModule(nacl::DescWrapper* wrapper, ErrorInfo* error_info,
+                      bool enable_dyncode_syscalls,
                       pp::CompletionCallback init_done_cb,
                       pp::CompletionCallback crash_cb);
 
@@ -259,6 +260,11 @@ class Plugin : public pp::InstancePrivate {
   // interface which this class has as a member.
   UrlSchemeType GetUrlScheme(const std::string& url);
 
+  // A helper function that indicates if |url| can be requested by the document
+  // under the same-origin policy. Strictly speaking, it may be possible for the
+  // document to request the URL using CORS even if this function returns false.
+  bool DocumentCanRequest(const std::string& url);
+
   // Get the text description of the last error reported by the plugin.
   const nacl::string& last_error_string() const { return last_error_string_; }
   void set_last_error_string(const nacl::string& error) {
@@ -320,6 +326,7 @@ class Plugin : public pp::InstancePrivate {
                             bool should_report_uma,
                             bool uses_irt,
                             bool uses_ppapi,
+                            bool enable_dyncode_syscalls,
                             ErrorInfo* error_info,
                             pp::CompletionCallback init_done_cb,
                             pp::CompletionCallback crash_cb);
@@ -393,6 +400,11 @@ class Plugin : public pp::InstancePrivate {
   // detail level LOG_FATAL NaClLog entry.  If the crash was not due
   // to a LOG_FATAL this method will do nothing.
   void CopyCrashLogToJsConsole();
+
+  // Open an app file by requesting a file descriptor from the browser. This
+  // method first checks that the url is for an installed file before making the
+  // request so it won't slow down non-installed file downloads.
+  bool OpenURLFast(const nacl::string& url, FileDownloader* downloader);
 
   ScriptablePlugin* scriptable_plugin_;
 

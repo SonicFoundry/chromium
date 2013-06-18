@@ -37,7 +37,7 @@ bool EventListener::Equals(const EventListener* other) const {
 
 scoped_ptr<EventListener> EventListener::Copy() const {
   scoped_ptr<DictionaryValue> filter_copy;
-  if (filter.get())
+  if (filter)
     filter_copy.reset(filter->DeepCopy());
   return scoped_ptr<EventListener>(new EventListener(event_name, extension_id,
                                                      process,
@@ -53,7 +53,7 @@ EventListenerMap::~EventListenerMap() {}
 bool EventListenerMap::AddListener(scoped_ptr<EventListener> listener) {
   if (HasListener(listener.get()))
     return false;
-  if (listener->filter.get()) {
+  if (listener->filter) {
     scoped_ptr<EventMatcher> matcher(ParseEventMatcher(listener->filter.get()));
     MatcherID id = event_filter_.AddEventMatcher(listener->event_name,
                                                  matcher.Pass());
@@ -166,18 +166,17 @@ void EventListenerMap::LoadUnfilteredLazyListeners(
 void EventListenerMap::LoadFilteredLazyListeners(
     const std::string& extension_id,
     const DictionaryValue& filtered) {
-  for (DictionaryValue::key_iterator it = filtered.begin_keys();
-       it != filtered.end_keys(); ++it) {
+  for (DictionaryValue::Iterator it(filtered); !it.IsAtEnd(); it.Advance()) {
     // We skip entries if they are malformed.
     const ListValue* filter_list = NULL;
-    if (!filtered.GetListWithoutPathExpansion(*it, &filter_list))
+    if (!it.value().GetAsList(&filter_list))
       continue;
     for (size_t i = 0; i < filter_list->GetSize(); i++) {
       const DictionaryValue* filter = NULL;
       if (!filter_list->GetDictionary(i, &filter))
         continue;
       AddListener(scoped_ptr<EventListener>(new EventListener(
-          *it, extension_id, NULL,
+          it.key(), extension_id, NULL,
           scoped_ptr<DictionaryValue>(filter->DeepCopy()))));
     }
   }

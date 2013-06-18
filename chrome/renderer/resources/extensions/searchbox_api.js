@@ -13,6 +13,7 @@ if (!chrome.embeddedSearch) {
     //                            Private functions
     // =========================================================================
     native function GetFont();
+    // DEPRECATED. TODO(sreeram): Remove once google.com no longer uses this.
     native function NavigateContentWindow();
 
     function escapeHTML(text) {
@@ -30,20 +31,23 @@ if (!chrome.embeddedSearch) {
     var safeObjects = {};
 
     // Returns the |restrictedText| wrapped in a ShadowDOM.
-    function SafeWrap(restrictedText, width, height, opt_fontSize) {
+    function SafeWrap(restrictedText, height, opt_width, opt_fontSize,
+        opt_direction) {
       var node = document.createElement('div');
       var nodeShadow = safeObjects.createShadowRoot.apply(node);
       nodeShadow.applyAuthorStyles = true;
       nodeShadow.innerHTML =
-          '<div style="' +
-              'width: ' + width + 'px !important;' +
+          '<div dir="auto" style="' +
+              (opt_width ? 'width: ' + opt_width + 'px !important;' : '') +
               'height: ' + height + 'px !important;' +
               'font-family: \'' + GetFont() + '\', \'Arial\' !important;' +
               (opt_fontSize ?
                   'font-size: ' + opt_fontSize + 'px !important;' : '') +
               'overflow: hidden !important;' +
               'text-overflow: ellipsis !important;' +
-              'white-space: nowrap !important">' +
+              'white-space: nowrap !important"' +
+              (opt_direction ? ' dir="' + opt_direction + '"' : '') +
+              '>' +
             restrictedText +
           '</div>';
       safeObjects.defineProperty(node, 'webkitShadowRoot', { value: null });
@@ -61,6 +65,7 @@ if (!chrome.embeddedSearch) {
     // =========================================================================
     //                           Exported functions
     // =========================================================================
+    // DEPRECATED. TODO(sreeram): Remove once google.com no longer uses this.
     this.navigateContentWindow = function(destination, disposition) {
       return NavigateContentWindow(destination, disposition);
     };
@@ -90,54 +95,54 @@ if (!chrome.embeddedSearch) {
       native function GetDisplayInstantResults();
       native function GetFontSize();
       native function IsKeyCaptureEnabled();
-      native function SetSuggestions();
-      native function SetQuerySuggestion();
-      native function SetQuerySuggestionFromAutocompleteResult();
       native function SetQuery();
       native function SetQueryFromAutocompleteResult();
+      native function SetSuggestion();
+      native function SetSuggestionFromAutocompleteResult();
+      native function SetSuggestions();
       native function ShowOverlay();
+      native function FocusOmnibox();
       native function StartCapturingKeyStrokes();
       native function StopCapturingKeyStrokes();
+      native function NavigateSearchBox();
+      native function ShowBars();
+      native function HideBars();
+      native function GetSuggestionData();
+      native function GetMostVisitedItemData();
 
       function SafeWrapSuggestion(restrictedText) {
-        return SafeWrap(restrictedText, window.innerWidth - 155, 22);
+        return SafeWrap(restrictedText, 22);
       }
 
-      // Wraps the AutocompleteResult query and URL into ShadowDOM nodes so that
-      // the JS cannot access them and deletes the raw values.
+      // If shadowDom is to be used, wraps the AutocompleteResult query and URL
+      // into ShadowDOM nodes so that the JS cannot access them and deletes the
+      // raw values. Else if iframes are to be used, replaces the
+      // destination_url with the chrome search URL that should be used as the
+      // iframe.
+      // TODO(shishir): Remove code to support ShadowDOM once server side
+      // changes are live.
       function GetAutocompleteResultsWrapper() {
         var autocompleteResults = DedupeAutocompleteResults(
             GetAutocompleteResults());
         var userInput = GetQuery();
         for (var i = 0, result; result = autocompleteResults[i]; ++i) {
-          var title = escapeHTML(result.contents);
-          var url = escapeHTML(CleanUrl(result.destination_url, userInput));
-          var combinedHtml = '<span class=chrome_url>' + url + '</span>';
-          // TODO(dcblack): Rename these titleElement, urlElement, and
-          // combinedElement for optimal correctness.
-          if (title) {
-            result.titleNode = SafeWrapSuggestion(title);
-            combinedHtml += '<span class=chrome_separator> &ndash; </span>' +
-                '<span class=chrome_title>' + title + '</span>';
+          // TODO(shishir): Fix the naming violations (chrome_search ->
+          // chrome-search etc) when the server supports both names.
+          var className = result.is_search ? 'chrome_search' : 'chrome_url';
+          var combinedElement = '<span class=' + className + '>' +
+              escapeHTML(result.contents) + '</span>';
+          if (result.description) {
+            combinedElement +=
+                '<span class=chrome_separator> &ndash; </span>' +
+                '<span class=chrome_title>' +
+                escapeHTML(result.description) + '</span>';
           }
-          result.urlNode = SafeWrapSuggestion(url);
-          result.combinedNode = SafeWrapSuggestion(combinedHtml);
-          delete result.contents;
-          delete result.destination_url;
+          result.combinedNode = SafeWrapSuggestion(combinedElement);
+          result.destination_url = null;
+          result.contents = null;
+          result.description = null;
         }
         return autocompleteResults;
-      }
-
-      // TODO(dcblack): Do this in C++ instead of JS.
-      function CleanUrl(url, userInput) {
-        if (url.indexOf(userInput) == 0) {
-          return url;
-        }
-        url = url.replace(HTTP_REGEX, '');
-        if (url.indexOf(userInput) == 0) {
-          return url;
-        }
-        return url.replace(WWW_REGEX, '');
       }
 
       // TODO(dcblack): Do this in C++ instead of JS.
@@ -229,29 +234,42 @@ if (!chrome.embeddedSearch) {
       this.__defineGetter__('font', GetFont);
       this.__defineGetter__('fontSize', GetFontSize);
 
+      // This method is restricted to chrome-search://suggestion pages by
+      // checking the invoking context's origin in searchbox_extension.cc.
+      this.getSuggestionData = function(restrictedId) {
+        return GetSuggestionData(restrictedId);
+      };
+
+      // This method is restricted to chrome-search://most-visited pages by
+      // checking the invoking context's origin in searchbox_extension.cc.
+      this.getMostVisitedItemData = function(restrictedId) {
+        return GetMostVisitedItemData(restrictedId);
+      };
+
       this.setSuggestions = function(text) {
         SetSuggestions(text);
       };
       this.setAutocompleteText = function(text, behavior) {
-        SetQuerySuggestion(text, behavior);
+        SetSuggestion(text, behavior);
       };
-      this.setRestrictedAutocompleteText = function(resultId) {
-        SetQuerySuggestionFromAutocompleteResult(resultId);
+      this.setRestrictedAutocompleteText = function(autocompleteResultId) {
+        SetSuggestionFromAutocompleteResult(autocompleteResultId);
       };
       this.setValue = function(text, type) {
         SetQuery(text, type);
       };
-      this.setRestrictedValue = function(resultId) {
-        SetQueryFromAutocompleteResult(resultId);
+      // Must access nativeSuggestions before calling setRestrictedValue.
+      this.setRestrictedValue = function(autocompleteResultId) {
+        SetQueryFromAutocompleteResult(autocompleteResultId);
       };
-      // TODO(jered): Remove the deprecated "reason" argument.
-      this.showOverlay = function(reason, height) {
-        ShowOverlay(reason, height);
+      this.showOverlay = function(height) {
+        ShowOverlay(height);
       };
-      // TODO(jered): Remove this when GWS knows about showOverlay().
-      this.show = this.showOverlay;
       this.markDuplicateSuggestions = function(clientSuggestions) {
         return DedupeClientSuggestions(clientSuggestions);
+      };
+      this.focus = function() {
+        FocusOmnibox();
       };
       this.startCapturingKeyStrokes = function() {
         StartCapturingKeyStrokes();
@@ -259,15 +277,24 @@ if (!chrome.embeddedSearch) {
       this.stopCapturingKeyStrokes = function() {
         StopCapturingKeyStrokes();
       };
+      this.navigateContentWindow = function(destination, disposition) {
+        NavigateSearchBox(destination, disposition);
+      }
+      this.showBars = function() {
+        ShowBars();
+      };
+      this.hideBars = function() {
+        HideBars();
+      };
       this.onchange = null;
       this.onsubmit = null;
       this.oncancel = null;
       this.onresize = null;
       this.onkeypress = null;
       this.onkeycapturechange = null;
-      this.oncontextchange = null;
       this.onmarginchange = null;
       this.onnativesuggestions = null;
+      this.onbarshidden = null;
 
       // DEPRECATED. These methods are from the legacy searchbox API.
       // TODO(jered): Delete these.
@@ -291,9 +318,10 @@ if (!chrome.embeddedSearch) {
       native function DeleteMostVisitedItem();
       native function UndoAllMostVisitedDeletions();
       native function UndoMostVisitedDeletion();
+      native function NavigateNewTabPage();
 
-      function SafeWrapMostVisited(restrictedText, width) {
-        return SafeWrap(restrictedText, width, 18, 11);
+      function SafeWrapMostVisited(restrictedText, width, opt_direction) {
+        return SafeWrap(restrictedText, 18, width, 11, opt_direction);
       }
 
       function GetMostVisitedItemsWrapper() {
@@ -301,10 +329,16 @@ if (!chrome.embeddedSearch) {
         for (var i = 0, item; item = mostVisitedItems[i]; ++i) {
           var title = escapeHTML(item.title);
           var domain = escapeHTML(item.domain);
-          item.titleElement = SafeWrapMostVisited(title, 108);
-          item.domainElement = SafeWrapMostVisited(domain, 95);
-          delete item.title;
-          delete item.domain;
+          // TODO(jered): Delete these Shadow DOM elements once the
+          // Google-provided NTP no longer depends on them.
+          item.titleElement = SafeWrapMostVisited(title, 140, item.direction);
+          item.domainElement = SafeWrapMostVisited(domain, 123);
+          // These properties are private data and should not be returned to
+          // the page. They are only accessible via getMostVisitedItemData().
+          item.url = null;
+          item.title = null;
+          item.domain = null;
+          item.direction = null;
         }
         return mostVisitedItems;
       }
@@ -315,15 +349,18 @@ if (!chrome.embeddedSearch) {
       this.__defineGetter__('mostVisited', GetMostVisitedItemsWrapper);
       this.__defineGetter__('themeBackgroundInfo', GetThemeBackgroundInfo);
 
-      this.deleteMostVisitedItem = function(restrictId) {
-        DeleteMostVisitedItem(restrictId);
+      this.deleteMostVisitedItem = function(restrictedId) {
+        DeleteMostVisitedItem(restrictedId);
       };
       this.undoAllMostVisitedDeletions = function() {
         UndoAllMostVisitedDeletions();
       };
-      this.undoMostVisitedDeletion = function(restrictId) {
-        UndoMostVisitedDeletion(restrictId);
+      this.undoMostVisitedDeletion = function(restrictedId) {
+        UndoMostVisitedDeletion(restrictedId);
       };
+      this.navigateContentWindow = function(destination, disposition) {
+        NavigateNewTabPage(destination, disposition);
+      }
 
       this.onmostvisitedchange = null;
       this.onthemechange = null;

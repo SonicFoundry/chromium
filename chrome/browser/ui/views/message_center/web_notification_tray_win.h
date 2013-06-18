@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_MESSAGE_CENTER_WEB_NOTIFICATION_TRAY_WIN_H_
 #define CHROME_BROWSER_UI_VIEWS_MESSAGE_CENTER_WEB_NOTIFICATION_TRAY_WIN_H_
 
+#include "base/memory/weak_ptr.h"
 #include "chrome/browser/status_icons/status_icon_observer.h"
 #include "ui/base/models/simple_menu_model.h"
 #include "ui/message_center/message_center_tray.h"
@@ -16,7 +17,7 @@ class StatusIcon;
 namespace message_center {
 class MessageCenter;
 class MessageCenterBubble;
-class MessagePopupBubble;
+class MessagePopupCollection;
 }
 
 namespace views {
@@ -35,8 +36,8 @@ class NotificationBubbleWrapperWin;
 // tray icon on click.
 class WebNotificationTrayWin
     : public message_center::MessageCenterTrayDelegate,
-      public ui::SimpleMenuModel::Delegate,
-      public StatusIconObserver {
+      public StatusIconObserver,
+      public base::SupportsWeakPtr<WebNotificationTrayWin> {
  public:
   WebNotificationTrayWin();
   virtual ~WebNotificationTrayWin();
@@ -48,7 +49,6 @@ class WebNotificationTrayWin
   virtual void HidePopups() OVERRIDE;
   virtual bool ShowMessageCenter() OVERRIDE;
   virtual void HideMessageCenter() OVERRIDE;
-  virtual void UpdateMessageCenter() OVERRIDE;
   virtual void UpdatePopups() OVERRIDE;
   virtual void OnMessageCenterTrayChanged() OVERRIDE;
 
@@ -67,14 +67,6 @@ class WebNotificationTrayWin
   void UpdateStatusIcon();
   void HideBubbleWithView(const views::TrayBubbleView* bubble_view);
 
-  // SimpleMenuModel::Delegate implementation.
-  virtual bool IsCommandIdChecked(int command_id) const OVERRIDE;
-  virtual bool IsCommandIdEnabled(int command_id) const OVERRIDE;
-  virtual bool GetAcceleratorForCommandId(
-      int command_id,
-      ui::Accelerator* accelerator) OVERRIDE;
-  virtual void ExecuteCommand(int command_id) OVERRIDE;
-
  private:
   FRIEND_TEST_ALL_PREFIXES(WebNotificationTrayWinTest, WebNotifications);
   FRIEND_TEST_ALL_PREFIXES(WebNotificationTrayWinTest,
@@ -83,17 +75,20 @@ class WebNotificationTrayWin
                            ManyMessageCenterNotifications);
   FRIEND_TEST_ALL_PREFIXES(WebNotificationTrayWinTest, ManyPopupNotifications);
 
+  StatusIcon* GetStatusIcon();
+  void DestroyStatusIcon();
   void AddQuietModeMenu(StatusIcon* status_icon);
-  message_center::MessagePopupBubble* GetPopupBubbleForTest();
   message_center::MessageCenterBubble* GetMessageCenterBubbleForTest();
 
-  scoped_ptr<internal::NotificationBubbleWrapperWin> popup_bubble_;
   scoped_ptr<internal::NotificationBubbleWrapperWin> message_center_bubble_;
+  scoped_ptr<message_center::MessagePopupCollection> popup_collection_;
 
   StatusIcon* status_icon_;
   bool message_center_visible_;
   scoped_ptr<MessageCenterTray> message_center_tray_;
   gfx::Point mouse_click_point_;
+
+  bool should_update_tray_content_;
 
   DISALLOW_COPY_AND_ASSIGN(WebNotificationTrayWin);
 };

@@ -4,9 +4,9 @@
 
 #include "ash/system/tray/tray_background_view.h"
 
-#include "ash/launcher/background_animator.h"
 #include "ash/root_window_controller.h"
 #include "ash/screen_ash.h"
+#include "ash/shelf/shelf_layout_manager.h"
 #include "ash/shell.h"
 #include "ash/shell_window_ids.h"
 #include "ash/system/status_area_widget.h"
@@ -14,7 +14,6 @@
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_event_filter.h"
 #include "ash/wm/property_util.h"
-#include "ash/wm/shelf_layout_manager.h"
 #include "ash/wm/window_animations.h"
 #include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
@@ -28,8 +27,9 @@
 
 namespace {
 
-const SkColor kTrayBackgroundAlpha = 100;
-const SkColor kTrayBackgroundHoverAlpha = 150;
+const int kTrayBackgroundAlpha = 100;
+const int kTrayBackgroundHoverAlpha = 150;
+const SkColor kTrayBackgroundPressedColor = SkColorSetRGB(66, 129, 244);
 
 // Adjust the size of TrayContainer with additional padding.
 const int kTrayContainerVerticalPaddingBottomAlignment  = 1;
@@ -72,10 +72,15 @@ class TrayBackgroundView::TrayWidgetObserver : public views::WidgetObserver {
 
 class TrayBackground : public views::Background {
  public:
-  TrayBackground() : alpha_(kTrayBackgroundAlpha) {}
+  TrayBackground() {
+    set_alpha(kTrayBackgroundAlpha);
+  }
+
   virtual ~TrayBackground() {}
 
-  void set_alpha(int alpha) { alpha_ = alpha; }
+  SkColor color() { return color_; }
+  void set_color(SkColor color) { color_ = color; }
+  void set_alpha(int alpha) { color_ = SkColorSetARGB(alpha, 0, 0, 0); }
 
  private:
   // Overridden from views::Background.
@@ -83,7 +88,7 @@ class TrayBackground : public views::Background {
     SkPaint paint;
     paint.setAntiAlias(true);
     paint.setStyle(SkPaint::kFill_Style);
-    paint.setColor(SkColorSetARGB(alpha_, 0, 0, 0));
+    paint.setColor(color_);
     SkPath path;
     gfx::Rect bounds(view->GetLocalBounds());
     SkScalar radius = SkIntToScalar(kTrayRoundedBorderRadius);
@@ -91,7 +96,7 @@ class TrayBackground : public views::Background {
     canvas->DrawPath(path, paint);
   }
 
-  int alpha_;
+  SkColor color_;
 
   DISALLOW_COPY_AND_ASSIGN(TrayBackground);
 };
@@ -167,12 +172,12 @@ TrayBackgroundView::TrayBackgroundView(
       tray_container_(NULL),
       shelf_alignment_(SHELF_ALIGNMENT_BOTTOM),
       background_(NULL),
-      ALLOW_THIS_IN_INITIALIZER_LIST(hide_background_animator_(
-          this, 0, kTrayBackgroundAlpha)),
-      ALLOW_THIS_IN_INITIALIZER_LIST(hover_background_animator_(
-          this, 0, kTrayBackgroundHoverAlpha - kTrayBackgroundAlpha)),
-      ALLOW_THIS_IN_INITIALIZER_LIST(widget_observer_(
-          new TrayWidgetObserver(this))) {
+      hide_background_animator_(this, 0, kTrayBackgroundAlpha),
+      hover_background_animator_(
+          this, 0, kTrayBackgroundHoverAlpha - kTrayBackgroundAlpha),
+      hovered_(false),
+      pressed_(false),
+      widget_observer_(new TrayWidgetObserver(this)) {
   set_notify_enter_exit_on_child(true);
 
   // Initially we want to paint the background, but without the hover effect.
@@ -196,11 +201,23 @@ void TrayBackgroundView::Initialize() {
 }
 
 void TrayBackgroundView::OnMouseEntered(const ui::MouseEvent& event) {
+  hovered_ = true;
+  if (!background_)
+    return;
+  if (pressed_)
+    return;
+
   hover_background_animator_.SetPaintsBackground(true,
       internal::BackgroundAnimator::CHANGE_ANIMATE);
 }
 
 void TrayBackgroundView::OnMouseExited(const ui::MouseEvent& event) {
+  hovered_ = false;
+  if (!background_)
+    return;
+  if (pressed_)
+    return;
+
   hover_background_animator_.SetPaintsBackground(false,
       internal::BackgroundAnimator::CHANGE_ANIMATE);
 }
@@ -234,10 +251,13 @@ bool TrayBackgroundView::PerformAction(const ui::Event& event) {
 }
 
 void TrayBackgroundView::UpdateBackground(int alpha) {
-  if (background_) {
-    background_->set_alpha(hide_background_animator_.alpha() +
-                           hover_background_animator_.alpha());
-  }
+  if (!background_)
+    return;
+  if (pressed_)
+    return;
+
+  background_->set_alpha(hide_background_animator_.alpha() +
+                         hover_background_animator_.alpha());
   SchedulePaint();
 }
 
@@ -246,20 +266,19 @@ void TrayBackgroundView::SetContents(views::View* contents) {
   AddChildView(contents);
 }
 
+void TrayBackgroundView::SetPaintsBackground(
+    bool value,
+    internal::BackgroundAnimator::ChangeType change_type) {
+  hide_background_animator_.SetPaintsBackground(value, change_type);
+}
+
 void TrayBackgroundView::SetContentsBackground() {
   background_ = new internal::TrayBackground;
   tray_container_->set_background(background_);
 }
 
-void TrayBackgroundView::SetPaintsBackground(
-      bool value,
-      internal::BackgroundAnimator::ChangeType change_type) {
-  hide_background_animator_.SetPaintsBackground(value, change_type);
-}
-
 ShelfLayoutManager* TrayBackgroundView::GetShelfLayoutManager() {
-  return
-      RootWindowController::ForLauncher(GetWidget()->GetNativeView())->shelf();
+  return ShelfLayoutManager::ForLauncher(GetWidget()->GetNativeView());
 }
 
 void TrayBackgroundView::SetShelfAlignment(ShelfAlignment alignment) {
@@ -382,12 +401,27 @@ TrayBubbleView::AnchorAlignment TrayBackgroundView::GetAnchorAlignment() const {
   return TrayBubbleView::ANCHOR_ALIGNMENT_BOTTOM;
 }
 
+void TrayBackgroundView::SetBubbleVisible(bool visible) {
+  pressed_ = visible;
+  if (!background_)
+    return;
+
+  // Do not change gradually, changing color between grey and blue is weird.
+  if (pressed_)
+    background_->set_color(kTrayBackgroundPressedColor);
+  else if (hovered_)
+    background_->set_alpha(kTrayBackgroundHoverAlpha);
+  else
+    background_->set_alpha(kTrayBackgroundAlpha);
+  SchedulePaint();
+}
+
 void TrayBackgroundView::UpdateBubbleViewArrow(
     views::TrayBubbleView* bubble_view) {
   aura::RootWindow* root_window =
       bubble_view->GetWidget()->GetNativeView()->GetRootWindow();
   ash::internal::ShelfLayoutManager* shelf =
-      ash::GetRootWindowController(root_window)->shelf();
+      ShelfLayoutManager::ForLauncher(root_window);
   bubble_view->SetArrowPaintType(
       shelf->IsVisible() ? views::BubbleBorder::PAINT_NORMAL :
                            views::BubbleBorder::PAINT_TRANSPARENT);

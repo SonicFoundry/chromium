@@ -136,7 +136,7 @@ std::string PackKeystoreBootstrapToken(
     const std::string& current_keystore_key,
     Encryptor* encryptor) {
   if (current_keystore_key.empty())
-    return "";
+    return std::string();
 
   base::ListValue keystore_key_values;
   for (size_t i = 0; i < old_keystore_keys.size(); ++i)
@@ -177,7 +177,7 @@ bool UnpackKeystoreBootstrapToken(
   JSONStringValueSerializer json(&decrypted_keystore_bootstrap);
   scoped_ptr<base::Value> deserialized_keystore_keys(
       json.Deserialize(NULL, NULL));
-  if (!deserialized_keystore_keys.get())
+  if (!deserialized_keystore_keys)
     return false;
   base::ListValue* internal_list_value = NULL;
   if (!deserialized_keystore_keys->GetAsList(&internal_list_value))
@@ -210,7 +210,7 @@ SyncEncryptionHandlerImpl::SyncEncryptionHandlerImpl(
     Encryptor* encryptor,
     const std::string& restored_key_for_bootstrapping,
     const std::string& restored_keystore_key_for_bootstrapping)
-    : weak_ptr_factory_(ALLOW_THIS_IN_INITIALIZER_LIST(this)),
+    : weak_ptr_factory_(this),
       user_share_(user_share),
       vault_unsafe_(encryptor, SensitiveTypes()),
       encrypt_everything_(false),
@@ -1112,7 +1112,7 @@ void SyncEncryptionHandlerImpl::SetCustomPassphrase(
   if (passphrase_type_ != KEYSTORE_PASSPHRASE) {
     DVLOG(1) << "Failing to set a custom passphrase because one has already "
              << "been set.";
-    FinishSetPassphrase(false, "", trans, nigori_node);
+    FinishSetPassphrase(false, std::string(), trans, nigori_node);
     return;
   }
 
@@ -1125,7 +1125,7 @@ void SyncEncryptionHandlerImpl::SetCustomPassphrase(
     // if statement above. For the sake of safety though, we check for it in
     // case a client is misbehaving.
     LOG(ERROR) << "Failing to set custom passphrase because of pending keys.";
-    FinishSetPassphrase(false, "", trans, nigori_node);
+    FinishSetPassphrase(false, std::string(), trans, nigori_node);
     return;
   }
 
@@ -1297,11 +1297,9 @@ bool SyncEncryptionHandlerImpl::ShouldTriggerMigration(
     const sync_pb::NigoriSpecifics& nigori,
     const Cryptographer& cryptographer) const {
   DCHECK(thread_checker_.CalledOnValidThread());
-  // TODO(zea): once we're willing to have the keystore key be the only
-  // encryption key, change this to !has_pending_keys(). For now, we need the
-  // cryptographer to be initialized with the current GAIA pass so that older
-  // clients (that don't have keystore support) can decrypt the keybag.
-  if (!cryptographer.is_ready())
+  // Don't migrate if there are pending encryption keys (because data
+  // encrypted with the pending keys will not be decryptable).
+  if (cryptographer.has_pending_keys())
     return false;
   if (IsNigoriMigratedToKeystore(nigori)) {
     // If the nigori is already migrated but does not reflect the explicit
@@ -1390,18 +1388,28 @@ bool SyncEncryptionHandlerImpl::AttemptToMigrateNigoriToKeystore(
 
   if (!keystore_key_.empty()) {
     KeyParams key_params = {"localhost", "dummy", keystore_key_};
-    if (old_keystore_keys_.size() > 0 &&
-        new_passphrase_type == KEYSTORE_PASSPHRASE) {
-      // At least one key rotation has been performed, so we no longer care
-      // about backwards compatibility. Ensure the keystore key is the default
-      // key.
+    if ((old_keystore_keys_.size() > 0 &&
+         new_passphrase_type == KEYSTORE_PASSPHRASE) ||
+        !cryptographer->is_initialized()) {
+      // Either at least one key rotation has been performed, so we no longer
+      // care about backwards compatibility, or we're generating keystore-based
+      // encryption keys without knowing the GAIA password (and therefore the
+      // cryptographer is not initialized), so we can't support backwards
+      // compatibility. Ensure the keystore key is the default key.
       DVLOG(1) << "Migrating keybag to keystore key.";
+      bool cryptographer_was_ready = cryptographer->is_ready();
       if (!cryptographer->AddKey(key_params)) {
         LOG(ERROR) << "Failed to add keystore key as default key";
         UMA_HISTOGRAM_ENUMERATION("Sync.AttemptNigoriMigration",
                                   FAILED_TO_SET_DEFAULT_KEYSTORE,
                                   MIGRATION_RESULT_SIZE);
         return false;
+      }
+      if (!cryptographer_was_ready && cryptographer->is_ready()) {
+        FOR_EACH_OBSERVER(
+            SyncEncryptionHandler::Observer,
+            observers_,
+            OnPassphraseAccepted());
       }
     } else {
       // We're in backwards compatible mode -- either the account has an

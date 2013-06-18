@@ -11,22 +11,23 @@
 #include "net/base/capturing_net_log.h"
 #include "net/base/net_log.h"
 #include "net/base/net_log_unittest.h"
-#include "net/base/mock_host_resolver.h"
 #include "net/base/test_completion_callback.h"
 #include "net/base/winsock_init.h"
-#include "net/http/http_response_info.h"
+#include "net/dns/mock_host_resolver.h"
 #include "net/http/http_response_headers.h"
+#include "net/http/http_response_info.h"
 #include "net/socket/client_socket_factory.h"
-#include "net/socket/tcp_client_socket.h"
+#include "net/socket/next_proto.h"
 #include "net/socket/socket_test_util.h"
+#include "net/socket/tcp_client_socket.h"
 #include "net/spdy/buffered_spdy_framer.h"
 #include "net/spdy/spdy_http_utils.h"
 #include "net/spdy/spdy_protocol.h"
 #include "net/spdy/spdy_session_pool.h"
 #include "net/spdy/spdy_test_util_common.h"
 #include "net/spdy/spdy_test_util_spdy3.h"
-#include "testing/platform_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "testing/platform_test.h"
 
 using namespace net::test_spdy3;
 
@@ -93,8 +94,8 @@ class SpdyProxyClientSocketSpdy3Test : public PlatformTest {
                                         int num_reads);
 
   void AddAuthToCache() {
-    const string16 kFoo(ASCIIToUTF16("foo"));
-    const string16 kBar(ASCIIToUTF16("bar"));
+    const base::string16 kFoo(ASCIIToUTF16("foo"));
+    const base::string16 kBar(ASCIIToUTF16("bar"));
     session_->http_auth_cache()->Add(GURL(kProxyUrl),
                                      "MyRealm1",
                                      HttpAuth::AUTH_SCHEME_BASIC,
@@ -139,7 +140,7 @@ SpdyProxyClientSocketSpdy3Test::SpdyProxyClientSocketSpdy3Test()
       data_(NULL),
       session_(NULL),
       read_buf_(NULL),
-      session_deps_(),
+      session_deps_(kProtoSPDY3),
       connect_data_(SYNCHRONOUS, OK),
       spdy_session_(NULL),
       spdy_stream_(NULL),
@@ -338,7 +339,7 @@ SpdyProxyClientSocketSpdy3Test::ConstructConnectRequestFrame() {
     "user-agent", kUserAgent,
     ":version", "HTTP/1.1",
   };
-  return ConstructSpdyPacket(
+  return ConstructSpdyFrame(
       kSynStartHeader, NULL, 0, kConnectHeaders, arraysize(kConnectHeaders)/2);
 }
 
@@ -367,7 +368,7 @@ SpdyProxyClientSocketSpdy3Test::ConstructConnectAuthRequestFrame() {
     ":version", "HTTP/1.1",
     "proxy-authorization", "Basic Zm9vOmJhcg==",
   };
-  return ConstructSpdyPacket(
+  return ConstructSpdyFrame(
       kSynStartHeader, NULL, 0, kConnectHeaders, arraysize(kConnectHeaders)/2);
 }
 
@@ -1353,10 +1354,9 @@ TEST_F(SpdyProxyClientSocketSpdy3Test, NetLog) {
 class DeleteSockCallback : public TestCompletionCallbackBase {
  public:
   explicit DeleteSockCallback(scoped_ptr<SpdyProxyClientSocket>* sock)
-    : sock_(sock),
-      ALLOW_THIS_IN_INITIALIZER_LIST(callback_(
-          base::Bind(&DeleteSockCallback::OnComplete,
-                     base::Unretained(this)))) {
+      : sock_(sock),
+        callback_(base::Bind(&DeleteSockCallback::OnComplete,
+                             base::Unretained(this))) {
   }
 
   virtual ~DeleteSockCallback() {

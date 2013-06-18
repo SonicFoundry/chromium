@@ -19,9 +19,9 @@
 namespace net {
 
 class NET_EXPORT_PRIVATE FixRateSender : public SendAlgorithmInterface {
-
  public:
   explicit FixRateSender(const QuicClock* clock);
+  virtual ~FixRateSender();
 
   // Start implementation of SendAlgorithmInterface.
   virtual void OnIncomingQuicCongestionFeedbackFrame(
@@ -36,10 +36,15 @@ class NET_EXPORT_PRIVATE FixRateSender : public SendAlgorithmInterface {
   virtual void SentPacket(QuicTime sent_time,
                           QuicPacketSequenceNumber equence_number,
                           QuicByteCount bytes,
-                          bool is_retransmission) OVERRIDE;
-  virtual QuicTime::Delta TimeUntilSend(QuicTime now,
-                                        bool is_retransmission) OVERRIDE;
+                          Retransmission is_retransmission) OVERRIDE;
+  virtual void AbandoningPacket(QuicPacketSequenceNumber sequence_number,
+                                QuicByteCount abandoned_bytes) OVERRIDE;
+  virtual QuicTime::Delta TimeUntilSend(
+      QuicTime now,
+      Retransmission is_retransmission,
+      HasRetransmittableData has_retransmittable_data) OVERRIDE;
   virtual QuicBandwidth BandwidthEstimate() OVERRIDE;
+  virtual QuicTime::Delta SmoothedRtt() OVERRIDE;
   // End implementation of SendAlgorithmInterface.
 
  private:
@@ -49,6 +54,7 @@ class NET_EXPORT_PRIVATE FixRateSender : public SendAlgorithmInterface {
   LeakyBucket fix_rate_leaky_bucket_;
   PacedSender paced_sender_;
   QuicByteCount data_in_flight_;
+  QuicTime::Delta latest_rtt_;
 
   DISALLOW_COPY_AND_ASSIGN(FixRateSender);
 };

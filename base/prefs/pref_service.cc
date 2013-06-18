@@ -21,8 +21,6 @@
 #include "base/value_conversions.h"
 #include "build/build_config.h"
 
-using content::BrowserContext;
-
 namespace {
 
 class ReadErrorHandler : public PersistentPrefStore::ReadErrorDelegate {
@@ -219,7 +217,7 @@ PrefService::PrefInitializationStatus PrefService::GetInitializationStatus()
     case PersistentPrefStore::PREF_READ_ERROR_NONE:
       return INITIALIZATION_STATUS_SUCCESS;
     case PersistentPrefStore::PREF_READ_ERROR_NO_FILE:
-      return INITIALIZATION_STATUS_CREATED_NEW_PROFILE;
+      return INITIALIZATION_STATUS_CREATED_NEW_PREF_STORE;
     default:
       return INITIALIZATION_STATUS_ERROR;
   }

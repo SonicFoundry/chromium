@@ -13,7 +13,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "base/test/scoped_path_override.h"
-#include "chrome/common/chrome_paths.h"
+#include "chromeos/chromeos_paths.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -50,7 +50,7 @@ class DefaultAppOrderTest : public testing::Test {
 
   void SetExternalFile(const base::FilePath& path) {
     path_override_.reset(new base::ScopedPathOverride(
-        chrome::FILE_DEFAULT_APP_ORDER, path));
+        chromeos::FILE_DEFAULT_APP_ORDER, path));
   }
 
   void CreateExternalOrderFile(const std::string& content) {
@@ -95,7 +95,13 @@ TEST_F(DefaultAppOrderTest, ExternalOrder) {
 
 // Tests none-existent order file gives built-in default.
 TEST_F(DefaultAppOrderTest, NoExternalFile) {
-  SetExternalFile(base::FilePath(FILE_PATH_LITERAL("none_existent_file")));
+  base::ScopedTempDir scoped_tmp_dir;
+  ASSERT_TRUE(scoped_tmp_dir.CreateUniqueTempDir());
+
+  base::FilePath none_existent_file =
+      scoped_tmp_dir.path().AppendASCII("none_existent_file");
+  ASSERT_FALSE(file_util::PathExists(none_existent_file));
+  SetExternalFile(none_existent_file);
 
   scoped_ptr<default_app_order::ExternalLoader> loader(
       new default_app_order::ExternalLoader(false));

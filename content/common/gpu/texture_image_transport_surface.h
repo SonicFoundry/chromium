@@ -8,9 +8,11 @@
 #include <string>
 
 #include "base/basictypes.h"
+#include "base/memory/scoped_ptr.h"
 #include "content/common/gpu/gpu_command_buffer_stub.h"
 #include "content/common/gpu/image_transport_surface.h"
 #include "gpu/command_buffer/service/mailbox_manager.h"
+#include "gpu/command_buffer/service/texture_definition.h"
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_surface.h"
@@ -53,41 +55,40 @@ class TextureImageTransportSurface
       const AcceleratedSurfaceMsg_BufferPresented_Params& params) OVERRIDE;
   virtual void OnResizeViewACK() OVERRIDE;
   virtual void OnResize(gfx::Size size) OVERRIDE;
+  virtual void SetLatencyInfo(
+      const cc::LatencyInfo& latency_info) OVERRIDE;
 
   // GpuCommandBufferStub::DestructionObserver implementation.
-  virtual void OnWillDestroyStub(GpuCommandBufferStub* stub) OVERRIDE;
+  virtual void OnWillDestroyStub() OVERRIDE;
 
  private:
-  // A texture backing the front/back buffer.
-  struct Texture {
-    Texture();
-    ~Texture();
 
-    // The currently allocated size.
-    gfx::Size size;
-
-    // The actual GL texture id.
-    uint32 service_id;
-
-    // The mailbox name for the current service_id. Needs to be unique per
-    // GL texture and is invalid while service_id is zero.
-    gpu::gles2::MailboxName mailbox_name;
-  };
+  gfx::Size backbuffer_size() const {
+    return gfx::Size(backbuffer_->level_infos()[0][0].width,
+                     backbuffer_->level_infos()[0][0].height);
+  }
 
   virtual ~TextureImageTransportSurface();
   void CreateBackTexture();
   void AttachBackTextureToFBO();
   void ReleaseBackTexture();
   void BufferPresentedImpl(const std::string& mailbox_name);
-  void ProduceTexture(Texture* texture);
-  void ConsumeTexture(Texture* texture);
+  void ProduceTexture();
+  void ConsumeTexture();
+
+  static gpu::gles2::TextureDefinition* CreateTextureDefinition(gfx::Size size,
+                                                                int service_id);
 
   // The framebuffer that represents this surface (service id). Allocated lazily
   // in OnMakeCurrent.
   uint32 fbo_id_;
 
   // The current backbuffer.
-  Texture backbuffer_;
+  scoped_ptr<gpu::gles2::TextureDefinition> backbuffer_;
+
+  // The mailbox name for the current backbuffer texture. Needs to be unique per
+  // GL texture and is invalid while service_id is zero.
+  gpu::gles2::MailboxName mailbox_name_;
 
   // The current size of the GLSurface. Used to disambiguate from the current
   // texture size which might be outdated (since we use two buffers).
@@ -118,6 +119,7 @@ class TextureImageTransportSurface
   // Holds a reference to the mailbox manager for cleanup.
   scoped_refptr<gpu::gles2::MailboxManager> mailbox_manager_;
 
+  cc::LatencyInfo latency_info_;
   DISALLOW_COPY_AND_ASSIGN(TextureImageTransportSurface);
 };
 

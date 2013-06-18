@@ -7,20 +7,21 @@
 
 #include "base/memory/scoped_ptr.h"
 #include "content/common/webkitplatformsupport_impl.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebIDBFactory.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebMimeRegistry.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebIDBFactory.h"
 
 namespace WebKit {
 class WebFileUtilities;
 }
 
 namespace content {
+class ThreadSafeSender;
 class WebFileSystemImpl;
 
 class WorkerWebKitPlatformSupportImpl : public WebKitPlatformSupportImpl,
                                         public WebKit::WebMimeRegistry {
  public:
-  WorkerWebKitPlatformSupportImpl();
+  explicit WorkerWebKitPlatformSupportImpl(ThreadSafeSender* sender);
   virtual ~WorkerWebKitPlatformSupportImpl();
 
   // WebKitPlatformSupport methods:
@@ -78,6 +79,9 @@ class WorkerWebKitPlatformSupportImpl : public WebKitPlatformSupportImpl,
       const WebKit::WebString&,
       const WebKit::WebString&,
       const WebKit::WebString&);
+  virtual bool supportsMediaSourceMIMEType(
+      const WebKit::WebString&,
+      const WebKit::WebString&);
   virtual WebKit::WebMimeRegistry::SupportsType supportsNonImageMIMEType(
       const WebKit::WebString&);
   virtual WebKit::WebString mimeTypeForExtension(const WebKit::WebString&);
@@ -91,11 +95,10 @@ class WorkerWebKitPlatformSupportImpl : public WebKitPlatformSupportImpl,
 
   class FileUtilities;
   scoped_ptr<FileUtilities> file_utilities_;
-
   scoped_ptr<WebKit::WebBlobRegistry> blob_registry_;
-
   scoped_ptr<WebFileSystemImpl> web_file_system_;
   scoped_ptr<WebKit::WebIDBFactory> web_idb_factory_;
+  scoped_refptr<ThreadSafeSender> thread_safe_sender_;
 };
 
 }  // namespace content

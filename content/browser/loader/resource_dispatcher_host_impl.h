@@ -25,12 +25,16 @@
 #include "base/time.h"
 #include "base/timer.h"
 #include "content/browser/download/download_resource_handler.h"
+#include "content/browser/loader/global_routing_id.h"
+#include "content/browser/loader/offline_policy.h"
+#include "content/browser/loader/render_view_host_tracker.h"
 #include "content/browser/loader/resource_loader.h"
 #include "content/browser/loader/resource_loader_delegate.h"
 #include "content/browser/loader/resource_scheduler.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/child_process_data.h"
 #include "content/public/browser/download_id.h"
+#include "content/public/browser/global_request_id.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/resource_dispatcher_host.h"
 #include "ipc/ipc_message.h"
@@ -59,7 +63,6 @@ class ResourceRequestInfoImpl;
 class SaveFileManager;
 class WebContentsImpl;
 struct DownloadSaveInfo;
-struct GlobalRequestID;
 struct Referrer;
 
 class CONTENT_EXPORT ResourceDispatcherHostImpl
@@ -167,12 +170,14 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
                                         const std::string& mime_type,
                                         ResourceType::Type resource_type);
 
+  // Called when a RenderViewHost is created.
+  void OnRenderViewHostCreated(int child_id, int route_id);
+
+  // Called when a RenderViewHost is deleted.
+  void OnRenderViewHostDeleted(int child_id, int route_id);
+
   // Force cancels any pending requests for the given process.
   void CancelRequestsForProcess(int child_id);
-
-  // Force cancels any pending requests for the given route id.  This method
-  // acts like CancelRequestsForProcess when route_id is -1.
-  void CancelRequestsForRoute(int child_id, int route_id);
 
   void OnUserGesture(WebContentsImpl* contents);
 
@@ -215,6 +220,12 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
       DownloadId id,
       scoped_ptr<DownloadSaveInfo> save_info,
       const DownloadResourceHandler::OnStartedCallback& started_cb);
+
+  // Must be called after the ResourceRequestInfo has been created
+  // and associated with the request.
+  scoped_ptr<ResourceHandler> MaybeInterceptAsStream(
+      net::URLRequest* request,
+      ResourceResponse* response);
 
   void ClearSSLClientAuthHandlerForRequest(net::URLRequest* request);
 
@@ -289,6 +300,10 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
 
   // Estimate how much heap space |request| will consume to run.
   static int CalculateApproximateMemoryCost(net::URLRequest* request);
+
+  // Force cancels any pending requests for the given route id.  This method
+  // acts like CancelRequestsForProcess when route_id is -1.
+  void CancelRequestsForRoute(int child_id, int route_id);
 
   // The list of all requests that we have pending. This list is not really
   // optimized, and assumes that we have relatively few requests pending at once
@@ -396,8 +411,7 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   bool is_shutdown_;
 
   typedef std::vector<linked_ptr<ResourceLoader> > BlockedLoadersList;
-  typedef std::pair<int, int> ProcessRouteIDs;
-  typedef std::map<ProcessRouteIDs, BlockedLoadersList*> BlockedLoadersMap;
+  typedef std::map<GlobalRoutingID, BlockedLoadersList*> BlockedLoadersMap;
   BlockedLoadersMap blocked_loaders_map_;
 
   // Maps the child_ids to the approximate number of bytes
@@ -436,6 +450,12 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   DelegateMap delegate_map_;
 
   scoped_ptr<ResourceScheduler> scheduler_;
+
+  RenderViewHostTracker tracker_;  // Lives on UI thread.
+
+  typedef std::map<GlobalRoutingID, OfflinePolicy*> OfflineMap;
+
+  OfflineMap offline_policy_map_;
 
   DISALLOW_COPY_AND_ASSIGN(ResourceDispatcherHostImpl);
 };

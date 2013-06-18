@@ -11,12 +11,14 @@
 #include "content/public/renderer/render_process_observer.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebMediaStream.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebRTCPeerConnectionHandlerClient.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebRTCSessionDescription.h"
 #include "third_party/libjingle/source/talk/app/webrtc/peerconnectioninterface.h"
 
 namespace WebKit {
 class WebFrame;
 class WebRTCICECandidate;
 class WebString;
+class WebRTCSessionDescription;
 }  // namespace WebKit
 
 namespace webrtc {
@@ -84,7 +86,7 @@ class CONTENT_EXPORT PeerConnectionTracker : public RenderProcessObserver {
   // Sends an update when setLocalDescription or setRemoteDescription is called.
   virtual void TrackSetSessionDescription(
       RTCPeerConnectionHandler* pc_handler,
-      const webrtc::SessionDescriptionInterface* desc, Source source);
+      const WebKit::WebRTCSessionDescription& desc, Source source);
 
   // Sends an update when Ice candidates are updated.
   virtual void TrackUpdateIce(
@@ -107,9 +109,6 @@ class CONTENT_EXPORT PeerConnectionTracker : public RenderProcessObserver {
       RTCPeerConnectionHandler* pc_handler,
       const WebKit::WebMediaStream& stream, Source source);
 
-  // Sends an update when OnIceComplete is called.
-  virtual void TrackOnIceComplete(RTCPeerConnectionHandler* pc_handler);
-
   // Sends an update when a DataChannel is created.
   virtual void TrackCreateDataChannel(
       RTCPeerConnectionHandler* pc_handler,
@@ -123,16 +122,31 @@ class CONTENT_EXPORT PeerConnectionTracker : public RenderProcessObserver {
       RTCPeerConnectionHandler* pc_handler,
       WebKit::WebRTCPeerConnectionHandlerClient::SignalingState state);
 
-  // Sends an update when the Ice state of a PeerConnection has changed.
-  virtual void TrackIceStateChange(
+  // Sends an update when the Ice connection state
+  // of a PeerConnection has changed.
+  virtual void TrackIceConnectionStateChange(
       RTCPeerConnectionHandler* pc_handler,
-      WebKit::WebRTCPeerConnectionHandlerClient::ICEState state);
+      WebKit::WebRTCPeerConnectionHandlerClient::ICEConnectionState state);
+
+  // Sends an update when the Ice gathering state
+  // of a PeerConnection has changed.
+  virtual void TrackIceGatheringStateChange(
+      RTCPeerConnectionHandler* pc_handler,
+      WebKit::WebRTCPeerConnectionHandlerClient::ICEGatheringState state);
 
   // Sends an update when the SetSessionDescription or CreateOffer or
   // CreateAnswer callbacks are called.
   virtual void TrackSessionDescriptionCallback(
       RTCPeerConnectionHandler* pc_handler, Action action,
       const std::string& type, const std::string& value);
+
+  // Sends an update when onRenegotiationNeeded is called.
+  virtual void TrackOnRenegotiationNeeded(RTCPeerConnectionHandler* pc_handler);
+
+  // Sends an update when a DTMFSender is created.
+  virtual void TrackCreateDTMFSender(
+      RTCPeerConnectionHandler* pc_handler,
+      const WebKit::WebMediaStreamTrack& track);
 
  private:
   // Assign a local ID to a peer connection so that the browser process can

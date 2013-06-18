@@ -9,7 +9,7 @@
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/string_util.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "googleurl/src/gurl.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebCString.h"
@@ -239,6 +239,12 @@ std::string GetFileSystemTypeString(FileSystemType type) {
       return "Drive";
     case kFileSystemTypeSyncable:
       return "Syncable";
+    case kFileSystemTypeNativeForPlatformApp:
+      return "NativeForPlatformApp";
+    case kFileSystemInternalTypeEnumStart:
+    case kFileSystemInternalTypeEnumEnd:
+      NOTREACHED();
+      // Fall through.
     case kFileSystemTypeUnknown:
       return "Unknown";
   }
@@ -291,22 +297,23 @@ WebKit::WebFileError PlatformFileErrorToWebFileError(
 
 bool GetFileSystemPublicType(
     const std::string type_string,
-    WebKit::WebFileSystem::Type* type) {
+    WebKit::WebFileSystemType* type
+) {
   DCHECK(type);
   if (type_string == "Temporary") {
-    *type = WebKit::WebFileSystem::TypeTemporary;
+    *type = WebKit::WebFileSystemTypeTemporary;
     return true;
   }
   if (type_string == "Persistent") {
-    *type = WebKit::WebFileSystem::TypePersistent;
+    *type = WebKit::WebFileSystemTypePersistent;
     return true;
   }
   if (type_string == "Isolated") {
-    *type = WebKit::WebFileSystem::TypeIsolated;
+    *type = WebKit::WebFileSystemTypeIsolated;
     return true;
   }
   if (type_string == "External") {
-    *type = WebKit::WebFileSystem::TypeExternal;
+    *type = WebKit::WebFileSystemTypeExternal;
     return true;
   }
   NOTREACHED();
@@ -356,10 +363,13 @@ std::string GetIsolatedFileSystemRootURIString(
     const std::string& optional_root_name) {
   std::string root = GetFileSystemRootURI(origin_url,
                                           kFileSystemTypeIsolated).spec();
+  if (base::FilePath::FromUTF8Unsafe(filesystem_id).ReferencesParent())
+    return std::string();
   root.append(filesystem_id);
   root.append("/");
   if (!optional_root_name.empty()) {
-    DCHECK(!base::FilePath::FromUTF8Unsafe(optional_root_name).ReferencesParent());
+    if (base::FilePath::FromUTF8Unsafe(optional_root_name).ReferencesParent())
+      return std::string();
     root.append(optional_root_name);
     root.append("/");
   }

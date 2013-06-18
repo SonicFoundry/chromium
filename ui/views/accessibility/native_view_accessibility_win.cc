@@ -4,31 +4,127 @@
 
 #include "ui/views/accessibility/native_view_accessibility_win.h"
 
-#include <atlbase.h>
-#include <atlcom.h>
 #include <UIAutomationClient.h>
+#include <oleacc.h>
 
+#include <set>
 #include <vector>
 
+#include "base/memory/singleton.h"
 #include "base/win/windows_version.h"
 #include "third_party/iaccessible2/ia2_api_all.h"
 #include "ui/base/accessibility/accessible_text_utils.h"
 #include "ui/base/accessibility/accessible_view_state.h"
-#include "ui/base/view_prop.h"
+#include "ui/base/win/accessibility_ids_win.h"
 #include "ui/base/win/accessibility_misc_utils.h"
 #include "ui/base/win/atl_module.h"
 #include "ui/views/controls/button/custom_button.h"
-#include "ui/views/widget/native_widget_win.h"
-#include "ui/views/widget/widget.h"
+#include "ui/views/controls/webview/webview.h"
+#include "ui/views/focus/focus_manager.h"
+#include "ui/views/focus/view_storage.h"
+#include "ui/views/win/hwnd_util.h"
 
 using ui::AccessibilityTypes;
 
-// static
-long NativeViewAccessibilityWin::next_unique_id_ = 1;
+namespace views {
+namespace {
+
+class AccessibleWebViewRegistry {
+ public:
+  static AccessibleWebViewRegistry* GetInstance();
+
+  void RegisterWebView(AccessibleWebView* web_view);
+
+  void UnregisterWebView(AccessibleWebView* web_view);
+
+  // Given the view that received the request for the accessible
+  // id in |top_view|, and the child id requested, return the native
+  // accessible object with that child id from one of the WebViews in
+  // |top_view|'s view hierarchy, if any.
+  IAccessible* GetAccessibleFromWebView(View* top_view, long child_id);
+
+ private:
+  friend struct DefaultSingletonTraits<AccessibleWebViewRegistry>;
+  AccessibleWebViewRegistry();
+  ~AccessibleWebViewRegistry() {}
+
+  // Set of all web views. We check whether each one is contained in a
+  // top view dynamically rather than keeping track of a map.
+  std::set<AccessibleWebView*> web_views_;
+
+  // The most recent top view used in a call to GetAccessibleFromWebView.
+  View* last_top_view_;
+
+  // The most recent web view where an accessible object was found,
+  // corresponding to |last_top_view_|.
+  AccessibleWebView* last_web_view_;
+
+  DISALLOW_COPY_AND_ASSIGN(AccessibleWebViewRegistry);
+};
+
+AccessibleWebViewRegistry::AccessibleWebViewRegistry()
+    : last_top_view_(NULL),
+      last_web_view_(NULL) {
+}
+
+AccessibleWebViewRegistry* AccessibleWebViewRegistry::GetInstance() {
+  return Singleton<AccessibleWebViewRegistry>::get();
+}
+
+void AccessibleWebViewRegistry::RegisterWebView(AccessibleWebView* web_view) {
+  DCHECK(web_views_.find(web_view) == web_views_.end());
+  web_views_.insert(web_view);
+}
+
+void AccessibleWebViewRegistry::UnregisterWebView(AccessibleWebView* web_view) {
+  DCHECK(web_views_.find(web_view) != web_views_.end());
+  web_views_.erase(web_view);
+  if (last_web_view_ == web_view) {
+    last_top_view_ = NULL;
+    last_web_view_ = NULL;
+  }
+}
+
+IAccessible* AccessibleWebViewRegistry::GetAccessibleFromWebView(
+    View* top_view, long child_id) {
+  // This function gets called frequently, so try to avoid searching all
+  // of the web views if the notification is on the same web view that
+  // sent the last one.
+  if (last_top_view_ == top_view) {
+    IAccessible* accessible =
+        last_web_view_->AccessibleObjectFromChildId(child_id);
+    if (accessible)
+      return accessible;
+  }
+
+  // Search all web views. For each one, first ensure it's a descendant
+  // of this view where the event was posted - and if so, see if it owns
+  // an accessible object with that child id. If so, save the view to speed
+  // up the next notification.
+  for (std::set<AccessibleWebView*>::iterator iter = web_views_.begin();
+       iter != web_views_.end(); ++iter) {
+    AccessibleWebView* web_view = *iter;
+    if (!top_view->Contains(web_view->AsView()))
+      continue;
+    IAccessible* accessible = web_view->AccessibleObjectFromChildId(child_id);
+    if (accessible) {
+      last_top_view_ = top_view;
+      last_web_view_ = web_view;
+      return accessible;
+    }
+  }
+  return NULL;
+}
+
+}  // anonymous namespace
 
 // static
-scoped_refptr<NativeViewAccessibilityWin> NativeViewAccessibilityWin::Create(
-    views::View* view) {
+long NativeViewAccessibilityWin::next_unique_id_ = 1;
+int NativeViewAccessibilityWin::view_storage_ids_[kMaxViewStorageIds] = {0};
+int NativeViewAccessibilityWin::next_view_storage_id_index_ = 0;
+
+// static
+NativeViewAccessibility* NativeViewAccessibility::Create(View* view) {
   // Make sure ATL is initialized in this module.
   ui::win::CreateATLModuleIfNeeded();
 
@@ -37,7 +133,8 @@ scoped_refptr<NativeViewAccessibilityWin> NativeViewAccessibilityWin::Create(
       &instance);
   DCHECK(SUCCEEDED(hr));
   instance->set_view(view);
-  return scoped_refptr<NativeViewAccessibilityWin>(instance);
+  instance->AddRef();
+  return instance;
 }
 
 NativeViewAccessibilityWin::NativeViewAccessibilityWin()
@@ -46,6 +143,41 @@ NativeViewAccessibilityWin::NativeViewAccessibilityWin()
 }
 
 NativeViewAccessibilityWin::~NativeViewAccessibilityWin() {
+}
+
+void NativeViewAccessibilityWin::NotifyAccessibilityEvent(
+    ui::AccessibilityTypes::Event event_type) {
+  if (!view_)
+    return;
+
+  ViewStorage* view_storage = ViewStorage::GetInstance();
+  HWND hwnd = HWNDForView(view_);
+  int view_storage_id = view_storage_ids_[next_view_storage_id_index_];
+  if (view_storage_id == 0) {
+    view_storage_id = view_storage->CreateStorageID();
+    view_storage_ids_[next_view_storage_id_index_] = view_storage_id;
+  } else {
+    view_storage->RemoveView(view_storage_id);
+  }
+  view_storage->StoreView(view_storage_id, view_);
+
+  // Positive child ids are used for enumerating direct children,
+  // negative child ids can be used as unique ids to refer to a specific
+  // descendants.  Make index into view_storage_ids_ into a negative child id.
+  int child_id =
+      base::win::kFirstViewsAccessibilityId - next_view_storage_id_index_;
+  ::NotifyWinEvent(MSAAEvent(event_type), hwnd, OBJID_CLIENT, child_id);
+  next_view_storage_id_index_ =
+      (next_view_storage_id_index_ + 1) % kMaxViewStorageIds;
+}
+
+gfx::NativeViewAccessible NativeViewAccessibilityWin::GetNativeObject() {
+  return this;
+}
+
+void NativeViewAccessibilityWin::Destroy() {
+  view_ = NULL;
+  Release();
 }
 
 // TODO(ctguil): Handle case where child View is not contained by parent.
@@ -58,7 +190,7 @@ STDMETHODIMP NativeViewAccessibilityWin::accHitTest(
     return E_FAIL;
 
   gfx::Point point(x_left, y_top);
-  views::View::ConvertPointToTarget(NULL, view_, &point);
+  View::ConvertPointToTarget(NULL, view_, &point);
 
   if (!view_->HitTestPoint(point)) {
     // If containing parent is not hit, return with failure.
@@ -66,7 +198,7 @@ STDMETHODIMP NativeViewAccessibilityWin::accHitTest(
     return S_FALSE;
   }
 
-  views::View* view = view_->GetEventHandlerForPoint(point);
+  View* view = view_->GetEventHandlerForPoint(point);
   if (view == view_) {
     // No child hit, return parent id.
     child->vt = VT_I4;
@@ -100,7 +232,7 @@ STDMETHODIMP NativeViewAccessibilityWin::accLocation(
     *width  = view_->width();
     *height = view_->height();
     gfx::Point topleft(view_->bounds().origin());
-    views::View::ConvertPointToScreen(
+    View::ConvertPointToScreen(
         view_->parent() ? view_->parent() : view_, &topleft);
     *x_left = topleft.x();
     *y_top  = topleft.y();
@@ -134,7 +266,7 @@ STDMETHODIMP NativeViewAccessibilityWin::accNavigate(
       if (nav_dir == NAVDIR_LASTCHILD)
         child_id = view_->child_count() - 1;
 
-      views::View* child = view_->child_at(child_id);
+      View* child = view_->child_at(child_id);
       end->vt = VT_DISPATCH;
       end->pdispVal = child->GetNativeViewAccessible();
       end->pdispVal->AddRef();
@@ -147,7 +279,7 @@ STDMETHODIMP NativeViewAccessibilityWin::accNavigate(
     case NAVDIR_DOWN:
     case NAVDIR_NEXT: {
       // Retrieve parent to access view index and perform bounds checking.
-      views::View* parent = view_->parent();
+      View* parent = view_->parent();
       if (!parent) {
         return E_FAIL;
       }
@@ -169,7 +301,7 @@ STDMETHODIMP NativeViewAccessibilityWin::accNavigate(
           }
         }
 
-        views::View* child = parent->child_at(view_index);
+        View* child = parent->child_at(view_index);
         end->pdispVal = child->GetNativeViewAccessible();
         end->vt = VT_DISPATCH;
         end->pdispVal->AddRef();
@@ -212,7 +344,7 @@ STDMETHODIMP NativeViewAccessibilityWin::accNavigate(
 }
 
 STDMETHODIMP NativeViewAccessibilityWin::get_accChild(VARIANT var_child,
-                                             IDispatch** disp_child) {
+                                                      IDispatch** disp_child) {
   if (var_child.vt != VT_I4 || !disp_child)
     return E_INVALIDARG;
 
@@ -226,22 +358,32 @@ STDMETHODIMP NativeViewAccessibilityWin::get_accChild(VARIANT var_child,
     return S_OK;
   }
 
-  views::View* child_view = NULL;
+  View* child_view = NULL;
   if (child_id > 0) {
+    // Positive child ids are a 1-based child index, used by clients
+    // that want to enumerate all immediate children.
     int child_id_as_index = child_id - 1;
-    if (child_id_as_index < view_->child_count()) {
-      // Note: child_id is a one based index when indexing children.
+    if (child_id_as_index < view_->child_count())
       child_view = view_->child_at(child_id_as_index);
-    } else {
-      // Attempt to retrieve a child view with the specified id.
-      child_view = view_->GetViewByID(child_id);
-    }
   } else {
-    // Negative values are used for events fired using the view's
-    // NativeWidgetWin.
-    views::NativeWidgetWin* widget = static_cast<views::NativeWidgetWin*>(
-        view_->GetWidget()->native_widget());
-    child_view = widget->GetAccessibilityViewEventAt(child_id);
+    // Negative child ids can be used to map to any descendant;
+    // we map child ids to a view storage id that can refer to a
+    // specific view (if that view still exists).
+    int view_storage_id_index =
+        base::win::kFirstViewsAccessibilityId - child_id;
+    if (view_storage_id_index >= 0 &&
+        view_storage_id_index < kMaxViewStorageIds) {
+      int view_storage_id = view_storage_ids_[view_storage_id_index];
+      ViewStorage* view_storage = ViewStorage::GetInstance();
+      child_view = view_storage->RetrieveView(view_storage_id);
+    } else {
+      *disp_child = AccessibleWebViewRegistry::GetInstance()->
+          GetAccessibleFromWebView(view_, child_id);
+      if (*disp_child) {
+        (*disp_child)->AddRef();
+        return S_OK;
+      }
+    }
   }
 
   if (!child_view) {
@@ -314,8 +456,8 @@ STDMETHODIMP NativeViewAccessibilityWin::get_accFocus(VARIANT* focus_child) {
   if (!view_)
     return E_FAIL;
 
-  views::FocusManager* focus_manager = view_->GetFocusManager();
-  views::View* focus = focus_manager ? focus_manager->GetFocusedView() : NULL;
+  FocusManager* focus_manager = view_->GetFocusManager();
+  View* focus = focus_manager ? focus_manager->GetFocusedView() : NULL;
   if (focus == view_) {
     // This view has focus.
     focus_child->vt = VT_I4;
@@ -385,30 +527,17 @@ STDMETHODIMP NativeViewAccessibilityWin::get_accParent(
   if (!view_)
     return E_FAIL;
 
-  views::View* parent_view = view_->parent();
+  *disp_parent = NULL;
+  View* parent_view = view_->parent();
 
   if (!parent_view) {
-    // This function can get called during teardown of WidetWin so we
-    // should bail out if we fail to get the HWND.
-    if (!view_->GetWidget() || !view_->GetWidget()->GetNativeView()) {
-      *disp_parent = NULL;
+    HWND hwnd = HWNDForView(view_);
+    if (!hwnd)
       return S_FALSE;
-    }
 
-    // For a View that has no parent (e.g. root), point the accessible parent
-    // to the default implementation, to interface with Windows' hierarchy
-    // and to support calls from e.g. WindowFromAccessibleObject.
-    HRESULT hr =
-        ::AccessibleObjectFromWindow(view_->GetWidget()->GetNativeView(),
-                                     OBJID_WINDOW, IID_IAccessible,
-                                     reinterpret_cast<void**>(disp_parent));
-
-    if (!SUCCEEDED(hr)) {
-      *disp_parent = NULL;
-      return S_FALSE;
-    }
-
-    return S_OK;
+    return ::AccessibleObjectFromWindow(
+        hwnd, OBJID_WINDOW, IID_IAccessible,
+        reinterpret_cast<void**>(disp_parent));
   }
 
   *disp_parent = parent_view->GetNativeViewAccessible();
@@ -580,8 +709,8 @@ STDMETHODIMP NativeViewAccessibilityWin::get_windowHandle(HWND* window_handle) {
   if (!window_handle)
     return E_INVALIDARG;
 
-  *window_handle = view_->GetWidget()->GetNativeView();
-  return S_OK;
+  *window_handle = HWNDForView(view_);
+  return *window_handle ? S_OK : S_FALSE;
 }
 
 //
@@ -829,7 +958,7 @@ STDMETHODIMP NativeViewAccessibilityWin::GetPatternProvider(
 }
 
 STDMETHODIMP NativeViewAccessibilityWin::GetPropertyValue(PROPERTYID id,
-                                                           VARIANT* ret) {
+                                                          VARIANT* ret) {
   DVLOG(1) << "In Function: "
            << __FUNCTION__
            << " for property id: "
@@ -855,6 +984,14 @@ STDMETHODIMP NativeViewAccessibilityWin::GetPropertyValue(PROPERTYID id,
 //
 // Static methods.
 //
+
+void NativeViewAccessibility::RegisterWebView(AccessibleWebView* web_view) {
+  AccessibleWebViewRegistry::GetInstance()->RegisterWebView(web_view);
+}
+
+void NativeViewAccessibility::UnregisterWebView(AccessibleWebView* web_view) {
+  AccessibleWebViewRegistry::GetInstance()->UnregisterWebView(web_view);
+}
 
 int32 NativeViewAccessibilityWin::MSAAEvent(AccessibilityTypes::Event event) {
   switch (event) {
@@ -1023,7 +1160,7 @@ bool NativeViewAccessibilityWin::IsValidId(const VARIANT& child) const {
 }
 
 void NativeViewAccessibilityWin::SetState(
-    VARIANT* msaa_state, views::View* view) {
+    VARIANT* msaa_state, View* view) {
   // Ensure the output param is initialized to zero.
   msaa_state->lVal = 0;
 
@@ -1037,8 +1174,8 @@ void NativeViewAccessibilityWin::SetState(
     msaa_state->lVal |= STATE_SYSTEM_UNAVAILABLE;
   if (!view->visible())
     msaa_state->lVal |= STATE_SYSTEM_INVISIBLE;
-  if (view->GetClassName() == views::CustomButton::kViewClassName) {
-    views::CustomButton* button = static_cast<views::CustomButton*>(view);
+  if (view->GetClassName() == CustomButton::kViewClassName) {
+    CustomButton* button = static_cast<CustomButton*>(view);
     if (button->IsHotTracked())
       msaa_state->lVal |= STATE_SYSTEM_HOTTRACKED;
   }
@@ -1095,3 +1232,5 @@ LONG NativeViewAccessibilityWin::FindBoundary(
   return ui::FindAccessibleTextBoundary(
       text, line_breaks, boundary, start_offset, direction);
 }
+
+}  // namespace views

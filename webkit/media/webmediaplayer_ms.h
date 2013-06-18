@@ -9,6 +9,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
+#include "cc/layers/video_frame_provider.h"
 #include "googleurl/src/gurl.h"
 #include "media/filters/skcanvas_video_renderer.h"
 #include "skia/ext/platform_canvas.h"
@@ -17,11 +18,14 @@
 namespace WebKit {
 class WebFrame;
 class WebMediaPlayerClient;
-class WebVideoFrame;
 }
 
 namespace media {
 class MediaLog;
+}
+
+namespace webkit {
+class WebLayerImpl;
 }
 
 namespace webkit_media {
@@ -47,6 +51,7 @@ class WebMediaPlayerDelegate;
 //   WebKit client of this media player object.
 class WebMediaPlayerMS
     : public WebKit::WebMediaPlayer,
+      public cc::VideoFrameProvider,
       public base::SupportsWeakPtr<WebMediaPlayerMS> {
  public:
   // Construct a WebMediaPlayerMS with reference to the client, and
@@ -59,6 +64,9 @@ class WebMediaPlayerMS
   virtual ~WebMediaPlayerMS();
 
   virtual void load(const WebKit::WebURL& url, CORSMode cors_mode) OVERRIDE;
+  virtual void load(const WebKit::WebURL& url,
+                    WebKit::WebMediaSource* media_source,
+                    CORSMode cors_mode) OVERRIDE;
   virtual void cancelLoad() OVERRIDE;
 
   // Playback controls.
@@ -66,15 +74,14 @@ class WebMediaPlayerMS
   virtual void pause() OVERRIDE;
   virtual bool supportsFullscreen() const OVERRIDE;
   virtual bool supportsSave() const OVERRIDE;
-  virtual void seek(float seconds) OVERRIDE;
-  virtual void setEndTime(float seconds) OVERRIDE;
-  virtual void setRate(float rate) OVERRIDE;
-  virtual void setVolume(float volume) OVERRIDE;
+  virtual void seek(double seconds);
+  virtual void setRate(double rate);
+  virtual void setVolume(double volume);
   virtual void setVisible(bool visible) OVERRIDE;
   virtual void setPreload(WebKit::WebMediaPlayer::Preload preload) OVERRIDE;
   virtual bool totalBytesKnown() OVERRIDE;
   virtual const WebKit::WebTimeRanges& buffered() OVERRIDE;
-  virtual float maxTimeSeekable() const OVERRIDE;
+  virtual double maxTimeSeekable() const;
 
   // Methods for painting.
   virtual void setSize(const WebKit::WebSize& size) OVERRIDE;
@@ -93,8 +100,8 @@ class WebMediaPlayerMS
   // Getters of playback state.
   virtual bool paused() const OVERRIDE;
   virtual bool seeking() const OVERRIDE;
-  virtual float duration() const OVERRIDE;
-  virtual float currentTime() const OVERRIDE;
+  virtual double duration() const;
+  virtual double currentTime() const;
 
   // Get rate of loading the resource.
   virtual int32 dataRate() const OVERRIDE;
@@ -110,15 +117,19 @@ class WebMediaPlayerMS
   virtual bool didPassCORSAccessCheck() const OVERRIDE;
   virtual WebKit::WebMediaPlayer::MovieLoadType movieLoadType() const OVERRIDE;
 
-  virtual float mediaTimeForTimeValue(float timeValue) const OVERRIDE;
+  virtual double mediaTimeForTimeValue(double timeValue) const;
 
   virtual unsigned decodedFrameCount() const OVERRIDE;
   virtual unsigned droppedFrameCount() const OVERRIDE;
   virtual unsigned audioDecodedByteCount() const OVERRIDE;
   virtual unsigned videoDecodedByteCount() const OVERRIDE;
 
-  virtual WebKit::WebVideoFrame* getCurrentFrame() OVERRIDE;
-  virtual void putCurrentFrame(WebKit::WebVideoFrame* web_video_frame) OVERRIDE;
+  // VideoFrameProvider implementation.
+  virtual void SetVideoFrameProviderClient(
+      cc::VideoFrameProvider::Client* client) OVERRIDE;
+  virtual scoped_refptr<media::VideoFrame> GetCurrentFrame() OVERRIDE;
+  virtual void PutCurrentFrame(const scoped_refptr<media::VideoFrame>& frame)
+      OVERRIDE;
 
  private:
   // The callback for VideoFrameProvider to signal a new frame is available.
@@ -152,9 +163,12 @@ class WebMediaPlayerMS
   base::WeakPtr<WebMediaPlayerDelegate> delegate_;
 
   MediaStreamClient* media_stream_client_;
-  scoped_refptr<VideoFrameProvider> video_frame_provider_;
+  scoped_refptr<webkit_media::VideoFrameProvider> video_frame_provider_;
   bool paused_;
-  // |current_frame_| is updated only on main thread.
+
+  // |current_frame_| is updated only on main thread. The object it holds
+  // can be freed on the compositor thread if it is the last to hold a
+  // reference but media::VideoFrame is a thread-safe ref-pointer.
   scoped_refptr<media::VideoFrame> current_frame_;
   // |current_frame_used_| is updated on both main and compositing thread.
   // It's used to track whether |current_frame_| was painted for detecting
@@ -162,6 +176,13 @@ class WebMediaPlayerMS
   bool current_frame_used_;
   base::Lock current_frame_lock_;
   bool pending_repaint_;
+
+  scoped_ptr<webkit::WebLayerImpl> video_weblayer_;
+
+  // A pointer back to the compositor to inform it about state changes. This is
+  // not NULL while the compositor is actively using this webmediaplayer.
+  cc::VideoFrameProvider::Client* video_frame_provider_client_;
+
   bool received_first_frame_;
   bool sequence_started_;
   base::TimeDelta start_time_;
@@ -172,10 +193,6 @@ class WebMediaPlayerMS
   scoped_refptr<MediaStreamAudioRenderer> audio_renderer_;
 
   scoped_refptr<media::MediaLog> media_log_;
-
-  // Used to auto mute the local media streams when getting the first
-  // SetVolume() from WebMediaPlayer.
-  bool volume_modified_;
 
   DISALLOW_COPY_AND_ASSIGN(WebMediaPlayerMS);
 };

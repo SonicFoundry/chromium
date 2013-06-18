@@ -6,6 +6,8 @@ package org.chromium.android_webview;
 
 import android.content.SharedPreferences;
 
+import org.chromium.content.browser.ContentViewStatics;
+
 /**
  * Java side of the Browser Context: contains all the java side objects needed to host one
  * browing session (i.e. profile).
@@ -21,6 +23,7 @@ public class AwBrowserContext {
 
     private AwGeolocationPermissions mGeolocationPermissions;
     private AwCookieManager mCookieManager;
+    private AwFormDatabase mFormDatabase;
 
     public AwBrowserContext(SharedPreferences sharedPreferences) {
         mSharedPreferences = sharedPreferences;
@@ -38,5 +41,26 @@ public class AwBrowserContext {
             mCookieManager = new AwCookieManager();
         }
         return mCookieManager;
+    }
+
+    public AwFormDatabase getFormDatabase() {
+        if (mFormDatabase == null) {
+            mFormDatabase = new AwFormDatabase();
+        }
+        return mFormDatabase;
+    }
+
+    /**
+     * @see android.webkit.WebView#pauseTimers()
+     */
+    public void pauseTimers() {
+        ContentViewStatics.setWebKitSharedTimersSuspended(true);
+    }
+
+    /**
+     * @see android.webkit.WebView#resumeTimers()
+     */
+    public void resumeTimers() {
+        ContentViewStatics.setWebKitSharedTimersSuspended(false);
     }
 }

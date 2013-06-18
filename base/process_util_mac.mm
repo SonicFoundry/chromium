@@ -6,20 +6,17 @@
 
 #import <Cocoa/Cocoa.h>
 #include <crt_externs.h>
-#include <dlfcn.h>
 #include <errno.h>
 #include <mach/mach.h>
 #include <mach/mach_init.h>
 #include <mach/mach_vm.h>
 #include <mach/shared_region.h>
 #include <mach/task.h>
-#include <mach-o/nlist.h>
 #include <malloc/malloc.h>
 #import <objc/runtime.h>
 #include <signal.h>
 #include <spawn.h>
 #include <sys/event.h>
-#include <sys/mman.h>
 #include <sys/sysctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -35,12 +32,19 @@
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_mach_port.h"
 #include "base/posix/eintr_wrapper.h"
+#include "base/scoped_clear_errno.h"
 #include "base/string_util.h"
 #include "base/sys_info.h"
-#include "base/threading/thread_local.h"
 #include "third_party/apple_apsl/CFBase.h"
 #include "third_party/apple_apsl/malloc.h"
+
+#if ARCH_CPU_32_BITS
+#include <dlfcn.h>
+#include <mach-o/nlist.h>
+
+#include "base/threading/thread_local.h"
 #include "third_party/mach_override/mach_override.h"
+#endif  // ARCH_CPU_32_BITS
 
 namespace base {
 
@@ -487,6 +491,9 @@ size_t GetSystemCommitCharge() {
   return (data.active_count * page_size) / 1024;
 }
 
+// These are helpers for EnableTerminationOnHeapCorruption, which is a no-op
+// on 64 bit Macs.
+#if ARCH_CPU_32_BITS
 namespace {
 
 // Finds the library path for malloc() and thus the libC part of libSystem,
@@ -509,7 +516,6 @@ malloc_error_break_t g_original_malloc_error_break = NULL;
 // as __private_extern__ and cannot be dlsym()ed. Instead, use nlist() to
 // get it.
 malloc_error_break_t LookUpMallocErrorBreak() {
-#if ARCH_CPU_32_BITS
   const char* lib_c_path = LookUpLibCPath();
   if (!lib_c_path)
     return NULL;
@@ -539,29 +545,7 @@ malloc_error_break_t LookUpMallocErrorBreak() {
   reference_addr += nl[0].n_value;
 
   return reinterpret_cast<malloc_error_break_t>(reference_addr);
-#endif  // ARCH_CPU_32_BITS
-
-  return NULL;
 }
-
-// Simple scoper that saves the current value of errno, resets it to 0, and on
-// destruction puts the old value back. This is so that CrMallocErrorBreak can
-// safely test errno free from the effects of other routines.
-class ScopedClearErrno {
- public:
-  ScopedClearErrno() : old_errno_(errno) {
-    errno = 0;
-  }
-  ~ScopedClearErrno() {
-    if (errno == 0)
-      errno = old_errno_;
-  }
-
- private:
-  int old_errno_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedClearErrno);
-};
 
 // Combines ThreadLocalBoolean with AutoReset.  It would be convenient
 // to compose ThreadLocalPointer<bool> with base::AutoReset<bool>, but that
@@ -625,14 +609,14 @@ void CrMallocErrorBreak() {
 }
 
 }  // namespace
+#endif  // ARCH_CPU_32_BITS
 
 void EnableTerminationOnHeapCorruption() {
-#ifdef ADDRESS_SANITIZER
-  // Don't do anything special on heap corruption, because it should be handled
-  // by AddressSanitizer.
+#if defined(ADDRESS_SANITIZER) || ARCH_CPU_64_BITS
+  // AddressSanitizer handles heap corruption, and on 64 bit Macs, the malloc
+  // system automatically abort()s on heap corruption.
   return;
-#endif
-
+#else
   // Only override once, otherwise CrMallocErrorBreak() will recurse
   // to itself.
   if (g_original_malloc_error_break)
@@ -651,6 +635,7 @@ void EnableTerminationOnHeapCorruption() {
 
   if (err != err_none)
     DLOG(WARNING) << "Could not override malloc_error_break; error = " << err;
+#endif  // defined(ADDRESS_SANITIZER) || ARCH_CPU_64_BITS
 }
 
 // ------------------------------------------------------------------------
@@ -658,6 +643,62 @@ void EnableTerminationOnHeapCorruption() {
 namespace {
 
 bool g_oom_killer_enabled;
+
+// Starting with Mac OS X 10.7, the zone allocators set up by the system are
+// read-only, to prevent them from being overwritten in an attack. However,
+// blindly unprotecting and reprotecting the zone allocators fails with
+// GuardMalloc because GuardMalloc sets up its zone allocator using a block of
+// memory in its bss. Explicit saving/restoring of the protection is required.
+//
+// This function takes a pointer to a malloc zone, de-protects it if necessary,
+// and returns (in the out parameters) a region of memory (if any) to be
+// re-protected when modifications are complete. This approach assumes that
+// there is no contention for the protection of this memory.
+void DeprotectMallocZone(ChromeMallocZone* default_zone,
+                         mach_vm_address_t* reprotection_start,
+                         mach_vm_size_t* reprotection_length,
+                         vm_prot_t* reprotection_value) {
+  mach_port_t unused;
+  *reprotection_start = reinterpret_cast<mach_vm_address_t>(default_zone);
+  struct vm_region_basic_info_64 info;
+  mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+  kern_return_t result =
+      mach_vm_region(mach_task_self(),
+                     reprotection_start,
+                     reprotection_length,
+                     VM_REGION_BASIC_INFO_64,
+                     reinterpret_cast<vm_region_info_t>(&info),
+                     &count,
+                     &unused);
+  CHECK(result == KERN_SUCCESS);
+
+  result = mach_port_deallocate(mach_task_self(), unused);
+  CHECK(result == KERN_SUCCESS);
+
+  // Does the region fully enclose the zone pointers? Possibly unwarranted
+  // simplification used: using the size of a full version 8 malloc zone rather
+  // than the actual smaller size if the passed-in zone is not version 8.
+  CHECK(*reprotection_start <=
+            reinterpret_cast<mach_vm_address_t>(default_zone));
+  mach_vm_size_t zone_offset = reinterpret_cast<mach_vm_size_t>(default_zone) -
+      reinterpret_cast<mach_vm_size_t>(*reprotection_start);
+  CHECK(zone_offset + sizeof(ChromeMallocZone) <= *reprotection_length);
+
+  if (info.protection & VM_PROT_WRITE) {
+    // No change needed; the zone is already writable.
+    *reprotection_start = 0;
+    *reprotection_length = 0;
+    *reprotection_value = VM_PROT_NONE;
+  } else {
+    *reprotection_value = info.protection;
+    result = mach_vm_protect(mach_task_self(),
+                             *reprotection_start,
+                             *reprotection_length,
+                             false,
+                             info.protection | VM_PROT_WRITE);
+    CHECK(result == KERN_SUCCESS);
+  }
+}
 
 // === C malloc/calloc/valloc/realloc/posix_memalign ===
 
@@ -693,7 +734,9 @@ memalign_type g_old_memalign_purgeable;
 
 void* oom_killer_malloc(struct _malloc_zone_t* zone,
                         size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_malloc(zone, size);
   if (!result && size)
     debug::BreakDebugger();
@@ -703,7 +746,9 @@ void* oom_killer_malloc(struct _malloc_zone_t* zone,
 void* oom_killer_calloc(struct _malloc_zone_t* zone,
                         size_t num_items,
                         size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_calloc(zone, num_items, size);
   if (!result && num_items && size)
     debug::BreakDebugger();
@@ -712,7 +757,9 @@ void* oom_killer_calloc(struct _malloc_zone_t* zone,
 
 void* oom_killer_valloc(struct _malloc_zone_t* zone,
                         size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_valloc(zone, size);
   if (!result && size)
     debug::BreakDebugger();
@@ -721,14 +768,18 @@ void* oom_killer_valloc(struct _malloc_zone_t* zone,
 
 void oom_killer_free(struct _malloc_zone_t* zone,
                      void* ptr) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   g_old_free(zone, ptr);
 }
 
 void* oom_killer_realloc(struct _malloc_zone_t* zone,
                          void* ptr,
                          size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_realloc(zone, ptr, size);
   if (!result && size)
     debug::BreakDebugger();
@@ -738,7 +789,9 @@ void* oom_killer_realloc(struct _malloc_zone_t* zone,
 void* oom_killer_memalign(struct _malloc_zone_t* zone,
                           size_t alignment,
                           size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_memalign(zone, alignment, size);
   // Only die if posix_memalign would have returned ENOMEM, since there are
   // other reasons why NULL might be returned (see
@@ -752,7 +805,9 @@ void* oom_killer_memalign(struct _malloc_zone_t* zone,
 
 void* oom_killer_malloc_purgeable(struct _malloc_zone_t* zone,
                                   size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_malloc_purgeable(zone, size);
   if (!result && size)
     debug::BreakDebugger();
@@ -762,7 +817,9 @@ void* oom_killer_malloc_purgeable(struct _malloc_zone_t* zone,
 void* oom_killer_calloc_purgeable(struct _malloc_zone_t* zone,
                                   size_t num_items,
                                   size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_calloc_purgeable(zone, num_items, size);
   if (!result && num_items && size)
     debug::BreakDebugger();
@@ -771,7 +828,9 @@ void* oom_killer_calloc_purgeable(struct _malloc_zone_t* zone,
 
 void* oom_killer_valloc_purgeable(struct _malloc_zone_t* zone,
                                   size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_valloc_purgeable(zone, size);
   if (!result && size)
     debug::BreakDebugger();
@@ -780,14 +839,18 @@ void* oom_killer_valloc_purgeable(struct _malloc_zone_t* zone,
 
 void oom_killer_free_purgeable(struct _malloc_zone_t* zone,
                                void* ptr) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   g_old_free_purgeable(zone, ptr);
 }
 
 void* oom_killer_realloc_purgeable(struct _malloc_zone_t* zone,
                                    void* ptr,
                                    size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_realloc_purgeable(zone, ptr, size);
   if (!result && size)
     debug::BreakDebugger();
@@ -797,7 +860,9 @@ void* oom_killer_realloc_purgeable(struct _malloc_zone_t* zone,
 void* oom_killer_memalign_purgeable(struct _malloc_zone_t* zone,
                                     size_t alignment,
                                     size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_memalign_purgeable(zone, alignment, size);
   // Only die if posix_memalign would have returned ENOMEM, since there are
   // other reasons why NULL might be returned (see
@@ -885,8 +950,10 @@ id oom_killer_allocWithZone(id self, SEL _cmd, NSZone* zone)
 
 void* UncheckedMalloc(size_t size) {
   if (g_old_malloc) {
+#if ARCH_CPU_32_BITS
     ScopedClearErrno clear_errno;
     ThreadLocalBooleanAutoReset flag(g_unchecked_malloc.Pointer(), true);
+#endif  // ARCH_CPU_32_BITS
     return g_old_malloc(malloc_default_zone(), size);
   }
   return malloc(size);
@@ -918,34 +985,27 @@ void EnableTerminationOnOutOfMemory() {
   // Don't do anything special on OOM for the malloc zones replaced by
   // AddressSanitizer, as modifying or protecting them may not work correctly.
 
-  // See http://trac.webkit.org/changeset/53362/trunk/Tools/DumpRenderTree/mac
-  bool zone_allocators_protected = base::mac::IsOSLionOrLater();
-
   ChromeMallocZone* default_zone =
       reinterpret_cast<ChromeMallocZone*>(malloc_default_zone());
   ChromeMallocZone* purgeable_zone =
       reinterpret_cast<ChromeMallocZone*>(malloc_default_purgeable_zone());
 
-  vm_address_t page_start_default = 0;
-  vm_address_t page_start_purgeable = 0;
-  vm_size_t len_default = 0;
-  vm_size_t len_purgeable = 0;
-  if (zone_allocators_protected) {
-    page_start_default = reinterpret_cast<vm_address_t>(default_zone) &
-        static_cast<vm_size_t>(~(getpagesize() - 1));
-    len_default = reinterpret_cast<vm_address_t>(default_zone) -
-        page_start_default + sizeof(ChromeMallocZone);
-    mprotect(reinterpret_cast<void*>(page_start_default), len_default,
-             PROT_READ | PROT_WRITE);
+  mach_vm_address_t default_reprotection_start = 0;
+  mach_vm_size_t default_reprotection_length = 0;
+  vm_prot_t default_reprotection_value = VM_PROT_NONE;
+  DeprotectMallocZone(default_zone,
+                      &default_reprotection_start,
+                      &default_reprotection_length,
+                      &default_reprotection_value);
 
-    if (purgeable_zone) {
-      page_start_purgeable = reinterpret_cast<vm_address_t>(purgeable_zone) &
-          static_cast<vm_size_t>(~(getpagesize() - 1));
-      len_purgeable = reinterpret_cast<vm_address_t>(purgeable_zone) -
-          page_start_purgeable + sizeof(ChromeMallocZone);
-      mprotect(reinterpret_cast<void*>(page_start_purgeable), len_purgeable,
-               PROT_READ | PROT_WRITE);
-    }
+  mach_vm_address_t purgeable_reprotection_start = 0;
+  mach_vm_size_t purgeable_reprotection_length = 0;
+  vm_prot_t purgeable_reprotection_value = VM_PROT_NONE;
+  if (purgeable_zone) {
+    DeprotectMallocZone(purgeable_zone,
+                        &purgeable_reprotection_start,
+                        &purgeable_reprotection_length,
+                        &purgeable_reprotection_value);
   }
 
   // Default zone
@@ -997,13 +1057,24 @@ void EnableTerminationOnOutOfMemory() {
     }
   }
 
-  if (zone_allocators_protected) {
-    mprotect(reinterpret_cast<void*>(page_start_default), len_default,
-             PROT_READ);
-    if (purgeable_zone) {
-      mprotect(reinterpret_cast<void*>(page_start_purgeable), len_purgeable,
-               PROT_READ);
-    }
+  // Restore protection if it was active.
+
+  if (default_reprotection_start) {
+    kern_return_t result = mach_vm_protect(mach_task_self(),
+                                           default_reprotection_start,
+                                           default_reprotection_length,
+                                           false,
+                                           default_reprotection_value);
+    CHECK(result == KERN_SUCCESS);
+  }
+
+  if (purgeable_reprotection_start) {
+    kern_return_t result = mach_vm_protect(mach_task_self(),
+                                           purgeable_reprotection_start,
+                                           purgeable_reprotection_length,
+                                           false,
+                                           purgeable_reprotection_value);
+    CHECK(result == KERN_SUCCESS);
   }
 #endif
 

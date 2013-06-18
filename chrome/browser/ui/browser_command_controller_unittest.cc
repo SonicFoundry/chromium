@@ -7,6 +7,7 @@
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/command_updater.h"
+#include "chrome/browser/profiles/profile_destroyer.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -137,21 +138,6 @@ TEST_F(BrowserCommandControllerTest, AppFullScreen) {
   ASSERT_TRUE(browser()->is_app());
   browser()->command_controller()->FullscreenStateChanged();
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FULLSCREEN));
-
-  // Enabled for panels.
-  Browser::CreateParams panel_params(Browser::TYPE_PANEL, profile(),
-                                     browser()->host_desktop_type());
-  TestBrowserWindow panel_window;
-  panel_params.window = &panel_window;
-  Browser panel_browser(panel_params);
-  ASSERT_TRUE(panel_browser.is_type_panel());
-  EXPECT_TRUE(chrome::IsCommandEnabled(&panel_browser, IDC_FULLSCREEN));
-
-  // Disabled for app-panels.
-  panel_browser.app_name_ = "app";
-  ASSERT_TRUE(panel_browser.is_app());
-  panel_browser.command_controller()->FullscreenStateChanged();
-  EXPECT_FALSE(chrome::IsCommandEnabled(&panel_browser, IDC_FULLSCREEN));
 }
 
 TEST_F(BrowserCommandControllerTest, AvatarMenuDisabledWhenOnlyOneProfile) {
@@ -191,7 +177,7 @@ class FullscreenTestBrowserWindow : public TestBrowserWindow {
   virtual ~FullscreenTestBrowserWindow() {}
 
   // TestBrowserWindow overrides:
-  virtual bool ShouldHideUIForFullscreen() const {
+  virtual bool ShouldHideUIForFullscreen() const OVERRIDE {
     return fullscreen_;
   }
   virtual bool IsFullscreen() const OVERRIDE {
@@ -219,10 +205,8 @@ class BrowserCommandControllerFullscreenTest
   virtual ~BrowserCommandControllerFullscreenTest() {}
 
   // BrowserWithTestWindowTest overrides:
-  virtual void SetUp() {
-    // Must be set before base SetUp() is called.
-    set_window(new FullscreenTestBrowserWindow);
-    BrowserWithTestWindowTest::SetUp();
+  virtual BrowserWindow* CreateBrowserWindow() OVERRIDE {
+    return new FullscreenTestBrowserWindow;
   }
 
  private:
@@ -255,28 +239,8 @@ TEST_F(BrowserCommandControllerFullscreenTest,
   chrome::ToggleFullscreenMode(browser());
   ASSERT_TRUE(browser()->window()->IsFullscreen());
   browser()->command_controller()->FullscreenStateChanged();
-#if defined(OS_MACOS)
-  // Mac leaves things enabled in fullscreen.
-  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_OPEN_CURRENT_URL));
-  EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_SHOW_AS_TAB));
-  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FOCUS_TOOLBAR));
-  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FOCUS_LOCATION));
-  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FOCUS_SEARCH));
-  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FOCUS_MENU_BAR));
-  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FOCUS_NEXT_PANE));
-  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FOCUS_PREVIOUS_PANE));
-  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FOCUS_BOOKMARKS));
-  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_DEVELOPER_MENU));
-  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FEEDBACK));
-  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_OPTIONS));
-  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_IMPORT_SETTINGS));
-  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_EDIT_SEARCH_ENGINES));
-  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_VIEW_PASSWORDS));
-  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_ABOUT));
-  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_SHOW_APP_MENU));
-  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FULLSCREEN));
-#else
-  // Windows and GTK disable most commands in fullscreen.
+
+  // Most commands are disabled in fullscreen.
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_OPEN_CURRENT_URL));
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_SHOW_AS_TAB));
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_FOCUS_TOOLBAR));
@@ -295,7 +259,6 @@ TEST_F(BrowserCommandControllerFullscreenTest,
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_ABOUT));
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_SHOW_APP_MENU));
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FULLSCREEN));
-#endif  // defined(OS_MACOS)
 
   // Exit fullscreen.
   chrome::ToggleFullscreenMode(browser());
@@ -328,13 +291,15 @@ TEST_F(BrowserCommandControllerTest,
   ASSERT_TRUE(testing_profile_manager.SetUp());
 
   // Set up a profile with an off the record profile.
-  TestingProfile* profile2 = new TestingProfile();
+  TestingProfile::Builder builder;
+  TestingProfile* profile2 = builder.Build().release();
   profile2->set_incognito(true);
-  TestingProfile* profile1 =
-      testing_profile_manager.CreateTestingProfile("p1");
+  TestingProfile::Builder builder2;
+  TestingProfile* profile1 = builder2.Build().release();
   profile2->SetOriginalProfile(profile1);
   EXPECT_EQ(profile2->GetOriginalProfile(), profile1);
   profile1->SetOffTheRecordProfile(profile2);
+
   // Create a new browser based on the off the record profile.
   Browser::CreateParams profile_params(profile2,
                                        chrome::HOST_DESKTOP_TYPE_NATIVE);
@@ -352,7 +317,7 @@ TEST_F(BrowserCommandControllerTest,
   EXPECT_FALSE(command_updater->IsCommandEnabled(IDC_SHOW_SYNC_SETUP));
   delete command_controller;
   browser2.reset();
-  testing_profile_manager.DeleteTestingProfile("p1");
+  ProfileDestroyer::DestroyProfileWhenAppropriate(profile1);
 }
 
 TEST_F(BrowserCommandControllerTest,

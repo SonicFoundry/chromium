@@ -4,6 +4,7 @@
 
 #include "ash/wm/frame_painter.h"
 
+#include "ash/ash_constants.h"
 #include "ash/shell.h"
 #include "ash/shell_window_ids.h"
 #include "ash/test/ash_test_base.h"
@@ -13,6 +14,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "grit/ash_resources.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/aura/client/aura_constants.h"
 #include "ui/aura/root_window.h"
 #include "ui/aura/window_observer.h"
 #include "ui/base/hit_test.h"
@@ -69,13 +71,10 @@ class ResizableWidgetDelegate : public views::WidgetDelegate {
 class WindowRepaintChecker : public aura::WindowObserver {
  public:
   explicit WindowRepaintChecker(aura::Window* window)
-      : window_(window),
-        is_paint_scheduled_(false) {
-    window_->AddObserver(this);
+      : is_paint_scheduled_(false) {
+    window->AddObserver(this);
   }
   virtual ~WindowRepaintChecker() {
-    if (window_)
-      window_->RemoveObserver(this);
   }
 
   bool IsPaintScheduledAndReset() {
@@ -91,15 +90,42 @@ class WindowRepaintChecker : public aura::WindowObserver {
     is_paint_scheduled_ = true;
   }
   virtual void OnWindowDestroying(aura::Window* window) OVERRIDE {
-    DCHECK_EQ(window_, window);
-    window_ = NULL;
     window->RemoveObserver(this);
   }
 
-  aura::Window* window_;
   bool is_paint_scheduled_;
 
   DISALLOW_COPY_AND_ASSIGN(WindowRepaintChecker);
+};
+
+// Modifies the values of kInactiveWindowOpacity, kActiveWindowOpacity, and
+// kSoloWindowOpacity for the lifetime of the class. This is useful so that
+// the constants each have different values.
+class ScopedOpacityConstantModifier {
+ public:
+  ScopedOpacityConstantModifier()
+      : initial_active_window_opacity_(
+            ash::FramePainter::kActiveWindowOpacity),
+        initial_inactive_window_opacity_(
+            ash::FramePainter::kInactiveWindowOpacity),
+        initial_solo_window_opacity_(ash::FramePainter::kSoloWindowOpacity) {
+    ash::FramePainter::kActiveWindowOpacity = 100;
+    ash::FramePainter::kInactiveWindowOpacity = 120;
+    ash::FramePainter::kSoloWindowOpacity = 140;
+  }
+  ~ScopedOpacityConstantModifier() {
+    ash::FramePainter::kActiveWindowOpacity = initial_active_window_opacity_;
+    ash::FramePainter::kInactiveWindowOpacity =
+        initial_inactive_window_opacity_;
+    ash::FramePainter::kSoloWindowOpacity = initial_solo_window_opacity_;
+  }
+
+ private:
+  int initial_active_window_opacity_;
+  int initial_inactive_window_opacity_;
+  int initial_solo_window_opacity_;
+
+  DISALLOW_COPY_AND_ASSIGN(ScopedOpacityConstantModifier);
 };
 
 }  // namespace
@@ -128,6 +154,16 @@ class FramePainterTest : public ash::test::AshTestBase {
     return widget;
   }
 
+  Widget* CreatePanelWidget() {
+    Widget* widget = new Widget;
+    Widget::InitParams params;
+    params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+    params.context = CurrentContext();
+    params.type = Widget::InitParams::TYPE_PANEL;
+    widget->Init(params);
+    return widget;
+  }
+
   Widget* CreateResizableWidget() {
     Widget* widget = new Widget;
     Widget::InitParams params;
@@ -140,21 +176,6 @@ class FramePainterTest : public ash::test::AshTestBase {
     return widget;
   }
 };
-
-TEST_F(FramePainterTest, Basics) {
-  // Other tests might have created a FramePainter, so we cannot assert that
-  // FramePainter::instances_ is NULL here.
-
-  // Creating a painter bumps the instance count.
-  scoped_ptr<FramePainter> painter(new FramePainter);
-  ASSERT_TRUE(FramePainter::instances_);
-  EXPECT_EQ(1u, FramePainter::instances_->size());
-
-  // Destroying that painter leaves a valid pointer but no instances.
-  painter.reset();
-  ASSERT_TRUE(FramePainter::instances_);
-  EXPECT_EQ(0u, FramePainter::instances_->size());
-}
 
 TEST_F(FramePainterTest, CreateAndDeleteSingleWindow) {
   // Ensure that creating/deleting a window works well and doesn't cause
@@ -171,12 +192,11 @@ TEST_F(FramePainterTest, CreateAndDeleteSingleWindow) {
 
   // We only have one window, so it should use a solo header.
   EXPECT_TRUE(painter->UseSoloWindowHeader());
-  EXPECT_EQ(painter.get(),
-            root->GetProperty(internal::kSoloWindowFramePainterKey));
+  EXPECT_TRUE(root->GetProperty(internal::kSoloWindowHeaderKey));
 
   // Close the window.
   widget.reset();
-  EXPECT_EQ(NULL, root->GetProperty(internal::kSoloWindowFramePainterKey));
+  EXPECT_FALSE(root->GetProperty(internal::kSoloWindowHeaderKey));
 
   // Recreate another window again.
   painter.reset(new FramePainter);
@@ -186,8 +206,7 @@ TEST_F(FramePainterTest, CreateAndDeleteSingleWindow) {
       widget.get(), NULL, &size, &close, FramePainter::SIZE_BUTTON_MAXIMIZES);
   widget->Show();
   EXPECT_TRUE(painter->UseSoloWindowHeader());
-  EXPECT_EQ(painter.get(),
-            root->GetProperty(internal::kSoloWindowFramePainterKey));
+  EXPECT_TRUE(root->GetProperty(internal::kSoloWindowHeaderKey));
 }
 
 TEST_F(FramePainterTest, LayoutHeader) {
@@ -273,9 +292,10 @@ TEST_F(FramePainterTest, UseSoloWindowHeader) {
   p2.Init(w2.get(), NULL, &size2, &close2, FramePainter::SIZE_BUTTON_MAXIMIZES);
   w2->Show();
 
-  // Now there are two windows, so we should not use solo headers.
+  // Now there are two windows, so we should not use solo headers. This only
+  // needs to test |p1| because "solo window headers" are a per-root-window
+  // property.
   EXPECT_FALSE(p1.UseSoloWindowHeader());
-  EXPECT_FALSE(p2.UseSoloWindowHeader());
 
   // Hide one window.  Solo should be enabled.
   w2->Hide();
@@ -284,19 +304,16 @@ TEST_F(FramePainterTest, UseSoloWindowHeader) {
   // Show that window.  Solo should be disabled.
   w2->Show();
   EXPECT_FALSE(p1.UseSoloWindowHeader());
-  EXPECT_FALSE(p2.UseSoloWindowHeader());
 
   // Maximize the window, then activate the first window. The second window
   // is in its own workspace, so solo should be active for the first one.
   w2->Maximize();
   w1->Activate();
   EXPECT_TRUE(p1.UseSoloWindowHeader());
-  EXPECT_FALSE(p2.UseSoloWindowHeader());
 
   // Switch to the second window and restore it.  Solo should be disabled.
   w2->Activate();
   w2->Restore();
-  EXPECT_FALSE(p1.UseSoloWindowHeader());
   EXPECT_FALSE(p2.UseSoloWindowHeader());
 
   // Minimize the second window.  Solo should be enabled.
@@ -314,12 +331,138 @@ TEST_F(FramePainterTest, UseSoloWindowHeader) {
   ImageButton close3(NULL);
   p3.Init(w3.get(), NULL, &size3, &close3, FramePainter::SIZE_BUTTON_MAXIMIZES);
   w3->Show();
-  EXPECT_FALSE(p1.UseSoloWindowHeader());
   EXPECT_FALSE(p3.UseSoloWindowHeader());
 
   // Close the always-on-top widget.
   w3.reset();
   EXPECT_TRUE(p1.UseSoloWindowHeader());
+}
+
+// An open V2 app window should cause browser windows not to use the
+// solo window header.
+TEST_F(FramePainterTest, UseSoloWindowHeaderWithApp) {
+  // Create a widget and a painter for it.
+  scoped_ptr<Widget> w1(CreateTestWidget());
+  FramePainter p1;
+  ImageButton size1(NULL);
+  ImageButton close1(NULL);
+  p1.Init(w1.get(), NULL, &size1, &close1, FramePainter::SIZE_BUTTON_MAXIMIZES);
+  w1->Show();
+
+  // We only have one window, so it should use a solo header.
+  EXPECT_TRUE(p1.UseSoloWindowHeader());
+
+  // Simulate a V2 app window, which is part of the active workspace but does
+  // not have a frame painter.
+  scoped_ptr<Widget> w2(CreateTestWidget());
+  w2->Show();
+
+  // Now there are two windows, so we should not use solo headers.
+  EXPECT_FALSE(p1.UseSoloWindowHeader());
+
+  // Minimize the app window. The first window should go solo again.
+  w2->Minimize();
+  EXPECT_TRUE(p1.UseSoloWindowHeader());
+
+  // Restoring the app window turns off solo headers.
+  w2->Restore();
+  EXPECT_FALSE(p1.UseSoloWindowHeader());
+}
+
+// Panels should not "count" for computing solo window headers, and the panel
+// itself should always have an opaque header.
+TEST_F(FramePainterTest, UseSoloWindowHeaderWithPanel) {
+  // Create a widget and a painter for it.
+  scoped_ptr<Widget> w1(CreateTestWidget());
+  FramePainter p1;
+  ImageButton size1(NULL);
+  ImageButton close1(NULL);
+  p1.Init(w1.get(), NULL, &size1, &close1, FramePainter::SIZE_BUTTON_MAXIMIZES);
+  w1->Show();
+
+  // We only have one window, so it should use a solo header.
+  EXPECT_TRUE(p1.UseSoloWindowHeader());
+
+  // Create a panel and a painter for it.
+  scoped_ptr<Widget> w2(CreatePanelWidget());
+  FramePainter p2;
+  ImageButton size2(NULL);
+  ImageButton close2(NULL);
+  p2.Init(w2.get(), NULL, &size2, &close2, FramePainter::SIZE_BUTTON_MAXIMIZES);
+  w2->Show();
+
+  // Despite two windows, the first window should still be considered "solo"
+  // because panels aren't included in the computation.
+  EXPECT_TRUE(p1.UseSoloWindowHeader());
+
+  // The panel itself is not considered solo.
+  EXPECT_FALSE(p2.UseSoloWindowHeader());
+
+  // Even after closing the first window, the panel is still not considered
+  // solo.
+  w1.reset();
+  EXPECT_FALSE(p2.UseSoloWindowHeader());
+}
+
+// Modal dialogs should not use solo headers.
+TEST_F(FramePainterTest, UseSoloWindowHeaderModal) {
+  // Create a widget and a painter for it.
+  scoped_ptr<Widget> w1(CreateTestWidget());
+  FramePainter p1;
+  ImageButton size1(NULL);
+  ImageButton close1(NULL);
+  p1.Init(w1.get(), NULL, &size1, &close1, FramePainter::SIZE_BUTTON_MAXIMIZES);
+  w1->Show();
+
+  // We only have one window, so it should use a solo header.
+  EXPECT_TRUE(p1.UseSoloWindowHeader());
+
+  // Create a fake modal window.
+  scoped_ptr<Widget> w2(CreateTestWidget());
+  w2->GetNativeWindow()->SetProperty(aura::client::kModalKey,
+                                     ui::MODAL_TYPE_WINDOW);
+  FramePainter p2;
+  ImageButton size2(NULL);
+  ImageButton close2(NULL);
+  p2.Init(w2.get(), NULL, &size2, &close2, FramePainter::SIZE_BUTTON_MAXIMIZES);
+  w2->Show();
+
+  // Despite two windows, the first window should still be considered "solo"
+  // because modal windows aren't included in the computation.
+  EXPECT_TRUE(p1.UseSoloWindowHeader());
+
+  // The modal window itself is not considered solo.
+  EXPECT_FALSE(p2.UseSoloWindowHeader());
+}
+
+// Constrained windows should not use solo headers.
+TEST_F(FramePainterTest, UseSoloWindowHeaderConstrained) {
+  // Create a widget and a painter for it.
+  scoped_ptr<Widget> w1(CreateTestWidget());
+  FramePainter p1;
+  ImageButton size1(NULL);
+  ImageButton close1(NULL);
+  p1.Init(w1.get(), NULL, &size1, &close1, FramePainter::SIZE_BUTTON_MAXIMIZES);
+  w1->Show();
+
+  // We only have one window, so it should use a solo header.
+  EXPECT_TRUE(p1.UseSoloWindowHeader());
+
+  // Create a fake constrained window.
+  scoped_ptr<Widget> w2(CreateTestWidget());
+  w2->GetNativeWindow()->SetProperty(ash::kConstrainedWindowKey, true);
+  FramePainter p2;
+  ImageButton size2(NULL);
+  ImageButton close2(NULL);
+  p2.Init(w2.get(), NULL, &size2, &close2, FramePainter::SIZE_BUTTON_MAXIMIZES);
+  w2->Show();
+
+  // Despite two windows, the first window should still be considered "solo"
+  // because constrained windows aren't included in the computation.
+  EXPECT_TRUE(p1.UseSoloWindowHeader());
+
+  // The constrained window itself is not considered solo.
+  EXPECT_FALSE(p2.UseSoloWindowHeader());
 }
 
 #if defined(OS_WIN)
@@ -443,6 +586,10 @@ TEST_F(FramePainterTest, GetHeaderOpacity) {
   p1.Init(w1.get(), NULL, &size1, &close1, FramePainter::SIZE_BUTTON_MAXIMIZES);
   w1->Show();
 
+  // Modify the values of the opacity constants so that they each have a
+  // different value.
+  ScopedOpacityConstantModifier opacity_constant_modifier;
+
   // Solo active window has solo window opacity.
   EXPECT_EQ(FramePainter::kSoloWindowOpacity,
             p1.GetHeaderOpacity(FramePainter::ACTIVE,
@@ -475,6 +622,28 @@ TEST_F(FramePainterTest, GetHeaderOpacity) {
             p1.GetHeaderOpacity(FramePainter::ACTIVE,
                                 IDR_AURA_WINDOW_HEADER_BASE_ACTIVE,
                                 &custom_overlay));
+
+  // Regular maximized window is fully transparent.
+  ash::wm::MaximizeWindow(w1->GetNativeWindow());
+  EXPECT_EQ(0,
+            p1.GetHeaderOpacity(FramePainter::ACTIVE,
+                                IDR_AURA_WINDOW_HEADER_BASE_ACTIVE,
+                                NULL));
+
+  // Windows with custom overlays are fully opaque when maximized.
+  EXPECT_EQ(255,
+            p1.GetHeaderOpacity(FramePainter::ACTIVE,
+                                IDR_AURA_WINDOW_HEADER_BASE_ACTIVE,
+                                &custom_overlay));
+
+  // The maximized window frame should take on the active/inactive opacity
+  // while the user is cycling through workspaces.
+  w1->GetNativeWindow()->GetRootWindow()->SetProperty(
+      ash::internal::kCyclingThroughWorkspacesKey, true);
+  EXPECT_EQ(FramePainter::kInactiveWindowOpacity,
+            p1.GetHeaderOpacity(FramePainter::INACTIVE,
+                                IDR_AURA_WINDOW_HEADER_BASE_ACTIVE,
+                                NULL));
 }
 
 // Test the hit test function with windows which are "partially maximized".

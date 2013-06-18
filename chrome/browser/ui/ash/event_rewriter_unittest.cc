@@ -6,7 +6,7 @@
 
 #include "base/basictypes.h"
 #include "base/command_line.h"
-#include "base/prefs/public/pref_member.h"
+#include "base/prefs/pref_member.h"
 #include "base/stringprintf.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
@@ -21,9 +21,10 @@
 
 #include "chrome/browser/chromeos/input_method/input_method_configuration.h"
 #include "chrome/browser/chromeos/input_method/mock_input_method_manager.h"
-#include "chrome/browser/chromeos/input_method/mock_xkeyboard.h"
 #include "chrome/browser/chromeos/login/mock_user_manager.h"
+#include "chrome/browser/chromeos/login/user_manager.h"
 #include "chrome/browser/chromeos/preferences.h"
+#include "chromeos/ime/mock_xkeyboard.h"
 #include "ui/base/x/x11_util.h"
 
 namespace {
@@ -52,7 +53,7 @@ std::string GetRewrittenEventAsString(EventRewriter* rewriter,
   InitXKeyEvent(ui_keycode, ui_flags, ui_type, x_keycode, x_state, &xev);
   ui::KeyEvent keyevent(&xev, false /* is_char */);
   rewriter->RewriteForTesting(&keyevent);
-  return StringPrintf(
+  return base::StringPrintf(
       "ui_keycode=%d ui_flags=%d ui_type=%d x_keycode=%u x_state=%u x_type=%d",
       keyevent.key_code(), keyevent.flags(), keyevent.type(),
       xev.xkey.keycode, xev.xkey.state, xev.xkey.type);
@@ -64,7 +65,7 @@ std::string GetExpectedResultAsString(ui::KeyboardCode ui_keycode,
                                       KeyCode x_keycode,
                                       unsigned int x_state,
                                       int x_type) {
-  return StringPrintf(
+  return base::StringPrintf(
       "ui_keycode=%d ui_flags=%d ui_type=%d x_keycode=%u x_state=%u x_type=%d",
       ui_keycode, ui_flags, ui_type, x_keycode, x_state, x_type);
 }
@@ -160,13 +161,15 @@ class EventRewriterTest : public testing::Test {
         keycode_equal_(XKeysymToKeycode(display_, XK_equal)),
         keycode_period_(XKeysymToKeycode(display_, XK_period)),
         keycode_insert_(XKeysymToKeycode(display_, XK_Insert)),
+        mock_user_manager_(new chromeos::MockUserManager),
+        user_manager_enabler_(mock_user_manager_),
         input_method_manager_mock_(NULL) {
   }
   virtual ~EventRewriterTest() {}
 
   virtual void SetUp() {
     // Mocking user manager because the real one needs to be called on UI thread
-    EXPECT_CALL(*user_manager_mock_.user_manager(), IsLoggedInAsGuest())
+    EXPECT_CALL(*mock_user_manager_, IsLoggedInAsGuest())
         .WillRepeatedly(testing::Return(false));
     input_method_manager_mock_ =
         new chromeos::input_method::MockInputMethodManager;
@@ -267,7 +270,8 @@ class EventRewriterTest : public testing::Test {
   const KeyCode keycode_equal_;
   const KeyCode keycode_period_;
   const KeyCode keycode_insert_;
-  chromeos::ScopedMockUserManagerEnabler user_manager_mock_;
+  chromeos::MockUserManager* mock_user_manager_;  // Not owned.
+  chromeos::ScopedUserManagerEnabler user_manager_enabler_;
   chromeos::input_method::MockInputMethodManager* input_method_manager_mock_;
 };
 
@@ -2354,7 +2358,7 @@ TEST_F(EventRewriterTest, TestRewriteKeyEventSentByXSendEvent) {
     xev.xkey.send_event = True;  // XSendEvent() always does this.
     ui::KeyEvent keyevent(&xev, false /* is_char */);
     rewriter.RewriteForTesting(&keyevent);
-    rewritten_event = StringPrintf(
+    rewritten_event = base::StringPrintf(
         "ui_keycode=%d ui_flags=%d ui_type=%d "
         "x_keycode=%u x_state=%u x_type=%d",
         keyevent.key_code(), keyevent.flags(), keyevent.type(),

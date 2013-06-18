@@ -4,6 +4,7 @@
 
 #include "content/browser/loader/resource_request_info_impl.h"
 
+#include "content/browser/loader/global_routing_id.h"
 #include "content/browser/worker_host/worker_service_impl.h"
 #include "content/common/net/url_request_user_data.h"
 #include "content/public/browser/global_request_id.h"
@@ -42,6 +43,7 @@ void ResourceRequestInfo::AllocateForTesting(
           resource_type,                     // resource_type
           PAGE_TRANSITION_LINK,              // transition_type
           false,                             // is_download
+          false,                             // is_stream
           true,                              // allow_download
           false,                             // has_user_gesture
           WebKit::WebReferrerPolicyDefault,  // referrer_policy
@@ -80,7 +82,7 @@ const ResourceRequestInfoImpl* ResourceRequestInfoImpl::ForRequest(
 }
 
 ResourceRequestInfoImpl::ResourceRequestInfoImpl(
-    ProcessType process_type,
+    int process_type,
     int child_id,
     int route_id,
     int origin_pid,
@@ -92,6 +94,7 @@ ResourceRequestInfoImpl::ResourceRequestInfoImpl(
     ResourceType::Type resource_type,
     PageTransition transition_type,
     bool is_download,
+    bool is_stream,
     bool allow_download,
     bool has_user_gesture,
     WebKit::WebReferrerPolicy referrer_policy,
@@ -108,6 +111,7 @@ ResourceRequestInfoImpl::ResourceRequestInfoImpl(
       parent_is_main_frame_(parent_is_main_frame),
       parent_frame_id_(parent_frame_id),
       is_download_(is_download),
+      is_stream_(is_stream),
       allow_download_(allow_download),
       has_user_gesture_(has_user_gesture),
       was_ignored_by_handler_(false),
@@ -216,6 +220,10 @@ void ResourceRequestInfoImpl::AssociateWithRequest(net::URLRequest* request) {
 
 GlobalRequestID ResourceRequestInfoImpl::GetGlobalRequestID() const {
   return GlobalRequestID(child_id_, request_id_);
+}
+
+GlobalRoutingID ResourceRequestInfoImpl::GetGlobalRoutingID() const {
+  return GlobalRoutingID(child_id_, route_id_);
 }
 
 void ResourceRequestInfoImpl::set_requested_blob_data(

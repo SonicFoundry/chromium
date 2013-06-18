@@ -11,14 +11,21 @@
     "128": "images/icon128.png"
   },
   "permissions": [
+    "alarms",
     "storage",
+    "unlimitedStorage",
+    {"fileSystem": ["write"]},
     "wallpaperPrivate",
     "https://commondatastorage.googleapis.com/",
     "https://storage.googleapis.com/"
   ],
   "app": {
     "background": {
-      "scripts": ["js/event_page.js"]
+      "scripts": [
+        "js/constants.js",
+        "js/util.js",
+        "js/event_page.js"
+      ]
     }
   },
   "display_in_launcher": false

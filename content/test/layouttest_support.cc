@@ -15,6 +15,10 @@
 #include "third_party/WebKit/Source/Platform/chromium/public/WebGamepads.h"
 #include "third_party/WebKit/Tools/DumpRenderTree/chromium/TestRunner/public/WebTestProxy.h"
 
+#if defined(OS_WIN) && !defined(USE_AURA)
+#include "content/browser/web_contents/web_contents_drag_win.h"
+#endif
+
 using WebKit::WebGamepads;
 using WebTestRunner::WebTestProxy;
 using WebTestRunner::WebTestProxyBase;
@@ -69,8 +73,8 @@ void SetAllowOSMesaImageTransportForTesting() {
 #endif
 }
 
-void DoNotRequireUserGestureForFocusChanges() {
-  RenderThreadImpl::current()->set_require_user_gesture_for_focus(false);
+void DoNotSendFocusEvents() {
+  RenderThreadImpl::current()->set_should_send_focus_ipcs(false);
 }
 
 void SyncNavigationState(RenderView* render_view) {
@@ -80,6 +84,30 @@ void SyncNavigationState(RenderView* render_view) {
 void SetFocusAndActivate(RenderView* render_view, bool enable) {
   static_cast<RenderViewImpl*>(render_view)
       ->SetFocusAndActivateForTesting(enable);
+}
+
+void EnableShortCircuitSizeUpdates() {
+  RenderThreadImpl::current()->set_short_circuit_size_updates(true);
+}
+
+void ForceResizeRenderView(RenderView* render_view,
+                           const WebKit::WebSize& new_size) {
+  static_cast<RenderViewImpl*>(render_view)->didAutoResize(new_size);
+}
+
+void DisableNavigationErrorPages() {
+  RenderThreadImpl::current()->set_skip_error_pages(true);
+}
+
+void SetDeviceScaleFactor(RenderView* render_view, float factor) {
+  static_cast<RenderViewImpl*>(render_view)
+      ->SetDeviceScaleFactorForTesting(factor);
+}
+
+void DisableSystemDragDrop() {
+#if defined(OS_WIN) && !defined(USE_AURA)
+  WebContentsDragWin::DisableDragDropForTesting();
+#endif
 }
 
 }  // namespace content

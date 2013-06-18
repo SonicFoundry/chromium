@@ -7,14 +7,14 @@
 #include "base/memory/singleton.h"
 #include "base/metrics/histogram.h"
 #include "base/utf_string_conversions.h"
-#include "chrome/browser/api/infobars/confirm_infobar_delegate.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
-#include "chrome/browser/autofill/autofill_manager.h"
+#include "chrome/browser/infobars/confirm_infobar_delegate.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/password_manager/password_form_manager.h"
 #include "chrome/browser/password_manager/password_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/sync/one_click_signin_helper.h"
-#include "chrome/common/autofill_messages.h"
+#include "components/autofill/browser/autofill_manager.h"
+#include "components/autofill/common/autofill_messages.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
@@ -24,11 +24,12 @@
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
-#include "net/base/cert_status_flags.h"
+#include "net/cert/cert_status_flags.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(PasswordManagerDelegateImpl);
+
+// SavePasswordInfoBarDelegate ------------------------------------------------
 
 // After a successful *new* login attempt, we take the PasswordFormManager in
 // provisional_save_manager_ and move it to a SavePasswordInfoBarDelegate while
@@ -152,7 +153,10 @@ InfoBarDelegate::InfoBarAutomationType
   return PASSWORD_INFOBAR;
 }
 
+
 // PasswordManagerDelegateImpl ------------------------------------------------
+
+DEFINE_WEB_CONTENTS_USER_DATA_KEY(PasswordManagerDelegateImpl);
 
 PasswordManagerDelegateImpl::PasswordManagerDelegateImpl(
     content::WebContents* web_contents)
@@ -163,9 +167,9 @@ PasswordManagerDelegateImpl::~PasswordManagerDelegateImpl() {
 }
 
 void PasswordManagerDelegateImpl::FillPasswordForm(
-    const PasswordFormFillData& form_data) {
-  AutofillManager* autofill_manager =
-      AutofillManager::FromWebContents(web_contents_);
+    const autofill::PasswordFormFillData& form_data) {
+  autofill::AutofillManager* autofill_manager =
+      autofill::AutofillManager::FromWebContents(web_contents_);
   // Browser process will own popup UI, so renderer should not show the popup.
   bool disable_popup = autofill_manager->IsNativeUiEnabled();
 

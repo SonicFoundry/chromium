@@ -5,7 +5,6 @@
 #include "chrome/browser/extensions/api/webstore_private/webstore_private_api.h"
 
 #include "apps/app_launcher.h"
-#include "apps/switches.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
@@ -26,8 +25,8 @@
 #include "chrome/browser/extensions/webstore_installer.h"
 #include "chrome/browser/gpu/gpu_feature_checker.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/signin/token_service.h"
-#include "chrome/browser/signin/token_service_factory.h"
+#include "chrome/browser/signin/signin_manager.h"
+#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/sync/profile_sync_service.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/ui/app_list/app_list_service.h"
@@ -45,11 +44,6 @@
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
-
-#if defined(OS_WIN)
-#include "chrome/browser/extensions/app_host_installer_win.h"
-#include "chrome/installer/util/browser_distribution.h"
-#endif
 
 using content::GpuDataManager;
 
@@ -124,6 +118,16 @@ DictionaryValue* CreateLoginResult(Profile* profile) {
 }
 
 WebstoreInstaller::Delegate* test_webstore_installer_delegate = NULL;
+
+void EnableAppLauncher(base::Callback<void(bool)> callback) {
+#if defined(OS_WIN)
+  LOG(INFO) << "Enabling App Launcher via internal enable";
+  AppListService::Get()->EnableAppList();
+  callback.Run(true);
+#else
+  callback.Run(true);
+#endif
+}
 
 }  // namespace
 
@@ -277,7 +281,7 @@ bool BeginInstallWithManifestFunction::RunImpl() {
 void BeginInstallWithManifestFunction::SetResultCode(ResultCode code) {
   switch (code) {
     case ERROR_NONE:
-      SetResult(Value::CreateStringValue(""));
+      SetResult(Value::CreateStringValue(std::string()));
       break;
     case UNKNOWN_ERROR:
       SetResult(Value::CreateStringValue("unknown_error"));
@@ -300,6 +304,9 @@ void BeginInstallWithManifestFunction::SetResultCode(ResultCode code) {
     case INVALID_ICON_URL:
       SetResult(Value::CreateStringValue("invalid_icon_url"));
       break;
+    case SIGNIN_FAILED:
+      SetResult(Value::CreateStringValue("signin_failed"));
+      break;
     default:
       CHECK(false);
   }
@@ -320,7 +327,7 @@ void BeginInstallWithManifestFunction::OnWebstoreParseSuccess(
       Extension::FROM_WEBSTORE,
       id,
       localized_name_,
-      "",
+      std::string(),
       &error);
 
   if (!dummy_extension_) {
@@ -329,16 +336,16 @@ void BeginInstallWithManifestFunction::OnWebstoreParseSuccess(
     return;
   }
 
-  content::WebContents* web_contents = GetAssociatedWebContents();
-  if (!web_contents)  // The browser window has gone away.
+  SigninManagerBase* signin_manager =
+      SigninManagerFactory::GetForProfile(profile());
+  if (dummy_extension_->is_platform_app() &&
+      signin_manager->GetAuthenticatedUsername().empty() &&
+      signin_manager->AuthInProgress()) {
+    signin_tracker_.reset(new SigninTracker(profile(), this));
     return;
-  install_prompt_.reset(new ExtensionInstallPrompt(web_contents));
-  install_prompt_->ConfirmWebstoreInstall(
-      this,
-      dummy_extension_,
-      &icon_,
-      ExtensionInstallPrompt::GetDefaultShowDialogCallback());
-  // Control flow finishes up in InstallUIProceed or InstallUIAbort.
+  }
+
+  SigninCompletedOrNotNeeded();
 }
 
 void BeginInstallWithManifestFunction::OnWebstoreParseFailure(
@@ -368,6 +375,39 @@ void BeginInstallWithManifestFunction::OnWebstoreParseFailure(
   Release();
 }
 
+void BeginInstallWithManifestFunction::GaiaCredentialsValid() {}
+
+void BeginInstallWithManifestFunction::SigninFailed(
+    const GoogleServiceAuthError& error) {
+  signin_tracker_.reset();
+
+  SetResultCode(SIGNIN_FAILED);
+  error_ = error.ToString();
+  SendResponse(false);
+
+  // Matches the AddRef in RunImpl().
+  Release();
+}
+
+void BeginInstallWithManifestFunction::SigninSuccess() {
+  signin_tracker_.reset();
+
+  SigninCompletedOrNotNeeded();
+}
+
+void BeginInstallWithManifestFunction::SigninCompletedOrNotNeeded() {
+  content::WebContents* web_contents = GetAssociatedWebContents();
+  if (!web_contents)  // The browser window has gone away.
+    return;
+  install_prompt_.reset(new ExtensionInstallPrompt(web_contents));
+  install_prompt_->ConfirmWebstoreInstall(
+      this,
+      dummy_extension_,
+      &icon_,
+      ExtensionInstallPrompt::GetDefaultShowDialogCallback());
+  // Control flow finishes up in InstallUIProceed or InstallUIAbort.
+}
+
 void BeginInstallWithManifestFunction::InstallUIProceed() {
   // This gets cleared in CrxInstaller::ConfirmInstall(). TODO(asargent) - in
   // the future we may also want to add time-based expiration, where a whitelist
@@ -377,7 +417,6 @@ void BeginInstallWithManifestFunction::InstallUIProceed() {
           profile(), id_, parsed_manifest_.Pass()));
   approval->use_app_installed_bubble = use_app_installed_bubble_;
   approval->enable_launcher = enable_launcher_;
-  approval->record_oauth2_grant = install_prompt_->record_oauth2_grant();
   approval->installing_icon = gfx::ImageSkia::CreateFrom1xBitmap(icon_);
   g_pending_approvals.Get().PushApproval(approval.Pass());
 
@@ -418,8 +457,7 @@ void BeginInstallWithManifestFunction::InstallUIAbort(bool user_initiated) {
   Release();
 }
 
-CompleteInstallFunction::CompleteInstallFunction()
-    : is_app_(false) {}
+CompleteInstallFunction::CompleteInstallFunction() {}
 
 CompleteInstallFunction::~CompleteInstallFunction() {}
 
@@ -437,30 +475,17 @@ bool CompleteInstallFunction::RunImpl() {
         kNoPreviousBeginInstallWithManifestError, id);
     return false;
   }
-  is_app_ = approval_->parsed_manifest->Get(
-      extension_manifest_keys::kPlatformAppBackground, NULL);
 
   // Balanced in OnExtensionInstallSuccess() or OnExtensionInstallFailure().
   AddRef();
 
-#if defined(OS_WIN)
   if (approval_->enable_launcher) {
-    if (BrowserDistribution::GetDistribution()->AppHostIsSupported()) {
-      LOG(INFO) << "Enabling App Launcher via installation";
-      extensions::AppHostInstaller::SetInstallWithLauncher(true);
-      extensions::AppHostInstaller::EnsureAppHostInstalled(
-          base::Bind(&CompleteInstallFunction::AfterMaybeInstallAppLauncher,
-                     this));
-      return true;
-    } else {
-      LOG(INFO) << "Enabling App Launcher via flags";
-      about_flags::SetExperimentEnabled(g_browser_process->local_state(),
-                                        apps::switches::kShowAppListShortcut,
-                                        true);
-    }
+    EnableAppLauncher(
+        base::Bind(&CompleteInstallFunction::AfterMaybeInstallAppLauncher,
+                   this));
+  } else {
+    AfterMaybeInstallAppLauncher(true);
   }
-#endif
-  AfterMaybeInstallAppLauncher(true);
 
   return true;
 }
@@ -478,17 +503,19 @@ void CompleteInstallFunction::OnGetAppLauncherEnabled(
     bool app_launcher_enabled) {
   if (app_launcher_enabled) {
     std::string name;
-    if (!approval_->parsed_manifest->GetString(extension_manifest_keys::kName,
-                                               &name)) {
+    if (!approval_->manifest->value()->GetString(extension_manifest_keys::kName,
+                                                 &name)) {
       NOTREACHED();
     }
     // Show the app list so it receives install progress notifications.
-    AppListService::Get()->ShowAppList(profile());
-    // Tell the app list about the install that we just started.
+    if (approval_->manifest->is_app())
+      AppListService::Get()->ShowAppList(profile());
+
     extensions::InstallTracker* tracker =
         extensions::InstallTrackerFactory::GetForProfile(profile());
     tracker->OnBeginExtensionInstall(
-        id, name, approval_->installing_icon, is_app_);
+        id, name, approval_->installing_icon, approval_->manifest->is_app(),
+        approval_->manifest->is_platform_app());
   }
 
   // The extension will install through the normal extension install flow, but
@@ -538,6 +565,22 @@ void CompleteInstallFunction::OnExtensionDownloadProgress(
   extensions::InstallTracker* tracker =
       extensions::InstallTrackerFactory::GetForProfile(profile());
   tracker->OnDownloadProgress(id, item->PercentComplete());
+}
+
+EnableAppLauncherFunction::EnableAppLauncherFunction() {}
+
+EnableAppLauncherFunction::~EnableAppLauncherFunction() {}
+
+bool EnableAppLauncherFunction::RunImpl() {
+  EnableAppLauncher(
+      base::Bind(&EnableAppLauncherFunction::AfterEnableAppLauncher, this));
+  return true;
+}
+
+void EnableAppLauncherFunction::AfterEnableAppLauncher(bool ok) {
+  if (!ok)
+    LOG(ERROR) << "Error installing app launcher";
+  SendResponse(ok);
 }
 
 bool GetBrowserLoginFunction::RunImpl() {

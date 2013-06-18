@@ -5,24 +5,45 @@
 #include "chrome/browser/chromeos/app_mode/startup_app_launcher.h"
 
 #include "ash/shell.h"
+#include "base/command_line.h"
+#include "base/files/file_path.h"
+#include "base/json/json_file_value_serializer.h"
+#include "base/path_service.h"
 #include "base/time.h"
+#include "base/values.h"
+#include "chrome/browser/chromeos/app_mode/app_session_lifetime.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
+#include "chrome/browser/chromeos/login/user_manager.h"
 #include "chrome/browser/chromeos/ui/app_launch_view.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
-#include "chrome/browser/extensions/webstore_standalone_installer.h"
+#include "chrome/browser/extensions/webstore_startup_installer.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/signin/token_service.h"
+#include "chrome/browser/signin/token_service_factory.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
+#include "chrome/common/chrome_paths.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension.h"
+#include "chrome/common/extensions/manifest_handlers/kiosk_enabled_info.h"
 #include "content/public/browser/browser_thread.h"
+#include "google_apis/gaia/gaia_auth_consumer.h"
+#include "google_apis/gaia/gaia_constants.h"
 
 using content::BrowserThread;
 using extensions::Extension;
-using extensions::WebstoreStandaloneInstaller;
+using extensions::WebstoreStartupInstaller;
 
 namespace chromeos {
 
 namespace {
+
+const char kOAuthRefreshToken[] = "refresh_token";
+const char kOAuthClientId[] = "client_id";
+const char kOAuthClientSecret[] = "client_secret";
+
+const base::FilePath::CharType kOAuthFileName[] =
+    FILE_PATH_LITERAL("kiosk_auth");
 
 // Application install splash screen minimum show time in milliseconds.
 const int kAppInstallSplashScreenMinTimeMS = 3000;
@@ -52,22 +73,139 @@ StartupAppLauncher::~StartupAppLauncher() {
 
 void StartupAppLauncher::Start() {
   launch_splash_start_time_ = base::TimeTicks::Now().ToInternalValue();
-  chromeos::ShowAppLaunchSplashScreen();
+  DVLOG(1) << "Starting... connection = "
+           <<  net::NetworkChangeNotifier::GetConnectionType();
+  chromeos::ShowAppLaunchSplashScreen(app_id_);
+  StartLoadingOAuthFile();
+}
 
-  if (IsAppInstalled(profile_, app_id_)) {
-    Launch();
+void StartupAppLauncher::StartLoadingOAuthFile() {
+  KioskOAuthParams* auth_params = new KioskOAuthParams();
+  BrowserThread::PostBlockingPoolTaskAndReply(
+      FROM_HERE,
+      base::Bind(&StartupAppLauncher::LoadOAuthFileOnBlockingPool,
+                 auth_params),
+      base::Bind(&StartupAppLauncher::OnOAuthFileLoaded,
+                 AsWeakPtr(),
+                 base::Owned(auth_params)));
+}
+
+// static.
+void StartupAppLauncher::LoadOAuthFileOnBlockingPool(
+    KioskOAuthParams* auth_params) {
+  int error_code = JSONFileValueSerializer::JSON_NO_ERROR;
+  std::string error_msg;
+  base::FilePath user_data_dir;
+  CHECK(PathService::Get(chrome::DIR_USER_DATA, &user_data_dir));
+  base::FilePath auth_file = user_data_dir.Append(kOAuthFileName);
+  scoped_ptr<JSONFileValueSerializer> serializer(
+      new JSONFileValueSerializer(user_data_dir.Append(kOAuthFileName)));
+  scoped_ptr<base::Value> value(
+      serializer->Deserialize(&error_code, &error_msg));
+  base::DictionaryValue* dict = NULL;
+  if (error_code != JSONFileValueSerializer::JSON_NO_ERROR ||
+      !value.get() || !value->GetAsDictionary(&dict)) {
+    LOG(WARNING) << "Can't find auth file at " << auth_file.value();
     return;
   }
 
+  dict->GetString(kOAuthRefreshToken, &auth_params->refresh_token);
+  dict->GetString(kOAuthClientId, &auth_params->client_id);
+  dict->GetString(kOAuthClientSecret, &auth_params->client_secret);
+}
+
+void StartupAppLauncher::OnOAuthFileLoaded(KioskOAuthParams* auth_params) {
+  auth_params_ = *auth_params;
+  // Override chrome client_id and secret that will be used for identity
+  // API token minting.
+  if (!auth_params_.client_id.empty() && !auth_params_.client_secret.empty()) {
+    UserManager::Get()->SetAppModeChromeClientOAuthInfo(
+            auth_params_.client_id,
+            auth_params_.client_secret);
+  }
+
+  // If we are restarting chrome (i.e. on crash), we need to initialize
+  // TokenService as well.
+  InitializeTokenService();
+}
+
+void StartupAppLauncher::InitializeNetwork() {
+  chromeos::UpdateAppLaunchSplashScreenState(
+      chromeos::APP_LAUNCH_STATE_PREPARING_NETWORK);
   // Set a maximum allowed wait time for network.
-  const int kMaxNetworkWaitSeconds = 5;
+  const int kMaxNetworkWaitSeconds = 5 * 60;
   network_wait_timer_.Start(
       FROM_HERE,
       base::TimeDelta::FromSeconds(kMaxNetworkWaitSeconds),
       this, &StartupAppLauncher::OnNetworkWaitTimedout);
 
-  net::NetworkChangeNotifier::AddConnectionTypeObserver(this);
-  OnConnectionTypeChanged(net::NetworkChangeNotifier::GetConnectionType());
+  net::NetworkChangeNotifier::AddNetworkChangeObserver(this);
+  OnNetworkChanged(net::NetworkChangeNotifier::GetConnectionType());
+}
+
+void StartupAppLauncher::InitializeTokenService() {
+  chromeos::UpdateAppLaunchSplashScreenState(
+      chromeos::APP_LAUNCH_STATE_LOADING_TOKEN_SERVICE);
+  TokenService* token_service =
+      TokenServiceFactory::GetForProfile(profile_);
+  if (token_service->HasOAuthLoginToken()) {
+    InitializeNetwork();
+    return;
+  }
+
+  registrar_.Add(this,
+                 chrome::NOTIFICATION_TOKEN_LOADING_FINISHED,
+                 content::Source<TokenService>(token_service));
+  registrar_.Add(this,
+                 chrome::NOTIFICATION_TOKEN_AVAILABLE,
+                 content::Source<TokenService>(token_service));
+
+  token_service->Initialize(GaiaConstants::kChromeSource, profile_);
+  // Pass oauth2 refresh token from the auth file.
+  // TODO(zelidrag): We should probably remove this option after M27.
+  if (!auth_params_.refresh_token.empty()) {
+    token_service->UpdateCredentialsWithOAuth2(
+        GaiaAuthConsumer::ClientOAuthResult(
+            auth_params_.refresh_token,
+            std::string(),  // access_token
+            0));            // new_expires_in_secs
+  } else {
+    // Load whatever tokens we have stored there last time around.
+    token_service->LoadTokensFromDB();
+  }
+}
+
+void StartupAppLauncher::Observe(
+    int type,
+    const content::NotificationSource& source,
+    const content::NotificationDetails& details) {
+  switch (type) {
+    case chrome::NOTIFICATION_TOKEN_LOADING_FINISHED: {
+      registrar_.RemoveAll();
+      InitializeNetwork();
+      break;
+    }
+    case chrome::NOTIFICATION_TOKEN_AVAILABLE: {
+      TokenService::TokenAvailableDetails* token_details =
+          content::Details<TokenService::TokenAvailableDetails>(
+              details).ptr();
+      if (token_details->service() ==
+              GaiaConstants::kGaiaOAuth2LoginRefreshToken) {
+        registrar_.RemoveAll();
+        InitializeNetwork();
+      }
+      break;
+    }
+    default:
+      NOTREACHED();
+      break;
+  }
+}
+
+void StartupAppLauncher::Cleanup() {
+  chromeos::CloseAppLaunchSplashScreen();
+
+  delete this;
 }
 
 void StartupAppLauncher::OnLaunchSuccess() {
@@ -87,18 +225,17 @@ void StartupAppLauncher::OnLaunchSuccess() {
     return;
   }
 
-  chromeos::CloseAppLaunchSplashScreen();
-  delete this;
+  Cleanup();
 }
 
-void StartupAppLauncher::OnLaunchFailure() {
-  // Ends the session if launch fails. This should bring us back to login.
+void StartupAppLauncher::OnLaunchFailure(KioskAppLaunchError::Error error) {
+  DCHECK_NE(KioskAppLaunchError::NONE, error);
+
+  // Saves the error and ends the session to go back to login screen.
+  KioskAppLaunchError::Save(error);
   chrome::AttemptUserExit();
 
-  // TODO(xiyuan): Signal somehow to the session manager that app launch
-  // attempt had failed.
-
-  delete this;
+  Cleanup();
 }
 
 void StartupAppLauncher::Launch() {
@@ -106,28 +243,49 @@ void StartupAppLauncher::Launch() {
       extension_service()->GetInstalledExtension(app_id_);
   CHECK(extension);
 
-  // Always the app in a window.
+  if (!extensions::KioskEnabledInfo::IsKioskEnabled(extension)) {
+    OnLaunchFailure(KioskAppLaunchError::NOT_KIOSK_ENABLED);
+    return;
+  }
+
+  // Always open the app in a window.
   chrome::OpenApplication(chrome::AppLaunchParams(profile_,
                                                   extension,
                                                   extension_misc::LAUNCH_WINDOW,
                                                   NEW_WINDOW));
+  InitAppSession(profile_, app_id_);
+
+  content::NotificationService::current()->Notify(
+      chrome::NOTIFICATION_KIOSK_APP_LAUNCHED,
+      content::NotificationService::AllSources(),
+      content::NotificationService::NoDetails());
+
   OnLaunchSuccess();
 }
 
 void StartupAppLauncher::BeginInstall() {
-  installer_ = new WebstoreStandaloneInstaller(
+  DVLOG(1) << "BeginInstall... connection = "
+           <<  net::NetworkChangeNotifier::GetConnectionType();
+
+  chromeos::UpdateAppLaunchSplashScreenState(
+      chromeos::APP_LAUNCH_STATE_INSTALLING_APPLICATION);
+
+  if (IsAppInstalled(profile_, app_id_)) {
+    Launch();
+    return;
+  }
+
+  installer_ = new WebstoreStartupInstaller(
       app_id_,
-      WebstoreStandaloneInstaller::DO_NOT_REQUIRE_VERIFIED_SITE,
-      WebstoreStandaloneInstaller::SKIP_PROMPT,
-      GURL(),
       profile_,
-      NULL,
+      false,
       base::Bind(&StartupAppLauncher::InstallCallback, AsWeakPtr()));
   installer_->BeginInstall();
 }
 
 void StartupAppLauncher::InstallCallback(bool success,
                                          const std::string& error) {
+  installer_ = NULL;
   if (success) {
     // Schedules Launch() to be called after the callback returns.
     // So that the app finishes its installation.
@@ -139,23 +297,29 @@ void StartupAppLauncher::InstallCallback(bool success,
   }
 
   LOG(ERROR) << "Failed to install app with error: " << error;
-  OnLaunchFailure();
+  OnLaunchFailure(KioskAppLaunchError::UNABLE_TO_INSTALL);
 }
 
 void StartupAppLauncher::OnNetworkWaitTimedout() {
+  LOG(WARNING) << "OnNetworkWaitTimedout... connection = "
+               <<  net::NetworkChangeNotifier::GetConnectionType();
   // Timeout in waiting for online. Try the install anyway.
-  net::NetworkChangeNotifier::RemoveConnectionTypeObserver(this);
+  net::NetworkChangeNotifier::RemoveNetworkChangeObserver(this);
   BeginInstall();
 }
 
-void StartupAppLauncher::OnConnectionTypeChanged(
+void StartupAppLauncher::OnNetworkChanged(
     net::NetworkChangeNotifier::ConnectionType type) {
-  const bool online = type != net::NetworkChangeNotifier::CONNECTION_NONE;
-  if (online) {
-    net::NetworkChangeNotifier::RemoveConnectionTypeObserver(this);
+  DVLOG(1) << "OnNetworkChanged... connection = "
+           <<  net::NetworkChangeNotifier::GetConnectionType();
+  if (!net::NetworkChangeNotifier::IsOffline()) {
+    DVLOG(1) << "Network up and running!";
+    net::NetworkChangeNotifier::RemoveNetworkChangeObserver(this);
     network_wait_timer_.Stop();
 
     BeginInstall();
+  } else {
+    DVLOG(1) << "Network not running yet!";
   }
 }
 
@@ -163,15 +327,16 @@ void StartupAppLauncher::OnKeyEvent(ui::KeyEvent* event) {
   if (event->type() != ui::ET_KEY_PRESSED)
     return;
 
-  if (event->key_code() != ui::VKEY_X ||
+  if (KioskAppManager::Get()->GetDisableBailoutShortcut())
+    return;
+
+  if (event->key_code() != ui::VKEY_S ||
       !(event->flags() & ui::EF_CONTROL_DOWN) ||
-      !(event->flags() & ui::EF_ALT_DOWN) ||
-      !(event->flags() & ui::EF_SHIFT_DOWN)) {
+      !(event->flags() & ui::EF_ALT_DOWN)) {
     return;
   }
 
-  KioskAppManager::Get()->SetSuppressAutoLaunch(true);
-  OnLaunchFailure();  // User cancel failure.
+  OnLaunchFailure(KioskAppLaunchError::USER_CANCEL);
 }
 
 }   // namespace chromeos

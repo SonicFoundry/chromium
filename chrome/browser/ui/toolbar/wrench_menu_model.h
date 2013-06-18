@@ -37,7 +37,7 @@ class EncodingMenuModel : public ui::SimpleMenuModel,
   virtual bool GetAcceleratorForCommandId(
       int command_id,
       ui::Accelerator* accelerator) OVERRIDE;
-  virtual void ExecuteCommand(int command_id) OVERRIDE;
+  virtual void ExecuteCommand(int command_id, int event_flags) OVERRIDE;
 
  private:
   void Build();
@@ -79,11 +79,10 @@ class WrenchMenuModel : public ui::SimpleMenuModel,
                         public TabStripModelObserver,
                         public content::NotificationObserver {
  public:
-  // TODO: remove |is_new_menu| and |supports_new_separators|.
+  // TODO: remove |is_new_menu|.
   WrenchMenuModel(ui::AcceleratorProvider* provider,
                   Browser* browser,
-                  bool is_new_menu,
-                  bool supports_new_separators);
+                  bool is_new_menu);
   virtual ~WrenchMenuModel();
 
   // Overridden for ButtonMenuItemModel::Delegate:
@@ -94,7 +93,7 @@ class WrenchMenuModel : public ui::SimpleMenuModel,
   virtual string16 GetLabelForCommandId(int command_id) const OVERRIDE;
   virtual bool GetIconForCommandId(int command_id,
                                    gfx::Image* icon) const OVERRIDE;
-  virtual void ExecuteCommand(int command_id) OVERRIDE;
+  virtual void ExecuteCommand(int command_id, int event_flags) OVERRIDE;
   virtual bool IsCommandIdChecked(int command_id) const OVERRIDE;
   virtual bool IsCommandIdEnabled(int command_id) const OVERRIDE;
   virtual bool IsCommandIdVisible(int command_id) const OVERRIDE;
@@ -106,7 +105,7 @@ class WrenchMenuModel : public ui::SimpleMenuModel,
   virtual void ActiveTabChanged(content::WebContents* old_contents,
                                 content::WebContents* new_contents,
                                 int index,
-                                bool user_gesture) OVERRIDE;
+                                int reason) OVERRIDE;
   virtual void TabReplacedAt(TabStripModel* tab_strip_model,
                              content::WebContents* old_contents,
                              content::WebContents* new_contents,
@@ -133,7 +132,7 @@ class WrenchMenuModel : public ui::SimpleMenuModel,
   friend class ::MockWrenchMenuModel;
   WrenchMenuModel();
 
-  void Build(bool is_new_menu, bool supports_new_separators);
+  void Build(bool is_new_menu);
 
   void AddGlobalErrorMenuItems();
 
@@ -148,7 +147,7 @@ class WrenchMenuModel : public ui::SimpleMenuModel,
   // |new_menu| should be set to true.
   void CreateZoomMenu(bool new_menu);
 
-  void OnZoomLevelChanged(const std::string& host);
+  void OnZoomLevelChanged(const content::HostZoomMap::ZoomLevelChange& change);
 
   // Models for the special menu items with buttons.
   scoped_ptr<ui::ButtonMenuItemModel> edit_menu_item_model_;

@@ -6,11 +6,17 @@
 
 namespace switches {
 
-// Disables new menu UI.
-const char kDisableNewMenuStyle[] = "disable-new-menu-style";
+// Disables use of DWM composition for top level windows.
+const char kDisableDwmComposition[] = "disable-dwm-composition";
 
 // Disables touch adjustment.
 const char kDisableTouchAdjustment[] = "disable-touch-adjustment";
+
+// Disables touch event based drag and drop.
+const char kDisableTouchDragDrop[] = "disable-touch-drag-drop";
+
+// Disables controls that support touch base text editing.
+const char kDisableTouchEditing[] = "disable-touch-editing";
 
 // Disables the Views textfield on Windows.
 const char kDisableViewsTextfield[] = "disable-views-textfield";
@@ -21,6 +27,7 @@ const char kEnableBezelTouch[] = "enable-bezel-touch";
 // Enables the new dialog style wherever it is available.
 const char kEnableNewDialogStyle[] = "enable-new-dialog-style";
 
+// Enables touch event based drag and drop.
 const char kEnableTouchDragDrop[] = "enable-touch-drag-drop";
 
 // Enables controls that support touch base text editing.
@@ -47,9 +54,6 @@ const char kLang[] = "lang";
 // Load the locale resources from the given path. When running on Mac/Unix the
 // path should point to a locale.pak file.
 const char kLocalePak[] = "locale_pak";
-
-// Disables the new appearance for checkboxes and radio buttons.
-const char kOldCheckboxStyle[] = "old-checkbox-style";
 
 // Disable ui::MessageBox. This is useful when running as part of scripts that
 // do not have a user interface.
@@ -86,10 +90,8 @@ const char kTouchCalibration[] = "touch-calibration";
 #endif
 
 #if defined(OS_MACOSX)
-const char kDisableCompositedCoreAnimationPlugins[] =
-    "disable-composited-core-animation-plugins";
-// Disables using core animation in plugins. This is triggered when accelerated
-// compositing is disabled. See http://crbug.com/122430
+// Disables support for Core Animation plugins. This is triggered when
+// accelerated compositing is disabled. See http://crbug.com/122430 .
 const char kDisableCoreAnimationPlugins[] =
     "disable-core-animation-plugins";
 #endif

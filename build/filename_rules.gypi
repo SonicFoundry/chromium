@@ -67,6 +67,7 @@
       'sources/': [
         ['exclude', '_(x|x11)(_unittest)?\\.(h|cc)$'],
         ['exclude', '(^|/)x11_[^/]*\\.(h|cc)$'],
+        ['exclude', '(^|/)x11/'],
       ],
     }],
     ['<(toolkit_uses_gtk)!=1 or >(nacl_untrusted_build)==1', {
@@ -94,6 +95,11 @@
     ['<(use_ash)==0 or >(nacl_untrusted_build)==1', {
       'sources/': [ ['exclude', '_ash(_browsertest|_unittest)?\\.(h|cc)$'],
                     ['exclude', '(^|/)ash/'],
+      ]
+    }],
+    ['<(use_ozone)==0 or >(nacl_untrusted_build)==1', {
+      'sources/': [ ['exclude', '_ozone(_browsertest|_unittest)?\\.(h|cc)$'],
+                    ['exclude', '(^|/)ozone/'],
       ]
     }],
   ]

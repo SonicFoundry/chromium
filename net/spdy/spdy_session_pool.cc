@@ -276,7 +276,7 @@ Value* SpdySessionPool::SpdySessionPoolInfoToValue() const {
 
 void SpdySessionPool::OnIPAddressChanged() {
   CloseCurrentSessions(ERR_NETWORK_CHANGED);
-  http_server_properties_->ClearSpdySettings();
+  http_server_properties_->ClearAllSpdySettings();
 }
 
 void SpdySessionPool::OnSSLConfigChanged() {
@@ -480,17 +480,22 @@ void SpdySessionPool::CloseIdleSessions() {
   SpdySessionsMap::const_iterator map_it = sessions_.begin();
   while (map_it != sessions_.end()) {
     SpdySessionList* list = map_it->second;
-    ++map_it;
     CHECK(list);
 
-    // Assumes there is only 1 element in the list
+    // Assumes there is only 1 element in the list.
     SpdySessionList::iterator session_it = list->begin();
     const scoped_refptr<SpdySession>& session = *session_it;
     CHECK(session);
-    if (!session->is_active()) {
-      session->CloseSessionOnError(
-          net::ERR_ABORTED, true, "Closing idle sessions.");
+    if (session->is_active()) {
+      ++map_it;
+      continue;
     }
+
+    HostPortProxyPair key = map_it->first;
+    session->CloseSessionOnError(
+        net::ERR_ABORTED, true, "Closing idle sessions.");
+    // CloseSessionOnError can invalidate the iterator.
+    map_it = sessions_.lower_bound(key);
   }
 }
 

@@ -11,10 +11,11 @@
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
 #include "base/string16.h"
-#include "chrome/browser/webdata/web_database_table.h"
 #include "chrome/browser/search_engines/template_url_id.h"
+#include "components/webdata/common/web_database_table.h"
 
 struct TemplateURLData;
+class WebDatabase;
 
 namespace sql {
 class Statement;
@@ -71,10 +72,17 @@ class KeywordTable : public WebDatabaseTable {
 
   static const char kDefaultSearchProviderKey[];
 
-  KeywordTable(sql::Connection* db, sql::MetaTable* meta_table);
+  KeywordTable();
   virtual ~KeywordTable();
-  virtual bool Init() OVERRIDE;
+
+  // Retrieves the KeywordTable* owned by |database|.
+  static KeywordTable* FromWebDatabase(WebDatabase* db);
+
+  virtual WebDatabaseTable::TypeKey GetTypeKey() const OVERRIDE;
+  virtual bool Init(sql::Connection* db, sql::MetaTable* meta_table) OVERRIDE;
   virtual bool IsSyncable() OVERRIDE;
+  virtual bool MigrateToVersion(int version,
+                                bool* update_compatible_version) OVERRIDE;
 
   // Adds a new keyword, updating the id field on success.
   // Returns true if successful.

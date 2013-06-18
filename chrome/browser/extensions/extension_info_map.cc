@@ -6,6 +6,7 @@
 
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_set.h"
+#include "chrome/common/extensions/incognito_handler.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/common/constants.h"
@@ -97,7 +98,7 @@ bool ExtensionInfoMap::IsIncognitoEnabled(
 bool ExtensionInfoMap::CanCrossIncognito(const Extension* extension) const {
   // This is duplicated from ExtensionService :(.
   return IsIncognitoEnabled(extension->id()) &&
-      !extension->incognito_split_mode();
+      !extensions::IncognitoInfo::IsSplitMode(extension);
 }
 
 void ExtensionInfoMap::RegisterExtensionProcess(const std::string& extension_id,
@@ -123,15 +124,21 @@ void ExtensionInfoMap::UnregisterAllExtensionsInProcess(int process_id) {
   process_map_.RemoveAllFromProcess(process_id);
 }
 
-bool ExtensionInfoMap::SecurityOriginHasAPIPermission(
-    const GURL& origin, int process_id,
-    extensions::APIPermission::ID permission) const {
+void ExtensionInfoMap::GetExtensionsWithAPIPermissionForSecurityOrigin(
+    const GURL& origin,
+    int process_id,
+    extensions::APIPermission::ID permission,
+    ExtensionSet* extensions) const {
+  DCHECK(extensions);
+
   if (origin.SchemeIs(extensions::kExtensionScheme)) {
     const std::string& id = origin.host();
     const Extension* extension = extensions_.GetByID(id);
-    CHECK(extension != NULL);
-    return extension->HasAPIPermission(permission) &&
-        process_map_.Contains(id, process_id);
+    if (extension && extension->HasAPIPermission(permission) &&
+        process_map_.Contains(id, process_id)) {
+      extensions->Insert(extension);
+    }
+    return;
   }
 
   ExtensionSet::const_iterator i = extensions_.begin();
@@ -139,21 +146,29 @@ bool ExtensionInfoMap::SecurityOriginHasAPIPermission(
     if ((*i)->web_extent().MatchesSecurityOrigin(origin) &&
         process_map_.Contains((*i)->id(), process_id) &&
         (*i)->HasAPIPermission(permission)) {
-      return true;
+      extensions->Insert(*i);
     }
   }
-  return false;
+}
+
+bool ExtensionInfoMap::SecurityOriginHasAPIPermission(
+    const GURL& origin, int process_id,
+    extensions::APIPermission::ID permission) const {
+  ExtensionSet extensions;
+  GetExtensionsWithAPIPermissionForSecurityOrigin(
+      origin, process_id, permission, &extensions);
+  return !extensions.is_empty();
 }
 
 ExtensionsQuotaService* ExtensionInfoMap::GetQuotaService() {
   CheckOnValidThread();
-  if (!quota_service_.get())
+  if (!quota_service_)
     quota_service_.reset(new ExtensionsQuotaService());
   return quota_service_.get();
 }
 
 ExtensionInfoMap::~ExtensionInfoMap() {
-  if (quota_service_.get()) {
+  if (quota_service_) {
     BrowserThread::DeleteSoon(BrowserThread::IO, FROM_HERE,
                               quota_service_.release());
   }

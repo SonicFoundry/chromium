@@ -44,12 +44,17 @@ void WriteStringToPickle(Pickle& pickle, int* bytes_written, int max_bytes,
 // thread if it's not canceled.
 void RunIfNotCanceled(
     const CancelableTaskTracker::IsCanceledCallback& is_canceled,
-    base::TaskRunner* task_runner,
     const BaseSessionService::InternalGetCommandsCallback& callback,
     ScopedVector<SessionCommand> commands) {
   if (is_canceled.Run())
     return;
+  callback.Run(commands.Pass());
+}
 
+void PostOrRunInternalGetCommandsCallback(
+    base::TaskRunner* task_runner,
+    const BaseSessionService::InternalGetCommandsCallback& callback,
+    ScopedVector<SessionCommand> commands) {
   if (task_runner->RunsTasksOnCurrentThread()) {
     callback.Run(commands.Pass());
   } else {
@@ -71,7 +76,7 @@ BaseSessionService::BaseSessionService(SessionType type,
                                        Profile* profile,
                                        const base::FilePath& path)
     : profile_(profile),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)),
+      weak_factory_(this),
       pending_reset_(false),
       commands_since_reset_(0) {
   if (profile) {
@@ -143,11 +148,15 @@ void BaseSessionService::Save() {
 SessionCommand* BaseSessionService::CreateUpdateTabNavigationCommand(
     SessionID::id_type command_id,
     SessionID::id_type tab_id,
-    const TabNavigation& navigation) {
+    const sessions::SerializedNavigationEntry& navigation) {
   // Use pickle to handle marshalling.
   Pickle pickle;
   pickle.WriteInt(tab_id);
-  navigation.WriteToPickle(&pickle);
+  // We only allow navigations up to 63k (which should be completely
+  // reasonable).
+  static const size_t max_state_size =
+      std::numeric_limits<SessionCommand::size_type>::max() - 1024;
+  navigation.WriteToPickle(max_state_size, &pickle);
   return new SessionCommand(command_id, pickle);
 }
 
@@ -212,7 +221,7 @@ SessionCommand* BaseSessionService::CreateSetWindowAppNameCommand(
 
 bool BaseSessionService::RestoreUpdateTabNavigationCommand(
     const SessionCommand& command,
-    TabNavigation* navigation,
+    sessions::SerializedNavigationEntry* navigation,
     SessionID::id_type* tab_id) {
   scoped_ptr<Pickle> pickle(command.PayloadAsPickle());
   if (!pickle.get())
@@ -273,9 +282,12 @@ CancelableTaskTracker::TaskId
   CancelableTaskTracker::IsCanceledCallback is_canceled;
   CancelableTaskTracker::TaskId id = tracker->NewTrackedTaskId(&is_canceled);
 
+  InternalGetCommandsCallback run_if_not_canceled =
+      base::Bind(&RunIfNotCanceled, is_canceled, callback);
+
   InternalGetCommandsCallback callback_runner =
-      base::Bind(&RunIfNotCanceled,
-                 is_canceled, base::MessageLoopProxy::current(), callback);
+      base::Bind(&PostOrRunInternalGetCommandsCallback,
+                 base::MessageLoopProxy::current(), run_if_not_canceled);
 
   RunTaskOnBackendThread(
       FROM_HERE,

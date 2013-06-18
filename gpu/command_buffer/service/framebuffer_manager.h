@@ -40,7 +40,8 @@ class GPU_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
         Renderbuffer* renderbuffer) const = 0;
     virtual bool CanRenderTo() const = 0;
     virtual void DetachFromFramebuffer() const = 0;
-    virtual bool ValidForAttachmentType(GLenum attachment_type) = 0;
+    virtual bool ValidForAttachmentType(
+        GLenum attachment_type, uint32 max_color_attachments) = 0;
     virtual void AddToSignature(
         TextureManager* texture_manager, std::string* signature) const = 0;
 
@@ -114,7 +115,15 @@ class GPU_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
   // Check all attachments are cleared
   bool IsCleared() const;
 
+  GLenum GetDrawBuffer(GLenum draw_buffer) const;
+
+  void SetDrawBuffers(GLsizei n, const GLenum* bufs);
+
   static void ClearFramebufferCompleteComboMap();
+
+  static bool AllowFramebufferComboCompleteMapForTesting() {
+    return allow_framebuffer_combo_complete_map_;
+  }
 
  private:
   friend class FramebufferManager;
@@ -159,6 +168,9 @@ class GPU_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
   // it should be FRAMEBUFFER_COMPLETE.
   typedef base::hash_map<std::string, bool> FramebufferComboCompleteMap;
   static FramebufferComboCompleteMap* framebuffer_combo_complete_map_;
+  static bool allow_framebuffer_combo_complete_map_;
+
+  scoped_ptr<GLenum[]> draw_buffers_;
 
   DISALLOW_COPY_AND_ASSIGN(Framebuffer);
 };
@@ -167,7 +179,7 @@ class GPU_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
 // so we can correctly clear them.
 class GPU_EXPORT FramebufferManager {
  public:
-  FramebufferManager();
+  FramebufferManager(uint32 max_draw_buffers, uint32 max_color_attachments);
   ~FramebufferManager();
 
   // Must call before destruction.
@@ -203,13 +215,13 @@ class GPU_EXPORT FramebufferManager {
  private:
   friend class Framebuffer;
 
-  void StartTracking(Framebuffer* info);
-  void StopTracking(Framebuffer* info);
+  void StartTracking(Framebuffer* framebuffer);
+  void StopTracking(Framebuffer* framebuffer);
 
   // Info for each framebuffer in the system.
   typedef base::hash_map<GLuint, scoped_refptr<Framebuffer> >
-      FramebufferInfoMap;
-  FramebufferInfoMap framebuffer_infos_;
+      FramebufferMap;
+  FramebufferMap framebuffers_;
 
   // Incremented anytime anything changes that might effect framebuffer
   // state.
@@ -217,9 +229,12 @@ class GPU_EXPORT FramebufferManager {
 
   // Counts the number of Framebuffer allocated with 'this' as its manager.
   // Allows to check no Framebuffer will outlive this.
-  unsigned int framebuffer_info_count_;
+  unsigned int framebuffer_count_;
 
   bool have_context_;
+
+  uint32 max_draw_buffers_;
+  uint32 max_color_attachments_;
 
   DISALLOW_COPY_AND_ASSIGN(FramebufferManager);
 };

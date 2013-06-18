@@ -23,6 +23,7 @@ namespace gles2 {
 
 class GLES2Decoder;
 class Display;
+class ErrorState;
 class FeatureInfo;
 class TextureDefinition;
 class TextureManager;
@@ -84,24 +85,6 @@ class GPU_EXPORT Texture : public base::RefCounted<Texture> {
     return target_;
   }
 
-  // In GLES2 "texture complete" means it has all required mips for filtering
-  // down to a 1x1 pixel texture, they are in the correct order, they are all
-  // the same format.
-  bool texture_complete() const {
-    return texture_complete_;
-  }
-
-  // In GLES2 "cube complete" means all 6 faces level 0 are defined, all the
-  // same format, all the same dimensions and all width = height.
-  bool cube_complete() const {
-    return cube_complete_;
-  }
-
-  // Whether or not this texture is a non-power-of-two texture.
-  bool npot() const {
-    return npot_;
-  }
-
   bool SafeToRenderFrom() const {
     return cleared_;
   }
@@ -160,7 +143,7 @@ class GPU_EXPORT Texture : public base::RefCounted<Texture> {
     stream_texture_ = stream_texture;
   }
 
-  int IsStreamTexture() {
+  bool IsStreamTexture() {
     return stream_texture_;
   }
 
@@ -184,7 +167,7 @@ class GPU_EXPORT Texture : public base::RefCounted<Texture> {
   }
 
   // Whether a particular level/face is cleared.
-  bool IsLevelCleared(GLenum target, GLint level);
+  bool IsLevelCleared(GLenum target, GLint level) const;
 
   // Whether the texture has been defined
   bool IsDefined() {
@@ -193,6 +176,7 @@ class GPU_EXPORT Texture : public base::RefCounted<Texture> {
 
  private:
   friend class TextureManager;
+  friend class TextureTestHelper;
   friend class base::RefCounted<Texture>;
 
   ~Texture();
@@ -229,6 +213,24 @@ class GPU_EXPORT Texture : public base::RefCounted<Texture> {
       GLenum format,
       GLenum type,
       bool cleared);
+
+  // In GLES2 "texture complete" means it has all required mips for filtering
+  // down to a 1x1 pixel texture, they are in the correct order, they are all
+  // the same format.
+  bool texture_complete() const {
+    return texture_complete_;
+  }
+
+  // In GLES2 "cube complete" means all 6 faces level 0 are defined, all the
+  // same format, all the same dimensions and all width = height.
+  bool cube_complete() const {
+    return cube_complete_;
+  }
+
+  // Whether or not this texture is a non-power-of-two texture.
+  bool npot() const {
+    return npot_;
+  }
 
   // Marks a particular level as cleared or uncleared.
   void SetLevelCleared(GLenum target, GLint level, bool cleared);
@@ -430,13 +432,13 @@ class GPU_EXPORT TextureManager {
   // Parameters:
   //   target: GL_TEXTURE_2D or GL_TEXTURE_CUBE_MAP
   //   max_levels: The maximum levels this type of target can have.
-  void SetInfoTarget(
-      Texture* info,
+  void SetTarget(
+      Texture* texture,
       GLenum target);
 
   // Set the info for a particular level in a TexureInfo.
   void SetLevelInfo(
-      Texture* info,
+      Texture* texture,
       GLenum target,
       GLint level,
       GLenum internal_format,
@@ -448,33 +450,47 @@ class GPU_EXPORT TextureManager {
       GLenum type,
       bool cleared);
 
+  // Adapter to call above function.
+  void SetLevelInfoFromParams(Texture* texture,
+                              const gfx::AsyncTexImage2DParams& params) {
+    SetLevelInfo(
+        texture, params.target, params.level, params.internal_format,
+        params.width, params.height, 1 /* depth */,
+        params.border, params.format,
+        params.type, true /* cleared */ );
+  }
+
   // Save the texture definition and leave it undefined.
-  TextureDefinition* Save(Texture* info);
+  TextureDefinition* Save(Texture* texture);
 
   // Redefine all the levels from the texture definition.
-  bool Restore(Texture* info,
-               TextureDefinition* definition);
+  bool Restore(
+      const char* function_name,
+      GLES2Decoder* decoder,
+      Texture* texture,
+      TextureDefinition* definition);
 
   // Sets a mip as cleared.
-  void SetLevelCleared(Texture* info, GLenum target,
+  void SetLevelCleared(Texture* texture, GLenum target,
                        GLint level, bool cleared);
 
   // Sets a texture parameter of a Texture
   // Returns GL_NO_ERROR on success. Otherwise the error to generate.
   // TODO(gman): Expand to SetParameteri,f,iv,fv
-  GLenum SetParameter(
-      Texture* info, GLenum pname, GLint param);
+  void SetParameter(
+      const char* function_name, ErrorState* error_state,
+      Texture* texture, GLenum pname, GLint param);
 
   // Makes each of the mip levels as though they were generated.
   // Returns false if that's not allowed for the given texture.
-  bool MarkMipmapsGenerated(Texture* info);
+  bool MarkMipmapsGenerated(Texture* texture);
 
   // Clears any uncleared renderable levels.
-  bool ClearRenderableLevels(GLES2Decoder* decoder, Texture* info);
+  bool ClearRenderableLevels(GLES2Decoder* decoder, Texture* texture);
 
   // Clear a specific level.
   bool ClearTextureLevel(
-      GLES2Decoder* decoder,Texture* info, GLenum target, GLint level);
+      GLES2Decoder* decoder,Texture* texture, GLenum target, GLint level);
 
   // Creates a new texture info.
   Texture* CreateTexture(GLuint client_id, GLuint service_id);
@@ -539,23 +555,16 @@ class GPU_EXPORT TextureManager {
   }
 
   void SetLevelImage(
-      Texture* info,
+      Texture* texture,
       GLenum target,
       GLint level,
       gfx::GLImage* image);
 
   void AddToSignature(
-      Texture* info,
+      Texture* texture,
       GLenum target,
       GLint level,
       std::string* signature) const;
-
-  // Transfers added will get their Texture updated at the same time
-  // the async transfer is bound to the real texture.
-  void AddPendingAsyncPixelTransfer(
-      base::WeakPtr<gfx::AsyncPixelTransferState> state, Texture* info);
-  void BindFinishedAsyncPixelTransfers(bool* texture_dirty,
-                                       bool* framebuffer_dirty);
 
  private:
   friend class Texture;
@@ -565,8 +574,8 @@ class GPU_EXPORT TextureManager {
       GLenum target,
       GLuint* black_texture);
 
-  void StartTracking(Texture* info);
-  void StopTracking(Texture* info);
+  void StartTracking(Texture* texture);
+  void StopTracking(Texture* texture);
 
   MemoryTypeTracker* GetMemTracker(GLenum texture_pool);
   scoped_ptr<MemoryTypeTracker> memory_tracker_managed_;
@@ -575,8 +584,8 @@ class GPU_EXPORT TextureManager {
   scoped_refptr<FeatureInfo> feature_info_;
 
   // Info for each texture in the system.
-  typedef base::hash_map<GLuint, scoped_refptr<Texture> > TextureInfoMap;
-  TextureInfoMap texture_infos_;
+  typedef base::hash_map<GLuint, scoped_refptr<Texture> > TextureMap;
+  TextureMap textures_;
 
   GLsizei max_texture_size_;
   GLsizei max_cube_map_texture_size_;
@@ -587,9 +596,9 @@ class GPU_EXPORT TextureManager {
   int num_unsafe_textures_;
   int num_uncleared_mips_;
 
-  // Counts the number of Texture allocated with 'this' as its manager.
+  // Counts the number of Textures allocated with 'this' as its manager.
   // Allows to check no Texture will outlive this.
-  unsigned int texture_info_count_;
+  unsigned int texture_count_;
 
   bool have_context_;
 
@@ -600,14 +609,6 @@ class GPU_EXPORT TextureManager {
 
   // The default textures for each target (texture name = 0)
   scoped_refptr<Texture> default_textures_[kNumDefaultTextures];
-
-  // Async texture allocations which haven't been bound to their textures
-  // yet. This facilitates updating the Texture at the same time the
-  // real texture data is bound.
-  typedef std::pair<base::WeakPtr<gfx::AsyncPixelTransferState>,
-                    Texture*> PendingAsyncTransfer;
-  typedef std::list<PendingAsyncTransfer> PendingAsyncTransferList;
-  PendingAsyncTransferList pending_async_transfers_;
 
   DISALLOW_COPY_AND_ASSIGN(TextureManager);
 };

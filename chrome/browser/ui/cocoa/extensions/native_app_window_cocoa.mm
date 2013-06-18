@@ -5,7 +5,7 @@
 #include "chrome/browser/ui/cocoa/extensions/native_app_window_cocoa.h"
 
 #include "base/mac/mac_util.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/cocoa/browser_window_utils.h"
 #import "chrome/browser/ui/cocoa/chrome_event_processing_window.h"
@@ -31,6 +31,10 @@
 @interface NSWindow (LionSDKDeclarations)
 - (void)toggleFullScreen:(id)sender;
 @end
+
+enum {
+  NSWindowCollectionBehaviorFullScreenPrimary = 1 << 7
+};
 
 #endif  // MAC_OS_X_VERSION_10_7
 
@@ -207,9 +211,12 @@ NativeAppWindowCocoa::NativeAppWindowCocoa(
         floor((NSHeight(main_screen_rect) - NSHeight(cocoa_bounds)) / 2);
   }
 
+  resizable_ = params.resizable;
   NSUInteger style_mask = NSTitledWindowMask | NSClosableWindowMask |
-                          NSMiniaturizableWindowMask | NSResizableWindowMask |
+                          NSMiniaturizableWindowMask |
                           NSTexturedBackgroundWindowMask;
+  if (resizable_)
+    style_mask |= NSResizableWindowMask;
   scoped_nsobject<NSWindow> window;
   if (has_frame_) {
     window.reset([[ShellNSWindow alloc]
@@ -240,6 +247,13 @@ NativeAppWindowCocoa::NativeAppWindowCocoa(
   if (base::mac::IsOSSnowLeopard() &&
       [window respondsToSelector:@selector(setBottomCornerRounded:)])
     [window setBottomCornerRounded:NO];
+
+  // Set the window to participate in Lion Fullscreen mode. Setting this flag
+  // has no effect on Snow Leopard or earlier. Packaged apps don't show the
+  // fullscreen button on their window decorations.
+  NSWindowCollectionBehavior behavior = [window collectionBehavior];
+  behavior |= NSWindowCollectionBehaviorFullScreenPrimary;
+  [window setCollectionBehavior:behavior];
 
   window_controller_.reset(
       [[NativeAppWindowController alloc] initWithWindow:window.release()]);
@@ -359,8 +373,10 @@ void NativeAppWindowCocoa::SetFullscreen(bool fullscreen) {
   } else {
     base::mac::ReleaseFullScreen(base::mac::kFullScreenModeAutoHideAll);
     NSUInteger style_mask = NSTitledWindowMask | NSClosableWindowMask |
-                            NSMiniaturizableWindowMask | NSResizableWindowMask |
+                            NSMiniaturizableWindowMask |
                             NSTexturedBackgroundWindowMask;
+    if (resizable_)
+      style_mask |= NSResizableWindowMask;
     [window() setStyleMask:style_mask];
     [window() setFrame:restored_bounds_ display:YES];
   }
@@ -675,6 +691,21 @@ gfx::Insets NativeAppWindowCocoa::GetFrameInsets() const {
   content_rect.set_y(screen_height - NSMaxY(content_nsrect));
 
   return frame_rect.InsetsFrom(content_rect);
+}
+
+gfx::Point NativeAppWindowCocoa::GetDialogPosition(const gfx::Size& size) {
+  NOTIMPLEMENTED();
+  return gfx::Point();
+}
+
+void NativeAppWindowCocoa::AddObserver(
+    WebContentsModalDialogHostObserver* observer) {
+  NOTIMPLEMENTED();
+}
+
+void NativeAppWindowCocoa::RemoveObserver(
+    WebContentsModalDialogHostObserver* observer) {
+  NOTIMPLEMENTED();
 }
 
 void NativeAppWindowCocoa::WindowWillClose() {

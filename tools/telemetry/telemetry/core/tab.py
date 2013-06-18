@@ -31,6 +31,25 @@ class Tab(web_contents.WebContents):
   def url(self):
     return self._inspector_backend.url
 
+  @property
+  def dom_stats(self):
+    """A dictionary populated with measured DOM statistics.
+
+    Currently this dictionary contains:
+    {
+      'document_count': integer,
+      'node_count': integer,
+      'event_listener_count': integer
+    }
+    """
+    dom_counters = self._inspector_backend.GetDOMStats(
+        timeout=DEFAULT_TAB_TIMEOUT)
+    assert (len(dom_counters) == 3 and
+            all([x in dom_counters for x in ['document_count', 'node_count',
+                                             'event_listener_count']]))
+    return dom_counters
+
+
   def Activate(self):
     """Brings this tab to the foreground asynchronously.
 
@@ -63,10 +82,19 @@ class Tab(web_contents.WebContents):
     self._inspector_backend.PerformActionAndWaitForNavigate(
         action_function, timeout)
 
-  def Navigate(self, url, timeout=DEFAULT_TAB_TIMEOUT):
-    """Navigates to url."""
-    self._inspector_backend.Navigate(url, timeout)
+  def Navigate(self, url, script_to_evaluate_on_commit=None,
+               timeout=DEFAULT_TAB_TIMEOUT):
+    """Navigates to url.
+
+    If |script_to_evaluate_on_commit| is given, the script source string will be
+    evaluated when the navigation is committed. This is after the context of
+    the page exists, but before any script on the page itself has executed.
+    """
+    self._inspector_backend.Navigate(url, script_to_evaluate_on_commit, timeout)
 
   def GetCookieByName(self, name, timeout=DEFAULT_TAB_TIMEOUT):
     """Returns the value of the cookie by the given |name|."""
     return self._inspector_backend.GetCookieByName(name, timeout)
+
+  def CollectGarbage(self):
+    self._inspector_backend.CollectGarbage()

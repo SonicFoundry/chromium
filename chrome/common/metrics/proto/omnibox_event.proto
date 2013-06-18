@@ -76,8 +76,9 @@ message OmniboxEventProto {
   enum InputType {
     INVALID = 0;        // Empty input (should not reach here)
     UNKNOWN = 1;        // Valid input whose type cannot be determined
-    REQUESTED_URL = 2;  // Input autodetected as UNKNOWN, which the user wants
-                        // to treat as an URL by specifying a desired_tld
+    REQUESTED_URL = 2;  // DEPRECATED. Input autodetected as UNKNOWN, which the
+                        // user wants to treat as an URL by specifying a
+                        // desired_tld
     URL = 3;            // Input autodetected as a URL
     QUERY = 4;          // Input autodetected as a query
     FORCED_QUERY = 5;   // Input forced to be a query by an initial '?'
@@ -98,6 +99,7 @@ message OmniboxEventProto {
     EXTENSION_APPS = 8;    // Custom suggestions from extensions and/or apps
     CONTACT = 9;           // The user's contacts
     BOOKMARK = 10;         // The user's bookmarks
+    ZERO_SUGGEST = 11;     // Suggestions based on the current page
   }
 
   // The result set displayed on the completion popup

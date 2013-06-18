@@ -5,37 +5,65 @@
 #ifndef REMOTING_HOST_BASIC_DESKTOP_ENVIRONMENT_H_
 #define REMOTING_HOST_BASIC_DESKTOP_ENVIRONMENT_H_
 
+#include <string>
+
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
-#include "base/single_thread_task_runner.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/memory/scoped_ptr.h"
 #include "remoting/host/desktop_environment.h"
+#include "remoting/host/ui_strings.h"
 
 namespace remoting {
 
 // Used to create audio/video capturers and event executor that work with
 // the local console.
-class BasicDesktopEnvironment
-    : public base::NonThreadSafe,
-      public DesktopEnvironment {
+class BasicDesktopEnvironment : public DesktopEnvironment {
  public:
-  explicit BasicDesktopEnvironment(bool use_x_damage);
   virtual ~BasicDesktopEnvironment();
 
   // DesktopEnvironment implementation.
-  virtual scoped_ptr<AudioCapturer> CreateAudioCapturer(
-      scoped_refptr<base::SingleThreadTaskRunner> audio_task_runner) OVERRIDE;
-  virtual scoped_ptr<EventExecutor> CreateEventExecutor(
+  virtual scoped_ptr<AudioCapturer> CreateAudioCapturer() OVERRIDE;
+  virtual scoped_ptr<InputInjector> CreateInputInjector() OVERRIDE;
+  virtual scoped_ptr<ScreenControls> CreateScreenControls() OVERRIDE;
+  virtual scoped_ptr<media::ScreenCapturer> CreateVideoCapturer() OVERRIDE;
+  virtual std::string GetCapabilities() const OVERRIDE;
+  virtual void SetCapabilities(const std::string& capabilities) OVERRIDE;
+
+ protected:
+  friend class BasicDesktopEnvironmentFactory;
+
+  // |ui_strings| are hosted by the BasicDesktopEnvironmentFactory instance that
+  // created |this|. |ui_strings| must outlive this object.
+  BasicDesktopEnvironment(
+      scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner) OVERRIDE;
-  virtual scoped_ptr<media::ScreenCapturer> CreateVideoCapturer(
-      scoped_refptr<base::SingleThreadTaskRunner> capture_task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> encode_task_runner) OVERRIDE;
+      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
+      base::WeakPtr<ClientSessionControl> client_session_control,
+      const UiStrings& ui_strings);
+
+  scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner() const {
+    return caller_task_runner_;
+  }
+
+  scoped_refptr<base::SingleThreadTaskRunner> input_task_runner() const {
+    return input_task_runner_;
+  }
+
+  scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner() const {
+    return ui_task_runner_;
+  }
 
  private:
-  // True if X DAMAGE support should be used by the video capturer.
-  bool use_x_damage_;
+  // Task runner on which methods of DesktopEnvironment interface should be
+  // called.
+  scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner_;
+
+  // Used to run input-related tasks.
+  scoped_refptr<base::SingleThreadTaskRunner> input_task_runner_;
+
+  // Used to run UI code.
+  scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(BasicDesktopEnvironment);
 };
@@ -43,18 +71,46 @@ class BasicDesktopEnvironment
 // Used to create |BasicDesktopEnvironment| instances.
 class BasicDesktopEnvironmentFactory : public DesktopEnvironmentFactory {
  public:
-  explicit BasicDesktopEnvironmentFactory(bool use_x_damage);
+  BasicDesktopEnvironmentFactory(
+      scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
+      const UiStrings& ui_strings);
   virtual ~BasicDesktopEnvironmentFactory();
 
   // DesktopEnvironmentFactory implementation.
   virtual scoped_ptr<DesktopEnvironment> Create(
-      const std::string& client_jid,
-      const base::Closure& disconnect_callback) OVERRIDE;
+      base::WeakPtr<ClientSessionControl> client_session_control) OVERRIDE;
   virtual bool SupportsAudioCapture() const OVERRIDE;
 
+ protected:
+  scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner() const {
+    return caller_task_runner_;
+  }
+
+  scoped_refptr<base::SingleThreadTaskRunner> input_task_runner() const {
+    return input_task_runner_;
+  }
+
+  scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner() const {
+    return ui_task_runner_;
+  }
+
+  const UiStrings& ui_strings() const { return ui_strings_; }
+
  private:
-  // True if X DAMAGE support should be used by the video capturer.
-  bool use_x_damage_;
+  // Task runner on which methods of DesktopEnvironmentFactory interface should
+  // be called.
+  scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner_;
+
+  // Used to run input-related tasks.
+  scoped_refptr<base::SingleThreadTaskRunner> input_task_runner_;
+
+  // Used to run UI code.
+  scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner_;
+
+  // Contains a copy of the localized UI strings.
+  const UiStrings ui_strings_;
 
   DISALLOW_COPY_AND_ASSIGN(BasicDesktopEnvironmentFactory);
 };

@@ -22,6 +22,7 @@
 #include "content/common/pepper_renderer_instance_data.h"
 #include "content/public/browser/browser_message_filter.h"
 #include "content/public/common/three_d_api_types.h"
+#include "media/audio/audio_parameters.h"
 #include "media/base/channel_layout.h"
 #include "net/cookies/canonical_cookie.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebPopupType.h"
@@ -30,6 +31,10 @@
 
 #if defined(OS_MACOSX)
 #include "content/common/mac/font_loader.h"
+#endif
+
+#if defined(OS_ANDROID)
+#include "base/threading/worker_pool.h"
 #endif
 
 struct FontDescriptor;
@@ -190,9 +195,8 @@ class RenderMessageFilter : public BrowserMessageFilter {
 
   void OnGetCPUUsage(int* cpu_usage);
 
-  void OnGetAudioHardwareConfig(int* output_buffer_size,
-                                int* output_sample_rate, int* input_sample_rate,
-                                media::ChannelLayout* input_channel_layout);
+  void OnGetAudioHardwareConfig(media::AudioParameters* input_params,
+                                media::AudioParameters* output_params);
 
   // Used to look up the monitor color profile.
   void OnGetMonitorColorProfile(std::vector<char>* profile);
@@ -227,7 +231,7 @@ class RenderMessageFilter : public BrowserMessageFilter {
                                  int flags,
                                  int message_id,
                                  int routing_id);
-  void OnMediaLogEvent(const media::MediaLogEvent&);
+  void OnMediaLogEvents(const std::vector<media::MediaLogEvent>&);
 
   // Check the policy for getting cookies. Gets the cookies if allowed.
   void CheckPolicyForCookies(const GURL& url,
@@ -255,6 +259,12 @@ class RenderMessageFilter : public BrowserMessageFilter {
   void OnDidLose3DContext(const GURL& top_origin_url,
                           ThreeDAPIType context_type,
                           int arb_robustness_status_code);
+
+#if defined(OS_ANDROID)
+  void OnWebAudioMediaCodec(base::SharedMemoryHandle encoded_data_handle,
+                            base::FileDescriptor pcm_output,
+                            size_t data_size);
+#endif
 
   // Cached resource request dispatcher host and plugin service, guaranteed to
   // be non-null if Init succeeds. We do not own the objects, they are managed

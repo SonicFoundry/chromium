@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+'use strict';
+
 /**
  * Loads a thumbnail using provided url. In CANVAS mode, loaded images
  * are attached as <canvas> element, while in IMAGE mode as <img>.
@@ -188,9 +190,6 @@ ThumbnailLoader.prototype.load = function(box, fillMode, opt_optimizationMode,
         }
         return true;
       });
-
-  if (!this.taskId_)
-    this.image_.classList.add('cached');
 };
 
 /**
@@ -263,9 +262,6 @@ ThumbnailLoader.prototype.loadDetachedImage = function(callback) {
         maxHeight: ThumbnailLoader.THUMBNAIL_MAX_HEIGHT,
         cache: true,
         timestamp: modificationTime });
-
-  if (!this.taskId_)
-    this.image_.classList.add('cached');
 };
 
 /**
@@ -307,6 +303,9 @@ ThumbnailLoader.prototype.attachImage = function(container, fillMode) {
     container.textContent = '';
     container.appendChild(attachableMedia);
   }
+
+  if (!this.taskId_)
+    attachableMedia.classList.add('cached');
 };
 
 /**

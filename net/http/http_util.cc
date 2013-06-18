@@ -12,9 +12,9 @@
 #include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/string_number_conversions.h"
-#include "base/string_piece.h"
 #include "base/string_util.h"
 #include "base/stringprintf.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/time.h"
 
@@ -682,16 +682,6 @@ std::string HttpUtil::GenerateAcceptLanguageHeader(
       qvalue10 -= kQvalueDecrement10;
   }
   return lang_list_with_q;
-}
-
-std::string HttpUtil::GenerateAcceptCharsetHeader(const std::string& charset) {
-  std::string charset_with_q = charset;
-  if (LowerCaseEqualsASCII(charset, "utf-8")) {
-    charset_with_q += ",*;q=0.5";
-  } else {
-    charset_with_q += ",utf-8;q=0.7,*;q=0.3";
-  }
-  return charset_with_q;
 }
 
 void HttpUtil::AppendHeaderIfMissing(const char* header_name,

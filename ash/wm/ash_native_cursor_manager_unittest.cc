@@ -12,6 +12,7 @@
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/test/test_windows.h"
 #include "ui/aura/window.h"
+#include "ui/gfx/screen.h"
 
 using views::corewm::CursorManager;
 
@@ -26,8 +27,10 @@ class MouseEventLocationDelegate : public aura::test::TestWindowDelegate {
   MouseEventLocationDelegate() {}
   virtual ~MouseEventLocationDelegate() {}
 
-  const gfx::Point& mouse_event_location() const {
-    return mouse_event_location_;
+  gfx::Point GetMouseEventLocationAndReset() {
+    gfx::Point p = mouse_event_location_;
+    mouse_event_location_.SetPoint(-100, -100);
+    return p;
   }
 
   virtual void OnMouseEvent(ui::MouseEvent* event) OVERRIDE {
@@ -48,11 +51,17 @@ typedef test::AshTestBase AshNativeCursorManagerTest;
 TEST_F(AshNativeCursorManagerTest, LockCursor) {
   CursorManager* cursor_manager = Shell::GetInstance()->cursor_manager();
   CursorManagerTestApi test_api(cursor_manager);
-
+  gfx::Display display(0);
+#if defined(OS_WIN)
+  cursor_manager->SetCursorResourceModule(L"ash_unittests.exe");
+#endif
   cursor_manager->SetCursor(ui::kCursorCopy);
   EXPECT_EQ(ui::kCursorCopy, test_api.GetCurrentCursor().native_type());
-  cursor_manager->SetDeviceScaleFactor(2.0f);
-  EXPECT_EQ(2.0f, test_api.GetDeviceScaleFactor());
+  display.set_device_scale_factor(2.0f);
+  display.set_rotation(gfx::Display::ROTATE_90);
+  cursor_manager->SetDisplay(display);
+  EXPECT_EQ(2.0f, test_api.GetDisplay().device_scale_factor());
+  EXPECT_EQ(gfx::Display::ROTATE_90, test_api.GetDisplay().rotation());
   EXPECT_TRUE(test_api.GetCurrentCursor().platform());
 
   cursor_manager->LockCursor();
@@ -62,23 +71,28 @@ TEST_F(AshNativeCursorManagerTest, LockCursor) {
   cursor_manager->SetCursor(ui::kCursorPointer);
   EXPECT_EQ(ui::kCursorCopy, test_api.GetCurrentCursor().native_type());
 
-  // Device scale factor does change even while cursor is locked.
-  cursor_manager->SetDeviceScaleFactor(1.0f);
-  EXPECT_EQ(1.0f, test_api.GetDeviceScaleFactor());
+  // Device scale factor and rotation do change even while cursor is locked.
+  display.set_device_scale_factor(1.0f);
+  display.set_rotation(gfx::Display::ROTATE_180);
+  cursor_manager->SetDisplay(display);
+  EXPECT_EQ(1.0f, test_api.GetDisplay().device_scale_factor());
+  EXPECT_EQ(gfx::Display::ROTATE_180, test_api.GetDisplay().rotation());
 
   cursor_manager->UnlockCursor();
   EXPECT_FALSE(cursor_manager->is_cursor_locked());
 
   // Cursor type changes to the one specified while cursor is locked.
   EXPECT_EQ(ui::kCursorPointer, test_api.GetCurrentCursor().native_type());
-  EXPECT_EQ(1.0f, test_api.GetDeviceScaleFactor());
+  EXPECT_EQ(1.0f, test_api.GetDisplay().device_scale_factor());
   EXPECT_TRUE(test_api.GetCurrentCursor().platform());
 }
 
 TEST_F(AshNativeCursorManagerTest, SetCursor) {
   CursorManager* cursor_manager = Shell::GetInstance()->cursor_manager();
   CursorManagerTestApi test_api(cursor_manager);
-
+#if defined(OS_WIN)
+  cursor_manager->SetCursorResourceModule(L"ash_unittests.exe");
+#endif
   cursor_manager->SetCursor(ui::kCursorCopy);
   EXPECT_EQ(ui::kCursorCopy, test_api.GetCurrentCursor().native_type());
   EXPECT_TRUE(test_api.GetCurrentCursor().platform());
@@ -87,26 +101,28 @@ TEST_F(AshNativeCursorManagerTest, SetCursor) {
   EXPECT_TRUE(test_api.GetCurrentCursor().platform());
 }
 
-TEST_F(AshNativeCursorManagerTest, SetDeviceScaleFactor) {
+TEST_F(AshNativeCursorManagerTest, SetDeviceScaleFactorAndRotation) {
   CursorManager* cursor_manager = Shell::GetInstance()->cursor_manager();
   CursorManagerTestApi test_api(cursor_manager);
 
-  cursor_manager->SetDeviceScaleFactor(2.0f);
-  EXPECT_EQ(2.0f, test_api.GetDeviceScaleFactor());
-  cursor_manager->SetDeviceScaleFactor(1.0f);
-  EXPECT_EQ(1.0f, test_api.GetDeviceScaleFactor());
+  gfx::Display display(0);
+  display.set_device_scale_factor(2.0f);
+  cursor_manager->SetDisplay(display);
+  EXPECT_EQ(2.0f, test_api.GetDisplay().device_scale_factor());
+  EXPECT_EQ(gfx::Display::ROTATE_0, test_api.GetDisplay().rotation());
+
+  display.set_device_scale_factor(1.0f);
+  display.set_rotation(gfx::Display::ROTATE_270);
+  cursor_manager->SetDisplay(display);
+  EXPECT_EQ(1.0f, test_api.GetDisplay().device_scale_factor());
+  EXPECT_EQ(gfx::Display::ROTATE_270, test_api.GetDisplay().rotation());
 }
 
-#if defined(OS_WIN)
-// Temporarily disabled for windows. See crbug.com/112222.
-#define MAYBE_DisabledMouseEventsLocation DISABLED_DisabledMouseEventsLocation
-#else
-#define MAYBE_DisabledMouseEventsLocation DisabledMouseEventsLocation
-#endif  // defined(OS_WIN)
-
+// Disabled for Windows. See crbug.com/112222.
+// Disabled for ChromeOS. See crbug.com/237659
 // Verifies that RootWindow generates a mouse event located outside of a window
 // when mouse events are disabled.
-TEST_F(AshNativeCursorManagerTest, MAYBE_DisabledMouseEventsLocation) {
+TEST_F(AshNativeCursorManagerTest, DISABLED_DisabledMouseEventsLocation) {
   scoped_ptr<MouseEventLocationDelegate> delegate(
       new MouseEventLocationDelegate());
   const int kWindowWidth = 123;
@@ -125,21 +141,23 @@ TEST_F(AshNativeCursorManagerTest, MAYBE_DisabledMouseEventsLocation) {
   root_window->AsRootWindowHostDelegate()->OnHostMouseEvent(&event);
 
   // Location was in window.
-  local_point = delegate->mouse_event_location();
+  local_point = delegate->GetMouseEventLocationAndReset();
   aura::Window::ConvertPointToTarget(window.get(), root_window, &local_point);
   EXPECT_TRUE(window->bounds().Contains(local_point));
 
   // Location is now out of window.
   cursor_manager->DisableMouseEvents();
   RunAllPendingInMessageLoop();
-  local_point = delegate->mouse_event_location();
+  local_point = delegate->GetMouseEventLocationAndReset();
   aura::Window::ConvertPointToTarget(window.get(), root_window, &local_point);
   EXPECT_FALSE(window->bounds().Contains(local_point));
+  EXPECT_FALSE(window->bounds().Contains(
+      gfx::Screen::GetScreenFor(window.get())->GetCursorScreenPoint()));
 
   // Location is back in window.
   cursor_manager->EnableMouseEvents();
   RunAllPendingInMessageLoop();
-  local_point = delegate->mouse_event_location();
+  local_point = delegate->GetMouseEventLocationAndReset();
   aura::Window::ConvertPointToTarget(window.get(), root_window, &local_point);
   EXPECT_TRUE(window->bounds().Contains(local_point));
 }

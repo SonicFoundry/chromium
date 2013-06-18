@@ -49,7 +49,7 @@ std::string LogEntry::ToString() const {
   if (!description.empty())
     line += ": " + description;
   if (count > 1)
-    line += StringPrintf(" (%d)", count);
+    line += base::StringPrintf(" (%d)", count);
   line += "\n";
   return line;
 }
@@ -91,7 +91,7 @@ void NetworkEventLog::AddEntry(const LogEntry& entry) {
   if (entries_.size() >= kMaxNetworkEventLogEntries)
     entries_.pop_front();
   entries_.push_back(entry);
-  VLOG(2) << entry.ToString();
+  VLOG(1) << entry.ToString();
 }
 
 std::string NetworkEventLog::GetAsString(StringOrder order,
@@ -146,7 +146,7 @@ void AddEntry(const std::string& module,
               const std::string& description) {
   LogEntry entry(module, event, description);
   if (!g_network_event_log) {
-    VLOG(2) << entry.ToString();
+    VLOG(1) << entry.ToString();
     return;
   }
   g_network_event_log->AddEntry(entry);

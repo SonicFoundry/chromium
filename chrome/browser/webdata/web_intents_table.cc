@@ -3,26 +3,47 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/webdata/web_intents_table.h"
+
 #include <string>
 
 #include "base/i18n/case_conversion.h"
 #include "base/logging.h"
 #include "base/string_util.h"
 #include "base/utf_string_conversions.h"
+#include "components/webdata/common/web_database.h"
 #include "googleurl/src/gurl.h"
 #include "net/base/mime_util.h"
 #include "sql/statement.h"
 #include "third_party/sqlite/sqlite3.h"
 
-WebIntentsTable::WebIntentsTable(sql::Connection* db,
-                                 sql::MetaTable* meta_table)
-    : WebDatabaseTable(db, meta_table) {
+namespace {
+
+WebDatabaseTable::TypeKey GetKey() {
+  // We just need a unique constant. Use the address of a static that
+  // COMDAT folding won't touch in an optimizing linker.
+  static int table_key = 0;
+  return reinterpret_cast<void*>(&table_key);
+}
+
+}  // namespace
+
+WebIntentsTable::WebIntentsTable() {
 }
 
 WebIntentsTable::~WebIntentsTable() {
 }
 
-bool WebIntentsTable::Init() {
+WebIntentsTable* WebIntentsTable::FromWebDatabase(WebDatabase* db) {
+  return static_cast<WebIntentsTable*>(db->GetTable(GetKey()));
+}
+
+WebDatabaseTable::TypeKey WebIntentsTable::GetTypeKey() const {
+  return GetKey();
+}
+
+bool WebIntentsTable::Init(sql::Connection* db, sql::MetaTable* meta_table) {
+  WebDatabaseTable::Init(db, meta_table);
+
   if (!db_->DoesTableExist("web_intents")) {
     if (!db_->Execute("CREATE TABLE web_intents ("
                       " service_url LONGVARCHAR,"
@@ -71,6 +92,16 @@ bool WebIntentsTable::IsSyncable() {
   return false;
 }
 
+bool WebIntentsTable::MigrateToVersion(int version,
+                                       bool* update_compatible_version) {
+  if (version == 46) {
+    *update_compatible_version = true;
+    return MigrateToVersion46AddSchemeColumn();
+  }
+
+  return true;
+}
+
 // Updates the table by way of renaming the old tables, rerunning
 // the Init method, then selecting old values into the new tables.
 bool WebIntentsTable::MigrateToVersion46AddSchemeColumn() {
@@ -86,7 +117,7 @@ bool WebIntentsTable::MigrateToVersion46AddSchemeColumn() {
     return false;
   }
 
-  if (!Init()) return false;
+  if (!Init(db_, meta_table_)) return false;
 
   int error = db_->ExecuteAndReturnErrorCode(
       "INSERT INTO web_intents"

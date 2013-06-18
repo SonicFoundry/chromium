@@ -24,23 +24,23 @@ static const int kBitsPerSample = 16;
 static const ChannelLayout kChannelLayout = CHANNEL_LAYOUT_STEREO;
 static const int kSamplesPerPacket = kSampleRate / 10;
 
-// Posts MessageLoop::QuitClosure() on specified message loop.
+// Posts base::MessageLoop::QuitClosure() on specified message loop.
 ACTION_P(QuitMessageLoop, loop_or_proxy) {
-  loop_or_proxy->PostTask(FROM_HERE, MessageLoop::QuitClosure());
+  loop_or_proxy->PostTask(FROM_HERE, base::MessageLoop::QuitClosure());
 }
 
-// Posts MessageLoop::QuitClosure() on specified message loop after a certain
-// number of calls given by |limit|.
+// Posts base::MessageLoop::QuitClosure() on specified message loop after a
+// certain number of calls given by |limit|.
 ACTION_P3(CheckCountAndPostQuitTask, count, limit, loop_or_proxy) {
   if (++*count >= limit) {
-    loop_or_proxy->PostTask(FROM_HERE, MessageLoop::QuitClosure());
+    loop_or_proxy->PostTask(FROM_HERE, base::MessageLoop::QuitClosure());
   }
 }
 
 // Closes AudioOutputController synchronously.
 static void CloseAudioController(AudioInputController* controller) {
-  controller->Close(MessageLoop::QuitClosure());
-  MessageLoop::current()->Run();
+  controller->Close(base::MessageLoop::QuitClosure());
+  base::MessageLoop::current()->Run();
 }
 
 class MockAudioInputControllerEventHandler
@@ -50,7 +50,7 @@ class MockAudioInputControllerEventHandler
 
   MOCK_METHOD1(OnCreated, void(AudioInputController* controller));
   MOCK_METHOD1(OnRecording, void(AudioInputController* controller));
-  MOCK_METHOD2(OnError, void(AudioInputController* controller, int error_code));
+  MOCK_METHOD1(OnError, void(AudioInputController* controller));
   MOCK_METHOD3(OnData, void(AudioInputController* controller,
                             const uint8* data, uint32 size));
 
@@ -65,7 +65,7 @@ class AudioInputControllerTest : public testing::Test {
   virtual ~AudioInputControllerTest() {}
 
  protected:
-  MessageLoop message_loop_;
+  base::MessageLoop message_loop_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(AudioInputControllerTest);
@@ -154,7 +154,7 @@ TEST_F(AudioInputControllerTest, RecordAndError) {
 
   // OnError() will be called after the data stream stops while the
   // controller is in a recording state.
-  EXPECT_CALL(event_handler, OnError(NotNull(), 0))
+  EXPECT_CALL(event_handler, OnError(NotNull()))
       .Times(Exactly(1))
       .WillOnce(QuitMessageLoop(&message_loop_));
 
@@ -219,11 +219,11 @@ TEST_F(AudioInputControllerTest, CloseTwice) {
 
   controller->Record();
 
-  controller->Close(MessageLoop::QuitClosure());
-  MessageLoop::current()->Run();
+  controller->Close(base::MessageLoop::QuitClosure());
+  base::MessageLoop::current()->Run();
 
-  controller->Close(MessageLoop::QuitClosure());
-  MessageLoop::current()->Run();
+  controller->Close(base::MessageLoop::QuitClosure());
+  base::MessageLoop::current()->Run();
 }
 
 }  // namespace media

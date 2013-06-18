@@ -23,8 +23,8 @@
 #include "base/string_util.h"
 #include "base/time.h"
 #include "base/utf_string_conversions.h"
-#include "chrome/browser/api/bookmarks/bookmark_service.h"
 #include "chrome/browser/autocomplete/history_url_provider.h"
+#include "chrome/browser/bookmarks/bookmark_service.h"
 #include "chrome/browser/history/download_row.h"
 #include "chrome/browser/history/history_db_task.h"
 #include "chrome/browser/history/history_notifications.h"
@@ -262,7 +262,7 @@ HistoryBackend::HistoryBackend(const base::FilePath& history_dir,
     : delegate_(delegate),
       id_(id),
       history_dir_(history_dir),
-      ALLOW_THIS_IN_INITIALIZER_LIST(expirer_(this, bookmark_service)),
+      expirer_(this, bookmark_service),
       recent_redirects_(kMaxRedirectCount),
       backend_destroy_message_loop_(NULL),
       segment_queried_(false),
@@ -846,7 +846,8 @@ std::pair<URLID, VisitID> HistoryBackend::AddPageVisit(
       url_info.set_visit_count(url_info.visit_count() + 1);
     if (typed_increment)
       url_info.set_typed_count(url_info.typed_count() + typed_increment);
-    url_info.set_last_visit(time);
+    if (url_info.last_visit() < time)
+      url_info.set_last_visit(time);
 
     // Only allow un-hiding of pages, never hiding.
     if (!new_hidden)
@@ -1312,16 +1313,6 @@ void HistoryBackend::QueryDownloads(std::vector<DownloadRow>* rows) {
     db_->QueryDownloads(rows);
 }
 
-// Clean up entries that has been corrupted (because of the crash, for example).
-void HistoryBackend::CleanUpInProgressEntries() {
-  // If some "in progress" entries were not updated when Chrome exited, they
-  // need to be cleaned up.
-  if (!db_.get())
-    return;
-  db_->CleanUpInProgressEntries();
-  ScheduleCommit();
-}
-
 // Update a particular download entry.
 void HistoryBackend::UpdateDownload(const history::DownloadRow& data) {
   if (!db_.get())
@@ -1442,6 +1433,11 @@ void HistoryBackend::QueryHistoryBasic(URLDatabase* url_db,
     }
 
     url_result.set_visit_time(visit.visit_time);
+
+    // Set whether the visit was blocked for a managed user by looking at the
+    // transition type.
+    url_result.set_blocked_visit(
+        (visit.transition & content::PAGE_TRANSITION_BLOCKED) != 0);
 
     // We don't set any of the query-specific parts of the URLResult, since
     // snippets and stuff don't apply to basic querying.
@@ -1960,19 +1956,19 @@ void HistoryBackend::MergeFavicon(
 
   // If there is already a favicon bitmap of |pixel_size| at |icon_url|,
   // replace it.
+  bool bitmap_identical = false;
   bool replaced_bitmap = false;
   for (size_t i = 0; i < bitmap_id_sizes.size(); ++i) {
     if (bitmap_id_sizes[i].pixel_size == pixel_size) {
       if (IsFaviconBitmapDataEqual(bitmap_id_sizes[i].bitmap_id, bitmap_data)) {
         thumbnail_db_->SetFaviconBitmapLastUpdateTime(
             bitmap_id_sizes[i].bitmap_id, base::Time::Now());
-        // Return early as merging did not alter the bitmap data.
-        ScheduleCommit();
-        return;
+        bitmap_identical = true;
+      } else {
+        thumbnail_db_->SetFaviconBitmap(bitmap_id_sizes[i].bitmap_id,
+            bitmap_data, base::Time::Now());
+        replaced_bitmap = true;
       }
-      thumbnail_db_->SetFaviconBitmap(bitmap_id_sizes[i].bitmap_id, bitmap_data,
-          base::Time::Now());
-      replaced_bitmap = true;
       break;
     }
   }
@@ -1983,7 +1979,7 @@ void HistoryBackend::MergeFavicon(
   for (size_t i = 0; i < bitmap_id_sizes.size(); ++i)
     favicon_sizes.push_back(bitmap_id_sizes[i].pixel_size);
 
-  if (!replaced_bitmap) {
+  if (!replaced_bitmap && !bitmap_identical) {
     // Set the preexisting favicon bitmaps as expired as the preexisting favicon
     // bitmaps are not consistent with the merged in data.
     thumbnail_db_->SetFaviconOutOfDate(favicon_id);
@@ -2066,15 +2062,16 @@ void HistoryBackend::MergeFavicon(
 
   // Update the favicon mappings such that only |icon_url| is mapped to
   // |page_url|.
+  bool mapping_changed = false;
   if (icon_mappings.size() != 1 || icon_mappings[0].icon_url != icon_url) {
     std::vector<FaviconID> favicon_ids;
     favicon_ids.push_back(favicon_id);
     SetFaviconMappingsForPageAndRedirects(page_url, icon_type, favicon_ids);
+    mapping_changed = true;
   }
 
-  // Send notification to the UI as at least a favicon bitmap was added or
-  // replaced.
-  SendFaviconChangedNotificationForPageAndRedirects(page_url);
+  if (mapping_changed || !bitmap_identical)
+    SendFaviconChangedNotificationForPageAndRedirects(page_url);
   ScheduleCommit();
 }
 
@@ -2713,7 +2710,8 @@ void HistoryBackend::ExpireHistoryBetween(
     Time begin_time,
     Time end_time) {
   if (db_.get()) {
-    if (begin_time.is_null() && end_time.is_null() && restrict_urls.empty()) {
+    if (begin_time.is_null() && (end_time.is_null() || end_time.is_max()) &&
+        restrict_urls.empty()) {
       // Special case deleting all history so it can be faster and to reduce the
       // possibility of an information leak.
       DeleteAllHistory();
@@ -2732,30 +2730,78 @@ void HistoryBackend::ExpireHistoryBetween(
 }
 
 void HistoryBackend::ExpireHistoryForTimes(
-    const std::vector<base::Time>& times) {
-  // Put the times in reverse chronological order and remove
-  // duplicates (for expirer_.ExpireHistoryForTimes()).
-  std::vector<base::Time> sorted_times = times;
-  std::sort(sorted_times.begin(), sorted_times.end(),
-            std::greater<base::Time>());
-  sorted_times.erase(
-      std::unique(sorted_times.begin(), sorted_times.end()),
-      sorted_times.end());
-
-  if (sorted_times.empty())
+    const std::set<base::Time>& times,
+    base::Time begin_time, base::Time end_time) {
+  if (times.empty() || !db_.get())
     return;
 
-  if (db_.get()) {
-    expirer_.ExpireHistoryForTimes(sorted_times);
-    // Force a commit, if the user is deleting something for privacy reasons,
-    // we want to get it on disk ASAP.
-    Commit();
+  DCHECK(*times.begin() >= begin_time)
+      << "Min time is before begin time: "
+      << times.begin()->ToJsTime() << " v.s. " << begin_time.ToJsTime();
+  DCHECK(*times.rbegin() < end_time)
+      << "Max time is after end time: "
+      << times.rbegin()->ToJsTime() << " v.s. " << end_time.ToJsTime();
+
+  history::QueryOptions options;
+  options.begin_time = begin_time;
+  options.end_time = end_time;
+  options.duplicate_policy = QueryOptions::KEEP_ALL_DUPLICATES;
+  QueryResults results;
+  QueryHistoryBasic(db_.get(), db_.get(), options, &results);
+
+  // 1st pass: find URLs that are visited at one of |times|.
+  std::set<GURL> urls;
+  for (size_t i = 0; i < results.size(); ++i) {
+    if (times.count(results[i].visit_time()) > 0)
+      urls.insert(results[i].url());
+  }
+  if (urls.empty())
+    return;
+
+  // 2nd pass: collect all visit times of those URLs.
+  std::vector<base::Time> times_to_expire;
+  for (size_t i = 0; i < results.size(); ++i) {
+    if (urls.count(results[i].url()))
+      times_to_expire.push_back(results[i].visit_time());
   }
 
-  // Update the first recorded time if we've expired it.
-  if (std::binary_search(sorted_times.begin(), sorted_times.end(),
-                         first_recorded_time_, std::greater<base::Time>()))
+  // Put the times in reverse chronological order and remove
+  // duplicates (for expirer_.ExpireHistoryForTimes()).
+  std::sort(times_to_expire.begin(), times_to_expire.end(),
+            std::greater<base::Time>());
+  times_to_expire.erase(
+      std::unique(times_to_expire.begin(), times_to_expire.end()),
+      times_to_expire.end());
+
+  // Expires by times and commit.
+  DCHECK(!times_to_expire.empty());
+  expirer_.ExpireHistoryForTimes(times_to_expire);
+  Commit();
+
+  DCHECK(times_to_expire.back() >= first_recorded_time_);
+  // Update |first_recorded_time_| if we expired it.
+  if (times_to_expire.back() == first_recorded_time_)
     db_->GetStartDate(&first_recorded_time_);
+}
+
+void HistoryBackend::ExpireHistory(
+    const std::vector<history::ExpireHistoryArgs>& expire_list) {
+  if (db_.get()) {
+    bool update_first_recorded_time = false;
+
+    for (std::vector<history::ExpireHistoryArgs>::const_iterator it =
+         expire_list.begin(); it != expire_list.end(); ++it) {
+      expirer_.ExpireHistoryBetween(it->urls, it->begin_time, it->end_time);
+
+      if (it->begin_time < first_recorded_time_)
+        update_first_recorded_time = true;
+    }
+    Commit();
+
+    // Update |first_recorded_time_| if any deletion might have affected it.
+    if (update_first_recorded_time)
+      db_->GetStartDate(&first_recorded_time_);
+  }
 }
 
 void HistoryBackend::URLsNoLongerBookmarked(const std::set<GURL>& urls) {

@@ -47,13 +47,6 @@ ProfileSyncService* ProfileSyncServiceFactory::GetForProfile(
       GetInstance()->GetServiceForProfile(profile, true));
 }
 
-// static
-ProfileSyncServiceBase* ProfileSyncServiceBase::FromBrowserContext(
-    content::BrowserContext* context) {
-  return ProfileSyncServiceFactory::GetForProfile(
-      static_cast<Profile*>(context));
-}
-
 ProfileSyncServiceFactory::ProfileSyncServiceFactory()
     : ProfileKeyedServiceFactory("ProfileSyncService",
                                  ProfileDependencyManager::GetInstance()) {
@@ -62,7 +55,7 @@ ProfileSyncServiceFactory::ProfileSyncServiceFactory()
   // when it is shut down.  Specify those dependencies here to build the proper
   // destruction order.
   DependsOn(TemplateURLServiceFactory::GetInstance());
-  DependsOn(PersonalDataManagerFactory::GetInstance());
+  DependsOn(autofill::PersonalDataManagerFactory::GetInstance());
 #if defined(ENABLE_THEMES)
   DependsOn(ThemeServiceFactory::GetInstance());
 #endif
@@ -87,12 +80,14 @@ ProfileSyncServiceFactory::~ProfileSyncServiceFactory() {
 }
 
 ProfileKeyedService* ProfileSyncServiceFactory::BuildServiceInstanceFor(
-    Profile* profile) const {
+    content::BrowserContext* context) const {
+  Profile* profile = static_cast<Profile*>(context);
+
   ProfileSyncService::StartBehavior behavior =
       browser_defaults::kSyncAutoStarts ? ProfileSyncService::AUTO_START
                                         : ProfileSyncService::MANUAL_START;
 
-  SigninManager* signin = SigninManagerFactory::GetForProfile(profile);
+  SigninManagerBase* signin = SigninManagerFactory::GetForProfile(profile);
 
   // TODO(atwilson): Change AboutSigninInternalsFactory to load on startup
   // once http://crbug.com/171406 has been fixed.

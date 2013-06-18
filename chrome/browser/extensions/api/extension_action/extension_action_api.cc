@@ -24,13 +24,11 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/extensions/api/extension_action/action_info.h"
-#include "chrome/common/extensions/api/extension_action/browser_action_handler.h"
-#include "chrome/common/extensions/api/extension_action/page_action_handler.h"
-#include "chrome/common/extensions/api/extension_action/script_badge_handler.h"
 #include "chrome/common/render_messages.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_service.h"
 #include "extensions/common/error_utils.h"
+#include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
 
 namespace extensions {
@@ -187,10 +185,6 @@ static base::LazyInstance<ProfileKeyedAPIFactory<ExtensionActionAPI> >
     g_factory = LAZY_INSTANCE_INITIALIZER;
 
 ExtensionActionAPI::ExtensionActionAPI(Profile* profile) {
-  (new BrowserActionHandler)->Register();
-  (new PageActionHandler)->Register();
-  (new ScriptBadgeHandler)->Register();
-
   ExtensionFunctionRegistry* registry =
       ExtensionFunctionRegistry::GetInstance();
 

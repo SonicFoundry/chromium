@@ -27,7 +27,7 @@ class WebContentsAudioInputStream::Impl
  public:
   // Takes ownership of |mixer_stream|.  The rest outlive this instance.
   Impl(int render_process_id, int render_view_id,
-       base::MessageLoopProxy* message_loop,
+       const scoped_refptr<base::MessageLoopProxy>& message_loop,
        AudioMirroringManager* mirroring_manager,
        const scoped_refptr<WebContentsTracker>& tracker,
        media::VirtualAudioInputStream* mixer_stream);
@@ -86,7 +86,7 @@ class WebContentsAudioInputStream::Impl
   void OnTargetChanged(int render_process_id, int render_view_id);
 
   // Injected dependencies.
-  base::MessageLoopProxy* const message_loop_;
+  const scoped_refptr<base::MessageLoopProxy> message_loop_;
   AudioMirroringManager* const mirroring_manager_;
   const scoped_refptr<WebContentsTracker> tracker_;
   // The AudioInputStream implementation that handles the audio conversion and
@@ -107,7 +107,7 @@ class WebContentsAudioInputStream::Impl
 
 WebContentsAudioInputStream::Impl::Impl(
     int render_process_id, int render_view_id,
-    base::MessageLoopProxy* message_loop,
+    const scoped_refptr<base::MessageLoopProxy>& message_loop,
     AudioMirroringManager* mirroring_manager,
     const scoped_refptr<WebContentsTracker>& tracker,
     media::VirtualAudioInputStream* mixer_stream)
@@ -150,14 +150,14 @@ void WebContentsAudioInputStream::Impl::Start(AudioInputCallback* callback) {
   if (state_ != OPENED)
     return;
 
+  callback_ = callback;
   if (IsTargetLost()) {
     ReportError();
+    callback_ = NULL;
     return;
   }
 
   state_ = MIRRORING;
-
-  callback_ = callback;
   mixer_stream_->Start(callback);
 
   StartMirroring();
@@ -204,8 +204,7 @@ void WebContentsAudioInputStream::Impl::ReportError() {
 
   // TODO(miu): Need clean-up of AudioInputCallback interface in a future
   // change, since its only implementation ignores the first argument entirely
-  // and the values for the second argument are undefined.
-  callback_->OnError(NULL, 0);
+  callback_->OnError(NULL);
 }
 
 void WebContentsAudioInputStream::Impl::StartMirroring() {
@@ -280,7 +279,7 @@ void WebContentsAudioInputStream::Impl::OnTargetChanged(int render_process_id,
 WebContentsAudioInputStream* WebContentsAudioInputStream::Create(
     const std::string& device_id,
     const media::AudioParameters& params,
-    base::MessageLoopProxy* message_loop) {
+    const scoped_refptr<base::MessageLoopProxy>& message_loop) {
   int render_process_id;
   int render_view_id;
   if (!WebContentsCaptureUtil::ExtractTabCaptureTarget(
@@ -299,7 +298,7 @@ WebContentsAudioInputStream* WebContentsAudioInputStream::Create(
 
 WebContentsAudioInputStream::WebContentsAudioInputStream(
     int render_process_id, int render_view_id,
-    base::MessageLoopProxy* message_loop,
+    const scoped_refptr<base::MessageLoopProxy>& message_loop,
     AudioMirroringManager* mirroring_manager,
     const scoped_refptr<WebContentsTracker>& tracker,
     media::VirtualAudioInputStream* mixer_stream)

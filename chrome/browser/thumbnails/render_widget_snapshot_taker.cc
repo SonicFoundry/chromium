@@ -52,7 +52,7 @@ void RenderWidgetSnapshotTaker::AskForSnapshot(
   scoped_ptr<TransportDIB> thumbnail_dib(TransportDIB::Create(
       desired_size_in_pixel.GetArea() * 4, sequence_num));
 
-#if defined(USE_X11)
+#if defined(OS_LINUX)
   // TODO: IPC a handle to the renderer like Windows.
   // http://code.google.com/p/chromium/issues/detail?id=89777
   NOTIMPLEMENTED();
@@ -133,6 +133,8 @@ void RenderWidgetSnapshotTaker::WidgetDidReceivePaintAtSizeAck(
     // image.
     non_owned_bitmap.setConfig(SkBitmap::kARGB_8888_Config,
                                size.width(), size.height());
+    if (dib->size() < non_owned_bitmap.getSafeSize())
+      return;
     non_owned_bitmap.setPixels(dib->memory());
 
     // Now alloc/copy the memory so we own it and can pass it around,

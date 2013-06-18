@@ -8,6 +8,7 @@
 #include "base/rand_util.h"
 #include "base/string_util.h"
 #include "base/utf_string_conversions.h"
+#include "grit/ui_strings.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/clipboard/clipboard.h"
@@ -1039,6 +1040,15 @@ TEST_F(ViewTest, HitTestMasks) {
   EXPECT_EQ(v1, root_view->GetEventHandlerForPoint(v1_origin));
   EXPECT_EQ(root_view, root_view->GetEventHandlerForPoint(v2_origin));
 
+  // Test GetTooltipHandlerForPoint
+  EXPECT_EQ(v1, root_view->GetTooltipHandlerForPoint(v1_centerpoint));
+  EXPECT_EQ(v2, root_view->GetTooltipHandlerForPoint(v2_centerpoint));
+
+  EXPECT_EQ(v1, root_view->GetTooltipHandlerForPoint(v1_origin));
+  EXPECT_EQ(root_view, root_view->GetTooltipHandlerForPoint(v2_origin));
+
+  EXPECT_FALSE(v1->GetTooltipHandlerForPoint(v2_origin));
+
   widget->CloseNow();
 }
 
@@ -1207,8 +1217,6 @@ TEST_F(ViewTest, Textfield) {
   widget->CloseNow();
 }
 
-#if defined(OS_WIN) && !defined(USE_AURA)
-
 // Tests that the Textfield view respond appropiately to cut/copy/paste.
 TEST_F(ViewTest, TextfieldCutCopyPaste) {
   const string16 kNormalText = ASCIIToUTF16("Normal");
@@ -1239,26 +1247,23 @@ TEST_F(ViewTest, TextfieldCutCopyPaste) {
   //
   // Test cut.
   //
-  ASSERT_TRUE(normal->GetTestingHandle());
-  normal->SelectAll(false);
-  ::SendMessage(normal->GetTestingHandle(), WM_CUT, 0, 0);
 
+  normal->SelectAll(false);
+  normal->ExecuteCommand(IDS_APP_CUT);
   string16 result;
   clipboard->ReadText(ui::Clipboard::BUFFER_STANDARD, &result);
   EXPECT_EQ(kNormalText, result);
   normal->SetText(kNormalText);  // Let's revert to the original content.
 
-  ASSERT_TRUE(read_only->GetTestingHandle());
   read_only->SelectAll(false);
-  ::SendMessage(read_only->GetTestingHandle(), WM_CUT, 0, 0);
+  read_only->ExecuteCommand(IDS_APP_CUT);
   result.clear();
   clipboard->ReadText(ui::Clipboard::BUFFER_STANDARD, &result);
   // Cut should have failed, so the clipboard content should not have changed.
   EXPECT_EQ(kNormalText, result);
 
-  ASSERT_TRUE(password->GetTestingHandle());
   password->SelectAll(false);
-  ::SendMessage(password->GetTestingHandle(), WM_CUT, 0, 0);
+  password->ExecuteCommand(IDS_APP_CUT);
   result.clear();
   clipboard->ReadText(ui::Clipboard::BUFFER_STANDARD, &result);
   // Cut should have failed, so the clipboard content should not have changed.
@@ -1268,58 +1273,47 @@ TEST_F(ViewTest, TextfieldCutCopyPaste) {
   // Test copy.
   //
 
-  // Let's start with read_only as the clipboard already contains the content
-  // of normal.
+  // Start with |read_only| to observe a change in clipboard text.
   read_only->SelectAll(false);
-  ::SendMessage(read_only->GetTestingHandle(), WM_COPY, 0, 0);
+  read_only->ExecuteCommand(IDS_APP_COPY);
   result.clear();
   clipboard->ReadText(ui::Clipboard::BUFFER_STANDARD, &result);
   EXPECT_EQ(kReadOnlyText, result);
 
   normal->SelectAll(false);
-  ::SendMessage(normal->GetTestingHandle(), WM_COPY, 0, 0);
+  normal->ExecuteCommand(IDS_APP_COPY);
   result.clear();
   clipboard->ReadText(ui::Clipboard::BUFFER_STANDARD, &result);
   EXPECT_EQ(kNormalText, result);
 
   password->SelectAll(false);
-  ::SendMessage(password->GetTestingHandle(), WM_COPY, 0, 0);
+  password->ExecuteCommand(IDS_APP_COPY);
   result.clear();
   clipboard->ReadText(ui::Clipboard::BUFFER_STANDARD, &result);
-  // We don't let you copy from an obscured field, clipboard should not have
-  // changed.
+  // Text cannot be copied from an obscured field; the clipboard won't change.
   EXPECT_EQ(kNormalText, result);
 
   //
-  // Test Paste.
+  // Test paste.
   //
-  // Note that we use GetWindowText instead of Textfield::GetText below as the
-  // text in the Textfield class is synced to the text of the HWND on
-  // WM_KEYDOWN messages that we are not simulating here.
 
-  // Attempting to copy kNormalText in a read-only text-field should fail.
+  // Attempting to paste kNormalText in a read-only text-field should fail.
   read_only->SelectAll(false);
-  ::SendMessage(read_only->GetTestingHandle(), WM_KEYDOWN, 0, 0);
-  wchar_t buffer[1024] = { 0 };
-  ::GetWindowText(read_only->GetTestingHandle(), buffer, 1024);
-  EXPECT_EQ(kReadOnlyText, string16(buffer));
+  read_only->ExecuteCommand(IDS_APP_PASTE);
+  EXPECT_EQ(kReadOnlyText, read_only->text());
 
   password->SelectAll(false);
-  ::SendMessage(password->GetTestingHandle(), WM_PASTE, 0, 0);
-  ::GetWindowText(password->GetTestingHandle(), buffer, 1024);
-  EXPECT_EQ(kNormalText, string16(buffer));
+  password->ExecuteCommand(IDS_APP_PASTE);
+  EXPECT_EQ(kNormalText, password->text());
 
-  // Copy from read_only so the string we are pasting is not the same as the
-  // current one.
+  // Copy from |read_only| to observe a change in the normal textfield text.
   read_only->SelectAll(false);
-  ::SendMessage(read_only->GetTestingHandle(), WM_COPY, 0, 0);
+  read_only->ExecuteCommand(IDS_APP_COPY);
   normal->SelectAll(false);
-  ::SendMessage(normal->GetTestingHandle(), WM_PASTE, 0, 0);
-  ::GetWindowText(normal->GetTestingHandle(), buffer, 1024);
-  EXPECT_EQ(kReadOnlyText, string16(buffer));
+  normal->ExecuteCommand(IDS_APP_PASTE);
+  EXPECT_EQ(kReadOnlyText, normal->text());
   widget->CloseNow();
 }
-#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 // Accelerators
@@ -1608,7 +1602,7 @@ class TestDialog : public DialogDelegate, public ButtonListener {
     widget_->Close();
     widget_ = NULL;
     // delegate has to be alive while shutting down.
-    MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+    base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
   }
 
   // DialogDelegate implementation:
@@ -1860,34 +1854,6 @@ TEST_F(ButtonDropDownTest, RegularClickTest) {
   button_as_view_->OnMouseReleased(release_event);
   EXPECT_EQ(test_dialog_->last_pressed_button_, test_dialog_->button_drop_);
 }
-
-////////////////////////////////////////////////////////////////////////////////
-// View hierarchy / Visibility changes
-////////////////////////////////////////////////////////////////////////////////
-/*
-TEST_F(ViewTest, ChangeVisibility) {
-#if defined(OS_LINUX)
-  // Make CRITICAL messages fatal
-  // TODO(oshima): we probably should enable this for entire tests on linux.
-  g_log_set_always_fatal(G_LOG_LEVEL_CRITICAL);
-#endif
-  scoped_ptr<Widget> window(CreateWidget());
-  window->Init(NULL, gfx::Rect(0, 0, 500, 300));
-  View* root_view = window->GetRootView();
-  NativeTextButton* native = new NativeTextButton(NULL, ASCIIToUTF16("Native"));
-
-  root_view->SetContentsView(native);
-  native->SetVisible(true);
-
-  root_view->RemoveChildView(native);
-  native->SetVisible(false);
-  // Change visibility to true with no widget.
-  native->SetVisible(true);
-
-  root_view->SetContentsView(native);
-  native->SetVisible(true);
-}
-*/
 
 ////////////////////////////////////////////////////////////////////////////////
 // Native view hierachy
@@ -3271,19 +3237,21 @@ TEST_F(ViewLayerTest, DontPaintChildrenWithLayers) {
   PaintTrackingView* content_view = new PaintTrackingView;
   widget()->SetContentsView(content_view);
   content_view->SetPaintToLayer(true);
-  // TODO(piman): Compositor::Draw() won't work for the threaded compositor.
-  GetRootLayer()->GetCompositor()->Draw(false);
+  GetRootLayer()->GetCompositor()->ScheduleDraw();
+  ui::DrawWaiterForTest::Wait(GetRootLayer()->GetCompositor());
   GetRootLayer()->SchedulePaint(gfx::Rect(0, 0, 10, 10));
   content_view->set_painted(false);
   // content_view no longer has a dirty rect. Paint from the root and make sure
   // PaintTrackingView isn't painted.
-  GetRootLayer()->GetCompositor()->Draw(false);
+  GetRootLayer()->GetCompositor()->ScheduleDraw();
+  ui::DrawWaiterForTest::Wait(GetRootLayer()->GetCompositor());
   EXPECT_FALSE(content_view->painted());
 
   // Make content_view have a dirty rect, paint the layers and make sure
   // PaintTrackingView is painted.
   content_view->layer()->SchedulePaint(gfx::Rect(0, 0, 10, 10));
-  GetRootLayer()->GetCompositor()->Draw(false);
+  GetRootLayer()->GetCompositor()->ScheduleDraw();
+  ui::DrawWaiterForTest::Wait(GetRootLayer()->GetCompositor());
   EXPECT_TRUE(content_view->painted());
 }
 

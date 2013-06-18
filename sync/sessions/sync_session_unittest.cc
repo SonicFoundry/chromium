@@ -140,20 +140,6 @@ class SyncSessionTest : public testing::Test,
   scoped_ptr<ThrottledDataTypeTracker> throttled_data_type_tracker_;
 };
 
-TEST_F(SyncSessionTest, SetWriteTransaction) {
-  TestDirectorySetterUpper dir_maker;
-  dir_maker.SetUp();
-  syncable::Directory* directory = dir_maker.directory();
-
-  scoped_ptr<SyncSession> session(MakeSession());
-  EXPECT_TRUE(NULL == session->write_transaction());
-  {
-    WriteTransaction trans(FROM_HERE, syncable::UNITTEST, directory);
-    sessions::ScopedSetSessionWriteTransaction set_trans(session.get(), &trans);
-    EXPECT_TRUE(&trans == session->write_transaction());
-  }
-}
-
 TEST_F(SyncSessionTest, MoreToDownloadIfDownloadFailed) {
   status()->set_updates_request_types(ParamsMeaningAllEnabledTypes());
 
@@ -184,26 +170,6 @@ TEST_F(SyncSessionTest, MoreToDownloadIfGotNoChangesRemaining) {
       ->set_changes_remaining(0);
   EXPECT_TRUE(status()->ServerSaysNothingMoreToDownload());
   EXPECT_TRUE(status()->download_updates_succeeded());
-}
-
-TEST_F(SyncSessionTest, CoalesceSources) {
-  ModelTypeInvalidationMap one_type =
-      ModelTypeSetToInvalidationMap(
-          ParamsMeaningJustOneEnabledType(),
-          std::string());
-  ModelTypeInvalidationMap all_types =
-      ModelTypeSetToInvalidationMap(
-          ParamsMeaningAllEnabledTypes(),
-          std::string());
-  SyncSourceInfo source_one(sync_pb::GetUpdatesCallerInfo::PERIODIC, one_type);
-  SyncSourceInfo source_two(sync_pb::GetUpdatesCallerInfo::LOCAL, all_types);
-
-  SyncSession session(context_.get(), this, source_one);
-
-  session.CoalesceSources(source_two);
-
-  EXPECT_EQ(source_two.updates_source, session.source().updates_source);
-  EXPECT_THAT(all_types, Eq(session.source().types));
 }
 
 TEST_F(SyncSessionTest, MakeTypeInvalidationMapFromBitSet) {

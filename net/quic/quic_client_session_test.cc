@@ -10,9 +10,11 @@
 #include "net/base/capturing_net_log.h"
 #include "net/base/net_log_unittest.h"
 #include "net/base/test_completion_callback.h"
+#include "net/quic/crypto/aes_128_gcm_encrypter.h"
 #include "net/quic/crypto/crypto_protocol.h"
 #include "net/quic/crypto/quic_decrypter.h"
 #include "net/quic/crypto/quic_encrypter.h"
+#include "net/quic/test_tools/crypto_test_utils.h"
 #include "net/quic/test_tools/quic_test_utils.h"
 
 using testing::_;
@@ -27,44 +29,48 @@ class QuicClientSessionTest : public ::testing::Test {
  protected:
   QuicClientSessionTest()
       : guid_(1),
-        connection_(new PacketSavingConnection(guid_, IPEndPoint())),
-        session_(connection_, NULL, NULL, kServerHostname, &net_log_) {
+        connection_(new PacketSavingConnection(guid_, IPEndPoint(), false)),
+        session_(connection_, NULL, NULL, NULL, kServerHostname,
+                 &crypto_config_, &net_log_) {
+    crypto_config_.SetDefaults();
   }
 
-  CapturingNetLog net_log_;
+  void CompleteCryptoHandshake() {
+    ASSERT_EQ(ERR_IO_PENDING,
+              session_.CryptoConnect(callback_.callback()));
+    CryptoTestUtils::HandshakeWithFakeServer(
+        connection_, session_.GetCryptoStream());
+    ASSERT_EQ(OK, callback_.WaitForResult());
+  }
+
   QuicGuid guid_;
   PacketSavingConnection* connection_;
+  CapturingNetLog net_log_;
   QuicClientSession session_;
+  MockClock clock_;
+  MockRandom random_;
   QuicConnectionVisitorInterface* visitor_;
   TestCompletionCallback callback_;
+  QuicConfig* config_;
+  QuicCryptoClientConfig crypto_config_;
 };
 
-TEST_F(QuicClientSessionTest, CryptoConnectSendsCorrectData) {
-  EXPECT_EQ(ERR_IO_PENDING, session_.CryptoConnect(callback_.callback()));
-  ASSERT_EQ(1u, connection_->packets_.size());
-  scoped_ptr<QuicPacket> chlo(ConstructClientHelloPacket(
-      guid_, connection_->clock(), connection_->random_generator(),
-      kServerHostname));
-  CompareQuicDataWithHexError("CHLO", connection_->packets_[0], chlo.get());
-}
+TEST_F(QuicClientSessionTest, CryptoConnect) {
+  if (!Aes128GcmEncrypter::IsSupported()) {
+    LOG(INFO) << "AES GCM not supported. Test skipped.";
+    return;
+  }
 
-TEST_F(QuicClientSessionTest, CryptoConnectSendsCompletesAfterSHLO) {
-  ASSERT_EQ(ERR_IO_PENDING, session_.CryptoConnect(callback_.callback()));
-  // Send the SHLO message.
-  CryptoHandshakeMessage server_message;
-  server_message.tag = kSHLO;
-  session_.GetCryptoStream()->OnHandshakeMessage(server_message);
-  EXPECT_EQ(OK, callback_.WaitForResult());
+  CompleteCryptoHandshake();
 }
 
 TEST_F(QuicClientSessionTest, MaxNumConnections) {
-  // Initialize crypto before the client session will create a stream.
-  ASSERT_EQ(ERR_IO_PENDING, session_.CryptoConnect(callback_.callback()));
-  // Simulate the server crypto handshake.
-  CryptoHandshakeMessage server_message;
-  server_message.tag = kSHLO;
-  session_.GetCryptoStream()->OnHandshakeMessage(server_message);
-  callback_.WaitForResult();
+  if (!Aes128GcmEncrypter::IsSupported()) {
+    LOG(INFO) << "AES GCM not supported. Test skipped.";
+    return;
+  }
+
+  CompleteCryptoHandshake();
 
   std::vector<QuicReliableClientStream*> streams;
   for (size_t i = 0; i < kDefaultMaxStreamsPerConnection; i++) {
@@ -80,12 +86,12 @@ TEST_F(QuicClientSessionTest, MaxNumConnections) {
 }
 
 TEST_F(QuicClientSessionTest, GoAwayReceived) {
-  // Initialize crypto before the client session will create a stream.
-  ASSERT_TRUE(session_.CryptoConnect(callback_.callback()));
-  // Simulate the server crypto handshake.
-  CryptoHandshakeMessage server_message;
-  server_message.tag = kSHLO;
-  session_.GetCryptoStream()->OnHandshakeMessage(server_message);
+  if (!Aes128GcmEncrypter::IsSupported()) {
+    LOG(INFO) << "AES GCM not supported. Test skipped.";
+    return;
+  }
+
+  CompleteCryptoHandshake();
 
   // After receiving a GoAway, I should no longer be able to create outgoing
   // streams.
@@ -94,22 +100,19 @@ TEST_F(QuicClientSessionTest, GoAwayReceived) {
 }
 
 TEST_F(QuicClientSessionTest, Logging) {
-  // Initialize crypto before the client session will create a stream.
-  ASSERT_EQ(ERR_IO_PENDING, session_.CryptoConnect(callback_.callback()));
-  // Simulate the server crypto handshake.
-  CryptoHandshakeMessage server_message;
-  server_message.tag = kSHLO;
-  session_.GetCryptoStream()->OnHandshakeMessage(server_message);
-  callback_.WaitForResult();
+  if (!Aes128GcmEncrypter::IsSupported()) {
+    LOG(INFO) << "AES GCM not supported. Test skipped.";
+    return;
+  }
+
+  CompleteCryptoHandshake();
 
   // TODO(rch): Add some helper methods to simplify packet creation in tests.
   // Receive a packet, and verify that it was logged.
-  QuicFramer framer(kQuicVersion1,
-                    QuicDecrypter::Create(kNULL),
-                    QuicEncrypter::Create(kNULL));
+  QuicFramer framer(kQuicVersion1, QuicTime::Zero(), false);
   QuicRstStreamFrame frame;
   frame.stream_id = 2;
-  frame.error_code = QUIC_CONNECTION_TIMED_OUT;
+  frame.error_code = QUIC_STREAM_CONNECTION_ERROR;
   frame.error_details = "doh!";
 
   QuicFrames frames;
@@ -125,7 +128,8 @@ TEST_F(QuicClientSessionTest, Logging) {
   header.fec_group = 0;
   scoped_ptr<QuicPacket> p(
       framer.ConstructFrameDataPacket(header, frames).packet);
-  scoped_ptr<QuicEncryptedPacket> packet(framer.EncryptPacket(1, *p));
+  scoped_ptr<QuicEncryptedPacket> packet(framer.EncryptPacket(
+      ENCRYPTION_NONE, 1, *p));
   IPAddressNumber ip;
   CHECK(ParseIPLiteralToNumber("192.0.2.33", &ip));
   IPEndPoint peer_addr = IPEndPoint(ip, 443);
@@ -157,7 +161,7 @@ TEST_F(QuicClientSessionTest, Logging) {
   EXPECT_EQ(frame.stream_id, static_cast<QuicStreamId>(stream_id));
   int error_code;
   ASSERT_TRUE(entries[pos].GetIntegerValue("error_code", &error_code));
-  EXPECT_EQ(frame.error_code, static_cast<QuicErrorCode>(error_code));
+  EXPECT_EQ(frame.error_code, static_cast<QuicRstStreamErrorCode>(error_code));
   std::string details;
   ASSERT_TRUE(entries[pos].GetStringValue("details", &details));
   EXPECT_EQ(frame.error_details, details);

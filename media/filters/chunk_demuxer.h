@@ -21,6 +21,7 @@ namespace media {
 
 class ChunkDemuxerStream;
 class FFmpegURLProtocol;
+class SourceState;
 
 // Demuxer implementation that allows chunks of media data to be passed
 // from JavaScript to the media stack.
@@ -33,7 +34,7 @@ class MEDIA_EXPORT ChunkDemuxer : public Demuxer {
   };
 
   typedef base::Callback<void(const std::string& type,
-                              scoped_array<uint8> init_data,
+                              scoped_ptr<uint8[]> init_data,
                               int init_data_size)> NeedKeyCB;
 
   // |open_cb| Run when Initialize() is called to signal that the demuxer
@@ -44,6 +45,7 @@ class MEDIA_EXPORT ChunkDemuxer : public Demuxer {
   //   console.
   ChunkDemuxer(const base::Closure& open_cb, const NeedKeyCB& need_key_cb,
                const LogCB& log_cb);
+  virtual ~ChunkDemuxer();
 
   // Demuxer implementation.
   virtual void Initialize(DemuxerHost* host,
@@ -51,8 +53,7 @@ class MEDIA_EXPORT ChunkDemuxer : public Demuxer {
   virtual void Stop(const base::Closure& callback) OVERRIDE;
   virtual void Seek(base::TimeDelta time, const PipelineStatusCB&  cb) OVERRIDE;
   virtual void OnAudioRendererDisabled() OVERRIDE;
-  virtual scoped_refptr<DemuxerStream> GetStream(
-      DemuxerStream::Type type) OVERRIDE;
+  virtual DemuxerStream* GetStream(DemuxerStream::Type type) OVERRIDE;
   virtual base::TimeDelta GetStartTime() const OVERRIDE;
 
   // Methods used by an external object to control this demuxer.
@@ -76,9 +77,8 @@ class MEDIA_EXPORT ChunkDemuxer : public Demuxer {
   // Gets the currently buffered ranges for the specified ID.
   Ranges<base::TimeDelta> GetBufferedRanges(const std::string& id) const;
 
-  // Appends media data to the source buffer associated with |id|. Returns
-  // false if this method is called in an invalid state.
-  bool AppendData(const std::string& id, const uint8* data, size_t length);
+  // Appends media data to the source buffer associated with |id|.
+  void AppendData(const std::string& id, const uint8* data, size_t length);
 
   // Aborts parsing the current segment and reset the parser to a state where
   // it can accept a new segment.
@@ -104,9 +104,6 @@ class MEDIA_EXPORT ChunkDemuxer : public Demuxer {
   bool EndOfStream(PipelineStatus status);
   void Shutdown();
 
- protected:
-  virtual ~ChunkDemuxer();
-
  private:
   enum State {
     WAITING_FOR_INIT,
@@ -130,19 +127,18 @@ class MEDIA_EXPORT ChunkDemuxer : public Demuxer {
   // false if any can not.
   bool CanEndOfStream_Locked() const;
 
-  // StreamParser callbacks.
-  void OnStreamParserInitDone(bool success, base::TimeDelta duration);
+  // SourceState callbacks.
+  void OnSourceInitDone(bool success, base::TimeDelta duration);
   bool OnNewConfigs(bool has_audio, bool has_video,
                     const AudioDecoderConfig& audio_config,
                     const VideoDecoderConfig& video_config);
   bool OnAudioBuffers(const StreamParser::BufferQueue& buffers);
   bool OnVideoBuffers(const StreamParser::BufferQueue& buffers);
   bool OnNeedKey(const std::string& type,
-                 scoped_array<uint8> init_data,
+                 scoped_ptr<uint8[]> init_data,
                  int init_data_size);
   void OnNewMediaSegment(const std::string& source_id,
                          base::TimeDelta start_timestamp);
-  void OnEndOfMediaSegment(const std::string& source_id);
 
   // Computes the intersection between the video & audio
   // buffered ranges.
@@ -160,7 +156,7 @@ class MEDIA_EXPORT ChunkDemuxer : public Demuxer {
   // |stream|.
   void IncreaseDurationIfNecessary(
       const StreamParser::BufferQueue& buffers,
-      const scoped_refptr<ChunkDemuxerStream>& stream);
+      ChunkDemuxerStream* stream);
 
   // Decreases |duration_| if the buffered region is less than |duration_| when
   // EndOfStream() is called.
@@ -186,8 +182,11 @@ class MEDIA_EXPORT ChunkDemuxer : public Demuxer {
   PipelineStatusCB init_cb_;
   PipelineStatusCB seek_cb_;
 
-  scoped_refptr<ChunkDemuxerStream> audio_;
-  scoped_refptr<ChunkDemuxerStream> video_;
+  scoped_ptr<ChunkDemuxerStream> audio_;
+  scoped_ptr<ChunkDemuxerStream> video_;
+
+  // Keeps |audio_| alive when audio has been disabled.
+  scoped_ptr<ChunkDemuxerStream> disabled_audio_;
 
   base::TimeDelta duration_;
 
@@ -198,16 +197,8 @@ class MEDIA_EXPORT ChunkDemuxer : public Demuxer {
   // the actual duration instead of a user specified value.
   double user_specified_duration_;
 
-  typedef std::map<std::string, StreamParser*> StreamParserMap;
-  StreamParserMap stream_parser_map_;
-
-  // Contains state belonging to a source id.
-  struct SourceInfo {
-    base::TimeDelta timestamp_offset;
-    bool can_update_offset;
-  };
-  typedef std::map<std::string, SourceInfo> SourceInfoMap;
-  SourceInfoMap source_info_map_;
+  typedef std::map<std::string, SourceState*> SourceStateMap;
+  SourceStateMap source_state_map_;
 
   // Used to ensure that (1) config data matches the type and codec provided in
   // AddId(), (2) only 1 audio and 1 video sources are added, and (3) ids may be

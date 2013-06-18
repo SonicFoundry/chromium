@@ -71,9 +71,11 @@ class TestBufferedSpdyVisitor : public BufferedSpdyFramerVisitorInterface {
   virtual void OnStreamFrameData(SpdyStreamId stream_id,
                                  const char* data,
                                  size_t len,
-                                 SpdyDataFlags flags) OVERRIDE {
+                                 bool fin) OVERRIDE {
     LOG(FATAL) << "Unexpected OnStreamFrameData call.";
   }
+
+  virtual void OnSettings(bool clear_persisted) OVERRIDE {}
 
   virtual void OnSetting(SpdySettingsIds id,
                          uint8 flags,

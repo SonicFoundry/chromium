@@ -12,7 +12,7 @@ ContentSettingMediaMenuModel::ContentSettingMediaMenuModel(
     content::MediaStreamType type,
     ContentSettingBubbleModel* bubble_model,
     const MenuLabelChangedCallback& callback)
-    : ALLOW_THIS_IN_INITIALIZER_LIST(ui::SimpleMenuModel(this)),
+    : ui::SimpleMenuModel(this),
       type_(type),
       media_bubble_model_(bubble_model),
       callback_(callback) {
@@ -50,7 +50,8 @@ bool ContentSettingMediaMenuModel::GetAcceleratorForCommandId(
   return false;
 }
 
-void ContentSettingMediaMenuModel::ExecuteCommand(int command_id) {
+void ContentSettingMediaMenuModel::ExecuteCommand(int command_id,
+                                                  int event_flags) {
   CommandMap::const_iterator it = commands_.find(command_id);
   DCHECK(it != commands_.end());
   media_bubble_model_->OnMediaMenuClicked(type_, it->second.id);

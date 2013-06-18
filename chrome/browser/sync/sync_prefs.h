@@ -9,15 +9,18 @@
 #include "base/compiler_specific.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/prefs/public/pref_member.h"
+#include "base/prefs/pref_member.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/time.h"
 #include "sync/internal_api/public/base/model_type.h"
 #include "sync/notifier/invalidation_state_tracker.h"
 
-class PrefRegistrySyncable;
 class PrefService;
 class ProfileIOData;
+
+namespace user_prefs {
+class PrefRegistrySyncable;
+}
 
 namespace browser_sync {
 
@@ -54,7 +57,7 @@ class SyncPrefs : NON_EXPORTED_BASE(public base::NonThreadSafe),
 
   virtual ~SyncPrefs();
 
-  static void RegisterUserPrefs(PrefRegistrySyncable* registry);
+  static void RegisterUserPrefs(user_prefs::PrefRegistrySyncable* registry);
 
   // Checks if sync is enabled for the profile that owns |io_data|. This must
   // be invoked on the IO thread, and can be used to check if sync is enabled
@@ -110,6 +113,10 @@ class SyncPrefs : NON_EXPORTED_BASE(public base::NonThreadSafe),
   std::string GetKeystoreEncryptionBootstrapToken() const;
   void SetKeystoreEncryptionBootstrapToken(const std::string& token);
 
+  // Use this for the unique machine tag used for session sync.
+  std::string GetSyncSessionsGUID() const;
+  void SetSyncSessionsGUID(const std::string& guid);
+
   // Maps |data_type| to its corresponding preference name.
   static const char* GetPrefNameForDataType(syncer::ModelType data_type);
 
@@ -132,7 +139,9 @@ class SyncPrefs : NON_EXPORTED_BASE(public base::NonThreadSafe),
   void RegisterPrefGroups();
 
   static void RegisterDataTypePreferredPref(
-      PrefRegistrySyncable* prefs, syncer::ModelType type, bool is_preferred);
+      user_prefs::PrefRegistrySyncable* prefs,
+      syncer::ModelType type,
+      bool is_preferred);
   bool GetDataTypePreferred(syncer::ModelType type) const;
   void SetDataTypePreferred(syncer::ModelType type, bool is_preferred);
 

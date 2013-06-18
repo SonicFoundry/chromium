@@ -7,7 +7,7 @@
 #import <Cocoa/Cocoa.h>
 
 #include "base/files/file_path.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/bookmarks/bookmark_model.h"
 
 NSString* const kBookmarkDictionaryListPboardType =
@@ -242,7 +242,8 @@ namespace bookmark_pasteboard_helper_mac {
 
 void WriteToPasteboard(PasteboardType type,
                        const std::vector<BookmarkNodeData::Element>& elements,
-                       const base::FilePath& profile_path) {
+                       const base::FilePath& profile_path,
+                       ui::SourceTag tag) {
   if (elements.empty())
     return;
 
@@ -260,6 +261,7 @@ void WriteToPasteboard(PasteboardType type,
         forType:kChromiumProfilePathPboardType];
   WriteBookmarkDictionaryListPboardType(pb, elements);
   WriteSimplifiedBookmarkTypes(pb, elements);
+  ui::Clipboard::WriteSourceTag(pb, tag);
 }
 
 bool ReadFromPasteboard(PasteboardType type,

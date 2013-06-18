@@ -54,7 +54,10 @@ class ChromeNotifierService : public syncer::SyncableService,
 
   // Get a pointer to a notification.  ChromeNotifierService owns this pointer.
   // The caller must not free it.
-  notifier::SyncedNotification* FindNotificationById(const std::string& id);
+  notifier::SyncedNotification* FindNotificationByKey(const std::string& key);
+
+  // Called when we dismiss a notification.
+  void MarkNotificationAsDismissed(const std::string& id);
 
   // functions for test
   void AddForTest(scoped_ptr<notifier::SyncedNotification> notification) {
@@ -65,11 +68,13 @@ class ChromeNotifierService : public syncer::SyncableService,
   // Add a notification to our list.  This takes ownership of the pointer.
   void Add(scoped_ptr<notifier::SyncedNotification> notification);
 
+  // Display a notification in the notification center.
   void Show(notifier::SyncedNotification* notification);
 
   // Back pointer to the owning profile.
   Profile* const profile_;
   NotificationUIManager* const notification_manager_;
+  scoped_ptr<syncer::SyncChangeProcessor> sync_processor_;
 
   // TODO(petewil): consider whether a map would better suit our data.
   // If there are many entries, lookup time may trump locality of reference.

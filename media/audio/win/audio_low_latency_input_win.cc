@@ -142,6 +142,7 @@ void WASAPIAudioInputStream::Start(AudioInputCallback* callback) {
 
 void WASAPIAudioInputStream::Stop() {
   DCHECK(CalledOnValidThread());
+  DVLOG(1) << "WASAPIAudioInputStream::Stop()";
   if (!started_)
     return;
 
@@ -167,6 +168,7 @@ void WASAPIAudioInputStream::Stop() {
 }
 
 void WASAPIAudioInputStream::Close() {
+  DVLOG(1) << "WASAPIAudioInputStream::Close()";
   // It is valid to call Close() before calling open or Start().
   // It is also valid to call Close() after Start() has been called.
   Stop();
@@ -257,11 +259,8 @@ HRESULT WASAPIAudioInputStream::GetMixFormat(const std::string& device_id,
   // It is assumed that this static method is called from a COM thread, i.e.,
   // CoInitializeEx() is not called here to avoid STA/MTA conflicts.
   ScopedComPtr<IMMDeviceEnumerator> enumerator;
-  HRESULT hr =  CoCreateInstance(__uuidof(MMDeviceEnumerator),
-                                 NULL,
-                                 CLSCTX_INPROC_SERVER,
-                                 __uuidof(IMMDeviceEnumerator),
-                                 enumerator.ReceiveVoid());
+  HRESULT hr = enumerator.CreateInstance(__uuidof(MMDeviceEnumerator), NULL,
+                                         CLSCTX_INPROC_SERVER);
   if (FAILED(hr))
     return hr;
 
@@ -316,7 +315,7 @@ void WASAPIAudioInputStream::Run() {
   size_t capture_buffer_size = std::max(
       2 * endpoint_buffer_size_frames_ * frame_size_,
       2 * packet_size_frames_ * frame_size_);
-  scoped_array<uint8> capture_buffer(new uint8[capture_buffer_size]);
+  scoped_ptr<uint8[]> capture_buffer(new uint8[capture_buffer_size]);
 
   LARGE_INTEGER now_count;
   bool recording = true;
@@ -443,7 +442,7 @@ void WASAPIAudioInputStream::Run() {
 void WASAPIAudioInputStream::HandleError(HRESULT err) {
   NOTREACHED() << "Error code: " << err;
   if (sink_)
-    sink_->OnError(this, static_cast<int>(err));
+    sink_->OnError(this);
 }
 
 HRESULT WASAPIAudioInputStream::SetCaptureDevice() {

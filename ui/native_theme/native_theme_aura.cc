@@ -38,7 +38,12 @@ const SkColor kTextButtonHoverColor = kTextButtonEnabledColor;
 const SkColor kEnabledMenuItemForegroundColor = kTextButtonEnabledColor;
 const SkColor kDisabledMenuItemForegroundColor = kTextButtonDisabledColor;
 const SkColor kFocusedMenuItemBackgroundColor = SkColorSetRGB(0xF1, 0xF1, 0xF1);
+const SkColor kHoverMenuItemBackgroundColor =
+    SkColorSetARGB(204, 255, 255, 255);
 const SkColor kMenuSeparatorColor = SkColorSetRGB(0xED, 0xED, 0xED);
+const SkColor kEnabledMenuButtonBorderColor = SkColorSetARGB(36, 0, 0, 0);
+const SkColor kFocusedMenuButtonBorderColor = SkColorSetARGB(72, 0, 0, 0);
+const SkColor kHoverMenuButtonBorderColor = SkColorSetARGB(72, 0, 0, 0);
 // Label:
 const SkColor kLabelEnabledColor = kTextButtonEnabledColor;
 const SkColor kLabelDisabledColor = kTextButtonDisabledColor;
@@ -93,7 +98,7 @@ NativeThemeAura::~NativeThemeAura() {
 SkColor NativeThemeAura::GetSystemColor(ColorId color_id) const {
   // This implementation returns hardcoded colors.
   SkColor color;
-  if (IsNewMenuStyleEnabled() && CommonThemeGetSystemColor(color_id, &color))
+  if (CommonThemeGetSystemColor(color_id, &color))
     return color;
 
   switch (color_id) {
@@ -128,10 +133,20 @@ SkColor NativeThemeAura::GetSystemColor(ColorId color_id) const {
       return kEnabledMenuItemForegroundColor;
     case kColorId_DisabledMenuItemForegroundColor:
       return kDisabledMenuItemForegroundColor;
+    case kColorId_SelectedMenuItemForegroundColor:
+      return kEnabledMenuItemForegroundColor;
     case kColorId_FocusedMenuItemBackgroundColor:
       return kFocusedMenuItemBackgroundColor;
+    case kColorId_HoverMenuItemBackgroundColor:
+      return kHoverMenuItemBackgroundColor;
     case kColorId_MenuSeparatorColor:
       return kMenuSeparatorColor;
+    case kColorId_EnabledMenuButtonBorderColor:
+      return kEnabledMenuButtonBorderColor;
+    case kColorId_FocusedMenuButtonBorderColor:
+      return kFocusedMenuButtonBorderColor;
+    case kColorId_HoverMenuButtonBorderColor:
+      return kHoverMenuButtonBorderColor;
 
     // Label
     case kColorId_LabelEnabledColor:
@@ -186,6 +201,7 @@ SkColor NativeThemeAura::GetSystemColor(ColorId color_id) const {
       return kTableGroupingIndicatorColor;
 
     case kColorId_MenuBackgroundColor:
+      return kMenuBackgroundColor;
     case kColorId_MenuBorderColor:
       NOTREACHED();
       break;

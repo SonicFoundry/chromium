@@ -108,6 +108,7 @@
         'theme_dir_name': 'chromium',
       }],
     ],
+    'libpeer_target_type%': 'static_library',
     'repack_path': '../tools/grit/grit/format/repack.py',
   },
   'postbuilds': [
@@ -157,9 +158,17 @@
         ['disable_nacl!=1', {
           'files': [
             '<(PRODUCT_DIR)/ppGoogleNaClPluginChrome.plugin',
-            # We leave out the x86-64 IRT nexe because we only
-            # support x86-32 NaCl on Mac OS X.
-            '<(PRODUCT_DIR)/nacl_irt_x86_32.nexe',
+          ],
+          'conditions': [
+            ['target_arch=="x64"', {
+              'files': [
+                '<(PRODUCT_DIR)/nacl_irt_x86_64.nexe',
+              ],
+            }, {
+              'files': [
+                '<(PRODUCT_DIR)/nacl_irt_x86_32.nexe',
+              ],
+            }],
           ],
         }],
       ],
@@ -175,7 +184,19 @@
         }],
       ],
     },
-    # TODO(ddorwin): Include CDM files in the Mac bundle.
+    {
+      # This file is used by the component installer.
+      # It is not a complete plug-in on its own.
+      'destination': '<(PRODUCT_DIR)/$(CONTENTS_FOLDER_PATH)/Internet Plug-Ins/',
+      'files': [],
+      'conditions': [
+        ['branding == "Chrome"', {
+          'files': [
+            '<(PRODUCT_DIR)/widevinecdmadapter.plugin',
+          ],
+        }],
+      ],
+    },
     {
       # Copy of resources used by tests.
       'destination': '<(PRODUCT_DIR)',
@@ -279,6 +300,14 @@
       'mac_bundle_resources': [
         '<(SHARED_INTERMEDIATE_DIR)/repack/chrome_200_percent.pak',
       ],
+    }],
+    ['enable_webrtc==1 and libpeer_target_type!="static_library"', {
+      'copies': [{
+       'destination': '<(PRODUCT_DIR)/$(CONTENTS_FOLDER_PATH)/Libraries',
+       'files': [
+          '<(PRODUCT_DIR)/libpeerconnection.so',
+        ],
+      }],
     }],
   ],  # conditions
 }

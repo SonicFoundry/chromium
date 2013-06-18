@@ -33,7 +33,8 @@ class ChromeBrowserMainPartsWin : public ChromeBrowserMainParts {
   virtual void ToolkitInitialized() OVERRIDE;
   virtual void PreMainMessageLoopStart() OVERRIDE;
   virtual void PostMainMessageLoopStart() OVERRIDE;
-  virtual void PreMainMessageLoopRun() OVERRIDE;
+  virtual void PreProfileInit() OVERRIDE;
+  virtual void PostProfileInit() OVERRIDE;
 
   // ChromeBrowserMainParts overrides.
   virtual void ShowMissingLocaleMessageBox() OVERRIDE;
@@ -68,6 +69,7 @@ class ChromeBrowserMainPartsWin : public ChromeBrowserMainParts {
 
  private:
   scoped_ptr<chrome::StorageMonitorWin> storage_monitor_;
+
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserMainPartsWin);
 };
 

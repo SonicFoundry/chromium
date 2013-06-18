@@ -4,8 +4,6 @@
 
 package org.chromium.content.browser;
 
-import android.content.Context;
-
 import org.chromium.base.CalledByNative;
 import org.chromium.base.JNINamespace;
 
@@ -19,6 +17,7 @@ class DownloadController {
     private static final String LOGTAG = "DownloadController";
     private static DownloadController sInstance;
 
+    @CalledByNative
     public static DownloadController getInstance() {
         if (sInstance == null) {
             sInstance = new DownloadController();
@@ -53,30 +52,43 @@ class DownloadController {
     }
 
     /**
-     * Notifies the download delegate that a new POST download has started.
+     * Notifies the download delegate that a new download has started. This can
+     * be either a POST download or a GET download with authentication.
      */
     @CalledByNative
-    public void onHttpPostDownloadStarted(ContentViewCore view) {
+    public void onDownloadStarted(ContentViewCore view) {
         ContentViewDownloadDelegate downloadDelagate = downloadDelegateFromView(view);
 
         if (downloadDelagate != null) {
-            downloadDelagate.onHttpPostDownloadStarted();
+            downloadDelagate.onDownloadStarted();
         }
     }
 
     /**
-     * Notifies the download delegate that a POST download completed and passes along info about the
-     * download.
+     * Notifies the download delegate that a download completed and passes along info about the
+     * download. This can be either a POST download or a GET download with authentication.
      */
     @CalledByNative
-    public void onHttpPostDownloadCompleted(ContentViewCore view, String url,
+    public void onDownloadCompleted(ContentViewCore view, String url,
             String contentDisposition, String mimetype, String path,
             long contentLength, boolean successful) {
         ContentViewDownloadDelegate downloadDelagate = downloadDelegateFromView(view);
 
         if (downloadDelagate != null) {
-            downloadDelagate.onHttpPostDownloadCompleted(
+            downloadDelagate.onDownloadCompleted(
                     url, mimetype, path, contentLength, successful);
+        }
+    }
+
+    /**
+     * Notifies the download delegate that a dangerous download started.
+     */
+    @CalledByNative
+    public void onDangerousDownload(ContentViewCore view, String filename,
+            int downloadId) {
+        ContentViewDownloadDelegate downloadDelagate = downloadDelegateFromView(view);
+        if (downloadDelagate != null) {
+            downloadDelagate.onDangerousDownload(filename, downloadId);
         }
     }
 

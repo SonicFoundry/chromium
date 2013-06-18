@@ -9,6 +9,8 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
+#include "chrome/browser/extensions/api/file_handlers/app_file_handler_util.h"
+#include "chrome/browser/extensions/event_names.h"
 #include "chrome/browser/extensions/event_router.h"
 #include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
@@ -20,8 +22,8 @@ namespace extensions {
 
 namespace {
 
-const char kOnLaunchedEvent[] = "app.runtime.onLaunched";
-const char kOnRestartedEvent[] = "app.runtime.onRestarted";
+using event_names::kOnLaunched;
+using event_names::kOnRestarted;
 
 void DispatchOnLaunchedEventImpl(const std::string& extension_id,
                                  scoped_ptr<base::ListValue> args,
@@ -34,12 +36,11 @@ void DispatchOnLaunchedEventImpl(const std::string& extension_id,
   // extension does not actually have a listener, the event will just be
   // ignored (but an app that doesn't listen for the onLaunched event doesn't
   // make sense anyway).
-  system->event_router()->AddLazyEventListener(kOnLaunchedEvent, extension_id);
-  scoped_ptr<Event> event(new Event(kOnLaunchedEvent, args.Pass()));
+  system->event_router()->AddLazyEventListener(kOnLaunched, extension_id);
+  scoped_ptr<Event> event(new Event(kOnLaunched, args.Pass()));
   event->restrict_to_profile = profile;
   system->event_router()->DispatchEventToExtension(extension_id, event.Pass());
-  system->event_router()->RemoveLazyEventListener(kOnLaunchedEvent,
-                                                  extension_id);
+  system->event_router()->RemoveLazyEventListener(kOnLaunched, extension_id);
 }
 
 }  // anonymous namespace
@@ -51,11 +52,29 @@ void AppEventRouter::DispatchOnLaunchedEvent(
   DispatchOnLaunchedEventImpl(extension->id(), arguments.Pass(), profile);
 }
 
+DictionaryValue* DictionaryFromSavedFileEntry(
+    const app_file_handler_util::GrantedFileEntry& file_entry) {
+  DictionaryValue* result = new DictionaryValue();
+  result->SetString("id", file_entry.id);
+  result->SetString("fileSystemId", file_entry.filesystem_id);
+  result->SetString("baseName", file_entry.registered_name);
+  return result;
+}
+
 // static.
 void AppEventRouter::DispatchOnRestartedEvent(
-    Profile* profile, const Extension* extension) {
+    Profile* profile,
+    const Extension* extension,
+    const std::vector<app_file_handler_util::GrantedFileEntry>& file_entries) {
+  ListValue* file_entries_list = new ListValue();
+  for (std::vector<extensions::app_file_handler_util::GrantedFileEntry>
+       ::const_iterator it = file_entries.begin(); it != file_entries.end();
+       ++it) {
+    file_entries_list->Append(DictionaryFromSavedFileEntry(*it));
+  }
   scoped_ptr<ListValue> arguments(new ListValue());
-  scoped_ptr<Event> event(new Event(kOnRestartedEvent, arguments.Pass()));
+  arguments->Append(file_entries_list);
+  scoped_ptr<Event> event(new Event(kOnRestarted, arguments.Pass()));
   event->restrict_to_profile = profile;
   extensions::ExtensionSystem::Get(profile)->event_router()->
       DispatchEventToExtension(extension->id(), event.Pass());

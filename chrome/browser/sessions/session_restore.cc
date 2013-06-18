@@ -720,6 +720,12 @@ class SessionRestoreImpl : public content::NotificationObserver {
       // from the history service which doesn't deal well with deleting the
       // object it is notifying.
       MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+
+      // The delete may take a while and at this point we no longer care about
+      // if the browser is deleted. Don't listen to anything. This avoid a
+      // possible double delete too (if browser is closed before DeleteSoon() is
+      // processed).
+      registrar_.RemoveAll();
     }
 
 #if defined(OS_CHROMEOS)
@@ -925,10 +931,14 @@ class SessionRestoreImpl : public content::NotificationObserver {
     DCHECK(selected_index >= 0 &&
            selected_index < static_cast<int>(tab.navigations.size()));
     GURL url = tab.navigations[selected_index].virtual_url();
-    if (browser->profile()->GetExtensionService() &&
-        browser->profile()->GetExtensionService()->IsInstalledApp(url)) {
-      AppLauncherHandler::RecordAppLaunchType(
-          extension_misc::APP_LAUNCH_SESSION_RESTORE);
+    if (browser->profile()->GetExtensionService()) {
+      const extensions::Extension* extension =
+          browser->profile()->GetExtensionService()->GetInstalledApp(url);
+      if (extension) {
+        AppLauncherHandler::RecordAppLaunchType(
+            extension_misc::APP_LAUNCH_SESSION_RESTORE,
+            extension->GetType());
+      }
     }
   }
 

@@ -8,31 +8,26 @@
 
 #include "base/logging.h"
 #include "base/mac/scoped_nsautorelease_pool.h"
-#import "chrome/browser/ui/cocoa/hover_image_button.h"
 #import "chrome/browser/ui/cocoa/nsview_additions.h"
 #import "chrome/browser/ui/cocoa/panels/panel_window_controller_cocoa.h"
-#import "chrome/browser/ui/cocoa/tracking_area.h"
 #import "chrome/browser/ui/panels/panel_constants.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
 #import "third_party/GTM/AppKit/GTMNSBezierPath+RoundRect.h"
 #import "third_party/GTM/AppKit/GTMNSColor+Luminance.h"
 #include "ui/base/l10n/l10n_util_mac.h"
+#import "ui/base/cocoa/hover_image_button.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/scoped_ns_graphics_context_save_gstate_mac.h"
 #include "ui/gfx/image/image.h"
 
-const int kButtonPadding = 8;
-const int kIconAndTextPadding = 5;
+const int kButtonPadding = 5;
 
-// 'Glint' is a speck of light that moves across the titlebar to attract a bit
-// more attention using movement in addition to color of the titlebar.
-// It initially moves fast, then starts to slow down to avoid being annoying
-// if the user chooses not to react on it.
-const double kGlintAnimationDuration = 0.6;
-const double kStartGlintRepeatIntervalSeconds = 0.1;
-const double kFinalGlintRepeatIntervalSeconds = 2.0;
-const double kGlintRepeatIntervalIncreaseFactor = 1.5;
+// 'Glint' is a glowing light animation on the titlebar to attract user's
+// attention. Numbers are arbitrary, based on several tries.
+const double kGlintAnimationDuration = 1.5;
+const double kGlintRepeatIntervalSeconds = 1.0;
+const int kNumberOfGlintRepeats = 4;  // 5 total, including initial flash.
 
 // Used to implement TestingAPI
 static NSEvent* MakeMouseEvent(NSEventType type,
@@ -152,26 +147,15 @@ static NSEvent* MakeMouseEvent(NSEventType type,
 
     if ([glintAnimation_ isAnimating]) {
       scoped_nsobject<NSGradient> glint([NSGradient alloc]);
-      NSColor* gold =
-          [NSColor colorWithCalibratedRed:0.8 green:0.8 blue:0.0 alpha:1.0];
-      [glint initWithColorsAndLocations:gold, 0.0,
-           [NSColor colorWithCalibratedWhite:1.0 alpha:0.4], 0.3,
-           [NSColor colorWithCalibratedWhite:1.0 alpha:0.0], 1.0,
-           nil];
+      float currentAlpha = 0.8 * [glintAnimation_ currentValue];
+      NSColor* startColor = [NSColor colorWithCalibratedWhite:1.0
+                                                        alpha:currentAlpha];
+      NSColor* endColor = [NSColor colorWithCalibratedWhite:1.0
+                                                      alpha:0.0];
+      [glint initWithColorsAndLocations:
+           startColor, 0.0, startColor, 0.3, endColor, 1.0, nil];
       NSRect bounds = [self bounds];
-      NSPoint point = bounds.origin;
-      // The size and position values are experimentally choosen to create
-      // a "speck of light attached to the top edge" effect.
-      int gradientRadius = NSHeight(bounds) * 2;
-      point.y += gradientRadius / 2;
-      double rangeOfMotion = NSWidth(bounds) + 4 * gradientRadius;
-      double startPoint = - 2 * gradientRadius;
-      point.x = startPoint + rangeOfMotion * [glintAnimation_ currentValue];
-      [glint drawFromCenter:point
-                     radius:0.0
-                   toCenter:point
-                     radius:gradientRadius
-                    options:NSGradientDrawsBeforeStartingLocation];
+      [glint drawInRect:bounds relativeCenterPosition:NSZeroPoint];
     }
   } else {
     BOOL isActive = [[self window] isMainWindow];
@@ -344,15 +328,19 @@ static NSEvent* MakeMouseEvent(NSEventType type,
 - (void)updateCustomButtonsLayout {
   NSRect bounds = [self bounds];
   NSRect closeButtonFrame = [customCloseButton_ frame];
+  closeButtonFrame.size.width = panel::kPanelButtonSize;
+  closeButtonFrame.size.height = panel::kPanelButtonSize;
   closeButtonFrame.origin.x =
-      NSWidth(bounds) - NSWidth(closeButtonFrame) - kButtonPadding;
+      NSWidth(bounds) - NSWidth(closeButtonFrame) - panel::kButtonPadding;
   closeButtonFrame.origin.y =
       (NSHeight(bounds) - NSHeight(closeButtonFrame)) / 2;
   [customCloseButton_ setFrame:closeButtonFrame];
 
   NSRect buttonFrame = [minimizeButton_ frame];
+  buttonFrame.size.width = panel::kPanelButtonSize;
+  buttonFrame.size.height = panel::kPanelButtonSize;
   buttonFrame.origin.x =
-      closeButtonFrame.origin.x - NSWidth(buttonFrame) - kButtonPadding;
+      closeButtonFrame.origin.x - NSWidth(buttonFrame) - panel::kButtonPadding;
   buttonFrame.origin.y = (NSHeight(bounds) - NSHeight(buttonFrame)) / 2;
   [minimizeButton_ setFrame:buttonFrame];
   [restoreButton_ setFrame:buttonFrame];
@@ -372,18 +360,20 @@ static NSEvent* MakeMouseEvent(NSEventType type,
   // Place the icon and title at the left edge of the titlebar.
   int iconWidth = NSWidth(iconFrame);
   int titleWidth = NSWidth(titleFrame);
-  int availableWidth = minimizeRestoreButtonFrame.origin.x - kButtonPadding;
+  int availableWidth = minimizeRestoreButtonFrame.origin.x -
+      panel::kTitleAndButtonPadding;
 
-  if (2 * kIconAndTextPadding + iconWidth + titleWidth > availableWidth)
-    titleWidth = availableWidth - iconWidth - 2 * kIconAndTextPadding;
+  int paddings = panel::kTitlebarLeftPadding + panel::kIconAndTitlePadding;
+  if (paddings + iconWidth + titleWidth > availableWidth)
+    titleWidth = availableWidth - iconWidth - paddings;
   if (titleWidth < 0)
     titleWidth = 0;
 
-  iconFrame.origin.x = kIconAndTextPadding;
+  iconFrame.origin.x = panel::kTitlebarLeftPadding;
   iconFrame.origin.y = (NSHeight(bounds) - NSHeight(iconFrame)) / 2;
   [icon_ setFrame:iconFrame];
 
-  titleFrame.origin.x = 2 * kIconAndTextPadding + iconWidth;
+  titleFrame.origin.x = paddings + iconWidth;
   // In bottom-heavy text labels, let's compensate for occasional integer
   // rounding to avoid text label to feel too low.
   titleFrame.origin.y = (NSHeight(bounds) - NSHeight(titleFrame)) / 2 + 2;
@@ -473,7 +463,7 @@ static NSEvent* MakeMouseEvent(NSEventType type,
 }
 
 - (void)startGlintAnimation {
-  glintInterval_ = kStartGlintRepeatIntervalSeconds;
+  glintCounter_ = 0;
   [self restartGlintAnimation:nil];
 }
 
@@ -496,19 +486,32 @@ static NSEvent* MakeMouseEvent(NSEventType type,
   [glintAnimation_ startAnimation];
 }
 
+// NSAnimationDelegate method.
 - (void)animationDidEnd:(NSAnimation*)animation {
-  if (animation == glintAnimation_.get()) {  // Restart after a timeout.
-    glintAnimationTimer_.reset([[NSTimer
-        scheduledTimerWithTimeInterval:glintInterval_
-                                target:self
-                              selector:@selector(restartGlintAnimation:)
-                              userInfo:nil
-                               repeats:NO] retain]);
-    // Gradually reduce the frequency of repeating the animation,
-    // calming it down if user decides not to act upon it.
-    if (glintInterval_ < kFinalGlintRepeatIntervalSeconds)
-      glintInterval_ *= kGlintRepeatIntervalIncreaseFactor;
-  }
+  if (animation != glintAnimation_.get())
+    return;
+  if (glintCounter_ >= kNumberOfGlintRepeats)
+    return;
+  glintCounter_++;
+  // Restart after a timeout.
+  glintAnimationTimer_.reset([[NSTimer
+      scheduledTimerWithTimeInterval:kGlintRepeatIntervalSeconds
+                              target:self
+                            selector:@selector(restartGlintAnimation:)
+                            userInfo:nil
+                             repeats:NO] retain]);
+}
+
+// NSAnimationDelegate method.
+- (float)animation:(NSAnimation *)animation
+  valueForProgress:(NSAnimationProgress)progress {
+  if (animation != glintAnimation_.get())
+    return progress;
+
+  // Converts 0..1 progression into a sharper raise/fall.
+  float result = progress < 0.5 ? progress : 1.0 - progress;
+  result = 4.0 * result * result;
+  return result;
 }
 
 // (Private/TestingAPI)

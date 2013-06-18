@@ -4,6 +4,10 @@
 
 #include "chrome/browser/ui/views/frame/contents_container.h"
 
+#include "content/public/browser/notification_service.h"
+#include "content/public/browser/notification_types.h"
+#include "content/public/browser/render_view_host.h"
+#include "content/public/browser/web_contents.h"
 #include "grit/theme_resources.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
@@ -74,19 +78,21 @@ class ShadowView : public views::View {
 
 }  // namespace
 
-ContentsContainer::ContentsContainer(views::WebView* active)
+ContentsContainer::ContentsContainer(views::WebView* active,
+                                     views::View* browser_view)
     : active_(active),
+      browser_view_(browser_view),
       overlay_(NULL),
       overlay_web_contents_(NULL),
       draw_drop_shadow_(false),
       active_top_margin_(0),
+      overlay_top_margin_(0),
       overlay_height_(100),
       overlay_height_units_(INSTANT_SIZE_PERCENT) {
   AddChildView(active_);
 }
 
 ContentsContainer::~ContentsContainer() {
-  RemoveShadowView(true);
 }
 
 void ContentsContainer::MakeOverlayContentsActiveContents() {
@@ -95,18 +101,19 @@ void ContentsContainer::MakeOverlayContentsActiveContents() {
   active_ = overlay_;
   overlay_ = NULL;
   overlay_web_contents_ = NULL;
+  // Unregister from observing previous |overlay_web_contents_|.
+  registrar_.RemoveAll();
   // Since |overlay_| has been nuked, shadow view is not needed anymore.
   // Note that the previous |active_| will be deleted by caller (see
   // BrowserView::ActiveTabChanged()) after this call, hence removing the old
   // |active_| as a child, and making the new |active_| (which is the previous
   // |overlay_|) the first child.
-  RemoveShadowView(true);
+  shadow_view_.reset();
   Layout();
 }
 
 void ContentsContainer::SetOverlay(views::WebView* overlay,
                                    content::WebContents* overlay_web_contents,
-                                   const chrome::search::Mode& search_mode,
                                    int height,
                                    InstantSizeUnits units,
                                    bool draw_drop_shadow) {
@@ -120,8 +127,8 @@ void ContentsContainer::SetOverlay(views::WebView* overlay,
 #endif  // !defined(OS_WIN)
 
   if (overlay_ == overlay && overlay_web_contents_ == overlay_web_contents &&
-      search_mode_ == search_mode && overlay_height_ == height &&
-      overlay_height_units_ == units && draw_drop_shadow_ == draw_drop_shadow) {
+      overlay_height_ == height && overlay_height_units_ == units &&
+      draw_drop_shadow_ == draw_drop_shadow) {
     return;
   }
 
@@ -130,8 +137,10 @@ void ContentsContainer::SetOverlay(views::WebView* overlay,
       // Order of children is important: always |active_| first, then
       // |overlay_|, then shadow view if necessary.  To make sure the next view
       // is added in the right order, remove shadow view every time |overlay_|
-      // is removed.
-      RemoveShadowView(false);
+      // is removed. Don't nuke the shadow view now in case it's needed below
+      // when we handle |draw_drop_shadow|.
+      if (shadow_view_.get())
+        RemoveChildView(shadow_view_.get());
       RemoveChildView(overlay_);
     }
     overlay_ = overlay;
@@ -139,8 +148,41 @@ void ContentsContainer::SetOverlay(views::WebView* overlay,
       AddChildView(overlay_);
   }
 
-  overlay_web_contents_ = overlay_web_contents;
-  search_mode_ = search_mode;
+  if (overlay_web_contents_ != overlay_web_contents) {
+#if !defined(OS_WIN)
+    // Unregister from observing previous |overlay_web_contents_|.
+    registrar_.RemoveAll();
+#endif  // !defined(OS_WIN)
+
+    overlay_web_contents_ = overlay_web_contents;
+
+#if !defined(OS_WIN)
+    // Register to new overlay web contents' render view host.
+    if (overlay_web_contents_) {
+      content::RenderViewHost* rvh = overlay_web_contents_->GetRenderViewHost();
+      DCHECK(rvh);
+      if (rvh) {
+        content::NotificationSource source =
+            content::Source<content::RenderWidgetHost>(rvh);
+        registrar_.Add(this,
+            content::NOTIFICATION_RENDER_WIDGET_HOST_DID_UPDATE_BACKING_STORE,
+            source);
+      }
+    }
+#endif  // !defined(OS_WIN)
+  }
+
+  // If |overlay_|'s height has shrunk and |active_top_margin_| was used to
+  // preserve |active_|'s origin in BrowserViewLayout::Layout(), we need to re-
+  // determine if its origin still needs to be preserved.  The origin is
+  // preserved if overlay is taller than total height of hidden bookmark and
+  // info bars.  In this case, force a re-layout of BrowserView.
+  bool layout_browser_view = false;
+  if (overlay_ && active_top_margin_ > 0 && units == INSTANT_SIZE_PIXELS &&
+      height > 0 && height < overlay_height_) {
+    layout_browser_view = true;
+  }
+
   overlay_height_ = height;
   overlay_height_units_ = units;
   draw_drop_shadow_ = draw_drop_shadow;
@@ -149,11 +191,15 @@ void ContentsContainer::SetOverlay(views::WebView* overlay,
   // Remove shadow view if there's no overlay.
   // If there's overlay and drop shadow is not needed, that means the partial-
   // height overlay is going to be full-height.  Don't remove the shadow view
-  // yet because its layered view will disappear before the non-layered overlay
-  // is repainted at the full height, leaving no separator between the overlay
-  // and active contents.  When the overlay is repainted at the full height, the
-  // shadow view, which remains at the original position below the partial-
-  // height overlay, will automatically be obscured the full-height overlay.
+  // yet because its view will disappear noticeably faster than the webview-ed
+  // overlay is repainted at the full height - when resizing web contents page,
+  // RenderWidgetHostViewAura locks the compositor until texture is updated or
+  // timeout occurs.  This out-of-sync refresh results in a split second where
+  // there's no separator between the overlay and active contents, making the
+  // overlay contents erroneously appear to be part of active contents.
+  // When the overlay is repainted at the full height, we'll be notified via
+  // NOTIFICATION_RENDER_WIDGET_HOST_DID_UPDATE_BACKGING_STORE, at which time
+  // the shadow view will be removed.
   if (overlay_ && draw_drop_shadow_) {
 #if !defined(OS_WIN)
     if (!shadow_view_.get())  // Shadow view has not been created.
@@ -162,10 +208,13 @@ void ContentsContainer::SetOverlay(views::WebView* overlay,
       AddChildView(shadow_view_.get());
 #endif  // !defined(OS_WIN)
   } else if (!overlay_) {
-    RemoveShadowView(true);
+    shadow_view_.reset();
   }
 
-  Layout();
+  if (layout_browser_view)
+    browser_view_->Layout();  // This will trigger |this| Layout.
+  else
+    Layout();
 }
 
 void ContentsContainer::MaybeStackOverlayAtTop() {
@@ -174,7 +223,11 @@ void ContentsContainer::MaybeStackOverlayAtTop() {
   // To force |overlay_| to the topmost in the z-order, remove it, then add it
   // back.
   // See comments in SetOverlay() for why shadow view is removed.
-  bool removed_shadow = RemoveShadowView(false);
+  bool removed_shadow = false;
+  if (shadow_view_.get()) {
+    RemoveChildView(shadow_view_.get());
+    removed_shadow = true;
+  }
   RemoveChildView(overlay_);
   AddChildView(overlay_);
   if (removed_shadow)  // Add back shadow view if it was removed.
@@ -182,14 +235,25 @@ void ContentsContainer::MaybeStackOverlayAtTop() {
   Layout();
 }
 
-void ContentsContainer::SetActiveTopMargin(int margin) {
+bool ContentsContainer::SetActiveTopMargin(int margin) {
   if (active_top_margin_ == margin)
-    return;
+    return false;
 
   active_top_margin_ = margin;
   // Make sure we layout next time around. We need this in case our bounds
   // haven't changed.
   InvalidateLayout();
+  return true;
+}
+
+bool ContentsContainer::SetOverlayTopMargin(int margin) {
+  if (overlay_top_margin_ == margin)
+    return false;
+  overlay_top_margin_ = margin;
+  // Make sure we layout next time around. We need this in case our bounds
+  // haven't changed.
+  InvalidateLayout();
+  return true;
 }
 
 gfx::Rect ContentsContainer::GetOverlayBounds() const {
@@ -198,12 +262,17 @@ gfx::Rect ContentsContainer::GetOverlayBounds() const {
   return gfx::Rect(screen_loc, size());
 }
 
-bool ContentsContainer::IsOverlayFullHeight(
+bool ContentsContainer::WillOverlayBeFullHeight(
     int overlay_height,
     InstantSizeUnits overlay_height_units) const {
   int height_in_pixels = OverlayHeightInPixels(height(), overlay_height,
                                                overlay_height_units);
   return height_in_pixels == height();
+}
+
+bool ContentsContainer::IsOverlayFullHeight() const {
+  return overlay_ && overlay_height_ == 100 &&
+      overlay_height_units_ == INSTANT_SIZE_PERCENT;
 }
 
 void ContentsContainer::Layout() {
@@ -213,13 +282,17 @@ void ContentsContainer::Layout() {
   active_->SetBounds(0, content_y, width(), content_height);
 
   if (overlay_) {
-    overlay_->SetBounds(0, 0, width(),
-                        OverlayHeightInPixels(height(), overlay_height_,
-                                              overlay_height_units_));
+    int target_overlay_height =
+        OverlayHeightInPixels(height(), overlay_height_, overlay_height_units_);
+    // Ensure the overlay doesn't extend outside this container view.
+    int overlay_height =
+        std::min(height() - overlay_top_margin_, target_overlay_height);
+    overlay_->SetBounds(0, overlay_top_margin_,
+                        width(), std::max(0, overlay_height));
     if (draw_drop_shadow_) {
 #if !defined(OS_WIN)
       DCHECK(shadow_view_.get() && shadow_view_->parent());
-      shadow_view_->SetBounds(0, overlay_->bounds().height(), width(),
+      shadow_view_->SetBounds(0, overlay_->bounds().bottom(), width(),
                               shadow_view_->GetPreferredSize().height());
 #endif  // !defined(OS_WIN)
     }
@@ -230,22 +303,20 @@ void ContentsContainer::Layout() {
   views::View::Layout();
 }
 
-bool ContentsContainer::RemoveShadowView(bool delete_view) {
-  if (!shadow_view_.get())
-    return false;
-
-  if (!shadow_view_->parent()) {
-    if (delete_view)
-      shadow_view_.reset(NULL);
-    return false;
-  }
-
-  RemoveChildView(shadow_view_.get());
-  if (delete_view)
-    shadow_view_.reset(NULL);
-  return true;
-}
-
 std::string ContentsContainer::GetClassName() const {
   return kViewClassName;
+}
+
+void ContentsContainer::Observe(int type,
+                                const content::NotificationSource& source,
+                                const content::NotificationDetails& details) {
+  DCHECK_EQ(content::NOTIFICATION_RENDER_WIDGET_HOST_DID_UPDATE_BACKING_STORE,
+            type);
+  // Remove shadow view if it's not needed.
+  if (overlay_ && !draw_drop_shadow_) {
+    DCHECK(overlay_web_contents_);
+    DCHECK_EQ(overlay_web_contents_->GetRenderViewHost(),
+              (content::Source<content::RenderWidgetHost>(source)).ptr());
+    shadow_view_.reset();
+  }
 }

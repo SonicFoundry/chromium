@@ -14,6 +14,7 @@
 #include "base/time.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/service/common_decoder.h"
+#include "gpu/command_buffer/service/logger.h"
 #include "ui/gfx/size.h"
 #include "ui/gl/gl_context.h"
 
@@ -30,7 +31,9 @@ class StreamTextureManager;
 namespace gles2 {
 
 class ContextGroup;
+class ErrorState;
 class GLES2Util;
+class Logger;
 class QueryManager;
 class VertexArrayManager;
 
@@ -46,19 +49,29 @@ struct DisallowedFeatures {
   bool gpu_memory_manager;
 };
 
+typedef base::Callback<void(const std::string& key,
+                            const std::string& shader)> ShaderCacheCallback;
+
 // This class implements the AsyncAPIInterface interface, decoding GLES2
 // commands and calling GL.
 class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
                                 public CommonDecoder {
  public:
   typedef error::Error Error;
-  typedef base::Callback<void(int32 id, const std::string& msg)> MsgCallback;
   typedef base::Callback<bool(uint32 id)> WaitSyncPointCallback;
 
   // Creates a decoder.
   static GLES2Decoder* Create(ContextGroup* group);
 
   virtual ~GLES2Decoder();
+
+  bool initialized() const {
+    return initialized_;
+  }
+
+  void set_initialized() {
+    initialized_ = true;
+  }
 
   bool debug() const {
     return debug_;
@@ -76,18 +89,6 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   // Set to true to LOG every command.
   void set_log_commands(bool log_commands) {
     log_commands_ = log_commands;
-  }
-
-  bool log_synthesized_gl_errors() const {
-    return log_synthesized_gl_errors_;
-  }
-
-  // Defaults to true. Set to false for the gpu_unittests as they
-  // are explicitly checking errors are generated and so don't need the numerous
-  // messages. Otherwise, chromium code that generates these errors likely has a
-  // bug.
-  void set_log_synthesized_gl_errors(bool enabled) {
-    log_synthesized_gl_errors_ = enabled;
   }
 
   // Initializes the graphics context. Can create an offscreen
@@ -163,6 +164,11 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   // Process any pending queries. Returns false if there are no pending queries.
   virtual bool ProcessPendingQueries() = 0;
 
+  // Returns false if there are no idle work to be made.
+  virtual bool HasMoreIdleWork() = 0;
+
+  virtual void PerformIdleWork() = 0;
+
   // Sets a callback which is called when a glResizeCHROMIUM command
   // is processed.
   virtual void SetResizeCallback(
@@ -196,11 +202,10 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
       int height,
       bool is_texture_immutable) = 0;
 
-  // Gets the GL error for this context.
-  virtual uint32 GetGLError() = 0;
+  virtual ErrorState* GetErrorState() = 0;
 
   // A callback for messages from the decoder.
-  virtual void SetMsgCallback(const MsgCallback& callback) = 0;
+  virtual void SetShaderCacheCallback(const ShaderCacheCallback& callback) = 0;
 
   // Sets the callback for waiting on a sync point. The callback returns the
   // scheduling status (i.e. true if the channel is still scheduled).
@@ -223,13 +228,15 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   // Used for testing only
   static void set_testing_force_is_angle(bool force);
 
+  virtual Logger* GetLogger() = 0;
+
  protected:
   GLES2Decoder();
 
  private:
+  bool initialized_;
   bool debug_;
   bool log_commands_;
-  bool log_synthesized_gl_errors_;
   static bool testing_force_is_angle_;
 
   DISALLOW_COPY_AND_ASSIGN(GLES2Decoder);

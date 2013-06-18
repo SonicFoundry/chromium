@@ -8,18 +8,18 @@
 #include <string>
 
 #include "base/basictypes.h"
-#include "base/files/file_path.h"
+#include "base/callback.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/string_piece.h"
-#include "chrome/browser/chromeos/drive/drive_file_error.h"
-#include "chrome/browser/chromeos/drive/drive_resource_metadata.h"
-#include "chrome/browser/google_apis/gdata_errorcode.h"
+#include "chrome/browser/chromeos/drive/file_errors.h"
 #include "net/url_request/url_request_job.h"
 
+namespace base {
+class SequencedTaskRunner;
+}  // namespace
+
 namespace net {
-class FileStream;
-class HttpResponseInfo;
 class IOBuffer;
 class NetworkDelegate;
 class URLRequest;
@@ -27,14 +27,26 @@ class URLRequest;
 
 namespace drive {
 
-class DriveEntryProto;
+class DriveFileStreamReader;
+class FileSystemInterface;
+class ResourceEntry;
 
-// DriveURLRequesetJob is the gateway between network-level drive://...
+// DriveURLRequesetJob is the gateway between network-level drive:...
 // requests for drive resources and DriveFileSytem.  It exposes content URLs
-// formatted as drive://<resource-id>.
+// formatted as drive:<drive-file-path>.
+// The methods should be run on IO thread, and the operations to communicate
+// with a locally cached file will run on |file_task_runner|.
 class DriveURLRequestJob : public net::URLRequestJob {
  public:
-  DriveURLRequestJob(void* profile_id,
+
+  // Callback to return the FileSystemInterface instance. This is an
+  // injecting point for testing.
+  // Note that the callback will be copied between threads (IO and UI), and
+  // will be called on UI thread.
+  typedef base::Callback<FileSystemInterface*()> FileSystemGetter;
+
+  DriveURLRequestJob(const FileSystemGetter& file_system_getter,
+                     base::SequencedTaskRunner* file_task_runner,
                      net::URLRequest* request,
                      net::NetworkDelegate* network_delegate);
 
@@ -42,88 +54,27 @@ class DriveURLRequestJob : public net::URLRequestJob {
   virtual void Start() OVERRIDE;
   virtual void Kill() OVERRIDE;
   virtual bool GetMimeType(std::string* mime_type) const OVERRIDE;
-  virtual void GetResponseInfo(net::HttpResponseInfo* info) OVERRIDE;
-  virtual int GetResponseCode() const OVERRIDE;
-  virtual bool ReadRawData(net::IOBuffer* buf,
-                           int buf_size,
-                           int* bytes_read) OVERRIDE;
+  virtual bool IsRedirectResponse(
+      GURL* location, int* http_status_code) OVERRIDE;
+  virtual bool ReadRawData(
+      net::IOBuffer* buf, int buf_size, int* bytes_read) OVERRIDE;
 
  protected:
   virtual ~DriveURLRequestJob();
 
  private:
-  // Helper methods for Delegate::OnUrlFetchDownloadData and ReadRawData to
-  // receive download data and copy to response buffer.
-  // For detailed description of logic, refer to comments in definitions of
-  // Start() and ReadRawData().
+  // Called when the initialization of DriveFileStreamReader is completed.
+  void OnDriveFileStreamReaderInitialized(
+      int error, scoped_ptr<ResourceEntry> entry);
 
-  void OnUrlFetchDownloadData(google_apis::GDataErrorCode error,
-                              scoped_ptr<std::string> download_data);
-  // Called from ReadRawData, returns true if data is ready, false otherwise.
-  bool ContinueReadFromDownloadData(int* bytes_read);
-  // Copies from download buffer into response buffer.
-  bool ReadFromDownloadData();
+  // Called when DriveFileStreamReader::Read is completed.
+  void OnReadCompleted(int read_result);
 
-  // Helper callback for handling async responses from
-  // DriveFileSystem::GetFileByResourceId().
-  void OnGetFileByResourceId(DriveFileError error,
-                             const base::FilePath& local_file_path,
-                             const std::string& mime_type,
-                             DriveFileType file_type);
+  const FileSystemGetter file_system_getter_;
+  scoped_refptr<base::SequencedTaskRunner> file_task_runner_;
 
-  // Helper callback for handling result of file_util::GetFileSize().
-  void OnGetFileSize(int64 *file_size, bool success);
-
-  // Helper callback for GetEntryInfoByResourceId invoked by Start().
-  void OnGetEntryInfoByResourceId(const std::string& resource_id,
-                                  DriveFileError error,
-                                  const base::FilePath& drive_file_path,
-                                  scoped_ptr<DriveEntryProto> entry_proto);
-
-  // Helper methods for ReadRawData to open file and read from its corresponding
-  // stream in a streaming fashion.
-  bool ContinueReadFromFile(int* bytes_read);
-  void ReadFromFile();
-  void ReadFileStream(int bytes_to_read);
-
-  // Helper callback for handling async responses from FileStream::Open().
-  void OnFileOpen(int bytes_to_read, int open_result);
-
-    // Helper callback for handling async responses from FileStream::Read().
-  void OnReadFileStream(int bytes_read);
-
-  // Helper methods to handle |reamining_bytes_| and |read_buf_|.
-  int BytesReadCompleted();
-  void RecordBytesRead(int bytes_read);
-
-  // Helper methods to formulate and notify about response status, info and
-  // headers.
-  void NotifySuccess();
-  void NotifyFailure(int);
-  void HeadersCompleted(int status_code, const std::string& status_txt);
-
-  // Helper method to close |stream_|.
-  void CloseFileStream();
-
-  // The profile for processing Drive accesses. Should not be NULL and needs to
-  // be checked with ProfileManager::IsValidProfile before using it.
-  void* profile_id_;
-
-  bool error_;  // True if we've encountered an error.
-  bool headers_set_;  // True if headers have been set.
-
-  base::FilePath local_file_path_;
-  base::FilePath drive_file_path_;
-  std::string mime_type_;
-  int64 initial_file_size_;
-  int64 remaining_bytes_;
-  scoped_ptr<net::FileStream> stream_;
-  scoped_refptr<net::IOBuffer> read_buf_;
-  base::StringPiece read_buf_remaining_;
-  scoped_ptr<net::HttpResponseInfo> response_info_;
-  bool streaming_download_;
-  std::string download_buf_;
-  base::StringPiece download_buf_remaining_;
+  scoped_ptr<DriveFileStreamReader> stream_reader_;
+  scoped_ptr<ResourceEntry> entry_;
 
   // This should remain the last member so it'll be destroyed first and
   // invalidate its weak pointers before other members are destroyed.

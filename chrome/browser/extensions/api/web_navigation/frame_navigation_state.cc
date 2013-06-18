@@ -105,6 +105,7 @@ void FrameNavigationState::TrackFrame(FrameID frame_id,
   frame_state.is_navigating = true;
   frame_state.is_committed = false;
   frame_state.is_server_redirected = false;
+  frame_state.is_parsing = true;
   if (!is_main_frame) {
     frame_state.parent_frame_num = parent_frame_id.frame_num;
   } else {
@@ -117,10 +118,8 @@ void FrameNavigationState::TrackFrame(FrameID frame_id,
 void FrameNavigationState::FrameDetached(FrameID frame_id) {
   FrameIdToStateMap::const_iterator frame_state =
       frame_state_map_.find(frame_id);
-  if (frame_state == frame_state_map_.end()) {
-    NOTREACHED();
+  if (frame_state == frame_state_map_.end())
     return;
-  }
   if (frame_id == main_frame_id_)
     main_frame_id_ = FrameID();
   frame_state_map_.erase(frame_id);
@@ -229,6 +228,18 @@ bool FrameNavigationState::GetNavigationCompleted(FrameID frame_id) const {
       frame_state_map_.find(frame_id);
   return (frame_state == frame_state_map_.end() ||
           !frame_state->second.is_navigating);
+}
+
+void FrameNavigationState::SetParsingFinished(FrameID frame_id) {
+  DCHECK(frame_state_map_.find(frame_id) != frame_state_map_.end());
+  frame_state_map_[frame_id].is_parsing = false;
+}
+
+bool FrameNavigationState::GetParsingFinished(FrameID frame_id) const {
+  FrameIdToStateMap::const_iterator frame_state =
+      frame_state_map_.find(frame_id);
+  return (frame_state == frame_state_map_.end() ||
+          !frame_state->second.is_parsing);
 }
 
 void FrameNavigationState::SetNavigationCommitted(FrameID frame_id) {

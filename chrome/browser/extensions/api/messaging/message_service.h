@@ -16,7 +16,12 @@
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 
+class GURL;
 class Profile;
+
+namespace base {
+class DictionaryValue;
+}
 
 namespace content {
 class RenderProcessHost;
@@ -24,6 +29,7 @@ class WebContents;
 }
 
 namespace extensions {
+class Extension;
 class ExtensionHost;
 class LazyBackgroundTaskQueue;
 
@@ -63,13 +69,15 @@ class MessageService : public content::NotificationObserver,
     // Notify the port that the channel has been opened.
     virtual void DispatchOnConnect(int dest_port_id,
                                    const std::string& channel_name,
-                                   const std::string& tab_json,
+                                   const base::DictionaryValue& source_tab,
                                    const std::string& source_extension_id,
-                                   const std::string& target_extension_id) {}
+                                   const std::string& target_extension_id,
+                                   const GURL& source_url) {}
 
-    // Notify the port that the channel has been closed.
+    // Notify the port that the channel has been closed. If |error_message| is
+    // non-empty, it indicates an error occurred while opening the connection.
     virtual void DispatchOnDisconnect(int source_port_id,
-                                      bool connection_error) {}
+                                      const std::string& error_message) {}
 
     // Dispatch a message to this end of the communication.
     virtual void DispatchOnMessage(const std::string& message,
@@ -104,6 +112,7 @@ class MessageService : public content::NotificationObserver,
       int source_process_id, int source_routing_id, int receiver_port_id,
       const std::string& source_extension_id,
       const std::string& target_extension_id,
+      const GURL& source_url,
       const std::string& channel_name);
 
   // Same as above, but opens a channel to the tab with the given ID.  Messages
@@ -123,7 +132,8 @@ class MessageService : public content::NotificationObserver,
 
   // Closes the message channel associated with the given port, and notifies
   // the other side.
-  virtual void CloseChannel(int port_id, bool connection_error) OVERRIDE;
+  virtual void CloseChannel(int port_id,
+                            const std::string& error_message) OVERRIDE;
 
   // Sends a message to the given port.
   void PostMessage(int port_id, const std::string& message);
@@ -150,7 +160,8 @@ class MessageService : public content::NotificationObserver,
   bool OpenChannelImpl(scoped_ptr<OpenChannelParams> params);
 
   void CloseChannelImpl(MessageChannelMap::iterator channel_iter,
-                        int port_id, bool connection_error,
+                        int port_id,
+                        const std::string& error_message,
                         bool notify_other_port);
 
   // Have MessageService take ownership of |channel|, and remove any pending
@@ -169,6 +180,7 @@ class MessageService : public content::NotificationObserver,
   // to open a channel. Returns true if a task was queued.
   // Takes ownership of |params| if true is returned.
   bool MaybeAddPendingOpenChannelTask(Profile* profile,
+                                      const Extension* extension,
                                       OpenChannelParams* params);
 
   // Callbacks for LazyBackgroundTaskQueue tasks. The queue passes in an
@@ -178,10 +190,10 @@ class MessageService : public content::NotificationObserver,
                           int source_process_id,
                           extensions::ExtensionHost* host);
   void PendingCloseChannel(int port_id,
-                           bool connection_error,
+                           const std::string& error_message,
                            extensions::ExtensionHost* host) {
     if (host)
-      CloseChannel(port_id, connection_error);
+      CloseChannel(port_id, error_message);
   }
   void PendingPostMessage(int port_id,
                           const std::string& message,

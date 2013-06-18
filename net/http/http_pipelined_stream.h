@@ -38,6 +38,7 @@ class HttpPipelinedStream : public HttpStream {
 
   // HttpStream methods:
   virtual int InitializeStream(const HttpRequestInfo* request_info,
+                               RequestPriority priority,
                                const BoundNetLog& net_log,
                                const CompletionCallback& callback) OVERRIDE;
 
@@ -62,8 +63,6 @@ class HttpPipelinedStream : public HttpStream {
 
   virtual bool CanFindEndOfResponse() const OVERRIDE;
 
-  virtual bool IsMoreDataBuffered() const OVERRIDE;
-
   virtual bool IsConnectionReused() const OVERRIDE;
 
   virtual void SetConnectionReused() OVERRIDE;
@@ -79,8 +78,6 @@ class HttpPipelinedStream : public HttpStream {
       SSLCertRequestInfo* cert_request_info) OVERRIDE;
 
   virtual bool IsSpdyHttpStream() const OVERRIDE;
-
-  virtual void LogNumRttVsBytesMetrics() const OVERRIDE;
 
   virtual void Drain(HttpNetworkSession* session) OVERRIDE;
 

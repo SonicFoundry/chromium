@@ -8,12 +8,12 @@
 #include "base/file_util.h"
 #include "base/logging.h"
 #include "base/path_service.h"
-#include "base/stringprintf.h"
 #include "base/string_util.h"
+#include "base/stringprintf.h"
 #include "base/test/test_timeouts.h"
 #include "build/build_config.h"
-#include "chrome/browser/api/infobars/confirm_infobar_delegate.h"
 #include "chrome/browser/content_settings/host_content_settings_map.h"
+#include "chrome/browser/infobars/confirm_infobar_delegate.h"
 #include "chrome/browser/infobars/infobar.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -25,13 +25,13 @@
 #include "chrome/test/base/test_launcher_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/dom_operation_notification_details.h"
-#include "content/public/test/test_renderer_host.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/test_renderer_host.h"
 #include "net/base/net_util.h"
 #include "net/base/test_data_directory.h"
 #include "ppapi/shared_impl/ppapi_switches.h"
@@ -131,6 +131,9 @@ void PPAPITestBase::SetUpCommandLine(CommandLine* command_line) {
 
   // Smooth scrolling confuses the scrollbar test.
   command_line->AppendSwitch(switches::kDisableSmoothScrolling);
+
+  // For TestRequestOSFileHandle.
+  command_line->AppendSwitch(switches::kUnlimitedStorage);
 }
 
 void PPAPITestBase::SetUpOnMainThread() {
@@ -152,7 +155,7 @@ GURL PPAPITestBase::GetTestFileUrl(const std::string& test_case) {
   GURL test_url = net::FilePathToFileURL(test_path);
 
   GURL::Replacements replacements;
-  std::string query = BuildQuery("", test_case);
+  std::string query = BuildQuery(std::string(), test_case);
   replacements.SetQuery(query.c_str(), url_parse::Component(0, query.size()));
   return test_url.ReplaceComponents(replacements);
 }
@@ -174,22 +177,22 @@ void PPAPITestBase::RunTestViaHTTP(const std::string& test_case) {
   ASSERT_TRUE(ui_test_utils::GetRelativeBuildDirectory(&document_root));
   base::FilePath http_document_root;
   ASSERT_TRUE(ui_test_utils::GetRelativeBuildDirectory(&http_document_root));
-  net::TestServer http_server(net::TestServer::TYPE_HTTP,
-                              net::TestServer::kLocalhost,
-                              document_root);
+  net::SpawnedTestServer http_server(net::SpawnedTestServer::TYPE_HTTP,
+                                     net::SpawnedTestServer::kLocalhost,
+                                     document_root);
   ASSERT_TRUE(http_server.Start());
-  RunTestURL(GetTestURL(http_server, test_case, ""));
+  RunTestURL(GetTestURL(http_server, test_case, std::string()));
 }
 
 void PPAPITestBase::RunTestWithSSLServer(const std::string& test_case) {
   base::FilePath http_document_root;
   ASSERT_TRUE(ui_test_utils::GetRelativeBuildDirectory(&http_document_root));
-  net::TestServer http_server(net::TestServer::TYPE_HTTP,
-                              net::TestServer::kLocalhost,
-                              http_document_root);
-  net::TestServer ssl_server(net::TestServer::TYPE_HTTPS,
-                             net::BaseTestServer::SSLOptions(),
-                             http_document_root);
+  net::SpawnedTestServer http_server(net::SpawnedTestServer::TYPE_HTTP,
+                                     net::SpawnedTestServer::kLocalhost,
+                                     http_document_root);
+  net::SpawnedTestServer ssl_server(net::SpawnedTestServer::TYPE_HTTPS,
+                                    net::BaseTestServer::SSLOptions(),
+                                    http_document_root);
   // Start the servers in parallel.
   ASSERT_TRUE(http_server.StartInBackground());
   ASSERT_TRUE(ssl_server.StartInBackground());
@@ -200,18 +203,18 @@ void PPAPITestBase::RunTestWithSSLServer(const std::string& test_case) {
   uint16_t port = ssl_server.host_port_pair().port();
   RunTestURL(GetTestURL(http_server,
                         test_case,
-                        StringPrintf("ssl_server_port=%d", port)));
+                        base::StringPrintf("ssl_server_port=%d", port)));
 }
 
 void PPAPITestBase::RunTestWithWebSocketServer(const std::string& test_case) {
   base::FilePath http_document_root;
   ASSERT_TRUE(ui_test_utils::GetRelativeBuildDirectory(&http_document_root));
-  net::TestServer http_server(net::TestServer::TYPE_HTTP,
-                              net::TestServer::kLocalhost,
-                              http_document_root);
-  net::TestServer ws_server(net::TestServer::TYPE_WS,
-                            net::TestServer::kLocalhost,
-                            net::GetWebSocketTestDataDirectory());
+  net::SpawnedTestServer http_server(net::SpawnedTestServer::TYPE_HTTP,
+                                     net::SpawnedTestServer::kLocalhost,
+                                     http_document_root);
+  net::SpawnedTestServer ws_server(net::SpawnedTestServer::TYPE_WS,
+                                   net::SpawnedTestServer::kLocalhost,
+                                   net::GetWebSocketTestDataDirectory());
   // Start the servers in parallel.
   ASSERT_TRUE(http_server.StartInBackground());
   ASSERT_TRUE(ws_server.StartInBackground());
@@ -223,9 +226,10 @@ void PPAPITestBase::RunTestWithWebSocketServer(const std::string& test_case) {
   uint16_t port = ws_server.host_port_pair().port();
   RunTestURL(GetTestURL(http_server,
                         test_case,
-                        StringPrintf("websocket_host=%s&websocket_port=%d",
-                                     host.c_str(),
-                                     port)));
+                        base::StringPrintf(
+                            "websocket_host=%s&websocket_port=%d",
+                            host.c_str(),
+                            port)));
 }
 
 void PPAPITestBase::RunTestIfAudioOutputAvailable(
@@ -265,12 +269,12 @@ void PPAPITestBase::RunTestURL(const GURL& test_url) {
 }
 
 GURL PPAPITestBase::GetTestURL(
-    const net::TestServer& http_server,
+    const net::SpawnedTestServer& http_server,
     const std::string& test_case,
     const std::string& extra_params) {
   std::string query = BuildQuery("files/test_case.html?", test_case);
   if (!extra_params.empty())
-    query = StringPrintf("%s&%s", query.c_str(), extra_params.c_str());
+    query = base::StringPrintf("%s&%s", query.c_str(), extra_params.c_str());
 
   return http_server.GetURL(query);
 }
@@ -301,7 +305,7 @@ void PPAPITest::SetUpCommandLine(CommandLine* command_line) {
 
 std::string PPAPITest::BuildQuery(const std::string& base,
                                   const std::string& test_case){
-  return StringPrintf("%stestcase=%s", base.c_str(), test_case.c_str());
+  return base::StringPrintf("%stestcase=%s", base.c_str(), test_case.c_str());
 }
 
 OutOfProcessPPAPITest::OutOfProcessPPAPITest() {
@@ -321,21 +325,29 @@ void PPAPINaClTest::SetUpCommandLine(CommandLine* command_line) {
 
   // Enable running NaCl outside of the store.
   command_line->AppendSwitch(switches::kEnableNaCl);
+  command_line->AppendSwitch(switches::kEnablePnacl);
   command_line->AppendSwitchASCII(switches::kAllowNaClSocketAPI, "127.0.0.1");
 }
 
 // Append the correct mode and testcase string
 std::string PPAPINaClNewlibTest::BuildQuery(const std::string& base,
                                             const std::string& test_case) {
-  return StringPrintf("%smode=nacl_newlib&testcase=%s", base.c_str(),
-                      test_case.c_str());
+  return base::StringPrintf("%smode=nacl_newlib&testcase=%s", base.c_str(),
+                            test_case.c_str());
 }
 
 // Append the correct mode and testcase string
 std::string PPAPINaClGLibcTest::BuildQuery(const std::string& base,
                                            const std::string& test_case) {
-  return StringPrintf("%smode=nacl_glibc&testcase=%s", base.c_str(),
-                      test_case.c_str());
+  return base::StringPrintf("%smode=nacl_glibc&testcase=%s", base.c_str(),
+                            test_case.c_str());
+}
+
+// Append the correct mode and testcase string
+std::string PPAPINaClPNaClTest::BuildQuery(const std::string& base,
+                                           const std::string& test_case) {
+  return base::StringPrintf("%smode=nacl_pnacl&testcase=%s", base.c_str(),
+                            test_case.c_str());
 }
 
 void PPAPINaClTestDisallowedSockets::SetUpCommandLine(
@@ -348,14 +360,15 @@ void PPAPINaClTestDisallowedSockets::SetUpCommandLine(
 
   // Enable running NaCl outside of the store.
   command_line->AppendSwitch(switches::kEnableNaCl);
+  command_line->AppendSwitch(switches::kEnablePnacl);
 }
 
 // Append the correct mode and testcase string
 std::string PPAPINaClTestDisallowedSockets::BuildQuery(
     const std::string& base,
     const std::string& test_case) {
-  return StringPrintf("%smode=nacl_newlib&testcase=%s", base.c_str(),
-                      test_case.c_str());
+  return base::StringPrintf("%smode=nacl_newlib&testcase=%s", base.c_str(),
+                            test_case.c_str());
 }
 
 void PPAPIBrokerInfoBarTest::SetUpOnMainThread() {

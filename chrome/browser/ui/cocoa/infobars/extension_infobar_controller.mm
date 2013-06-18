@@ -6,22 +6,22 @@
 
 #include <cmath>
 
-#include "chrome/browser/api/infobars/infobar_service.h"
 #include "chrome/browser/extensions/extension_host.h"
 #include "chrome/browser/extensions/extension_infobar_delegate.h"
 #include "chrome/browser/extensions/image_loader.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/ui/browser_finder.h"
 #import "chrome/browser/ui/cocoa/animatable_view.h"
 #import "chrome/browser/ui/cocoa/extensions/extension_action_context_menu.h"
 #include "chrome/browser/ui/cocoa/infobars/infobar.h"
 #import "chrome/browser/ui/cocoa/menu_button.h"
-#include "chrome/common/extensions/api/icons/icons_handler.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_icon_set.h"
-#include "chrome/common/extensions/extension_resource.h"
+#include "chrome/common/extensions/manifest_handlers/icons_handler.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
+#include "extensions/common/extension_resource.h"
 #include "grit/theme_resources.h"
 #include "skia/ext/skia_utils_mac.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -59,7 +59,7 @@ class InfobarBridge : public ExtensionInfoBarDelegate::DelegateObserver {
   explicit InfobarBridge(ExtensionInfoBarController* owner)
       : owner_(owner),
         delegate_([owner delegate]->AsExtensionInfoBarDelegate()),
-        ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_(this)) {
+        weak_ptr_factory_(this) {
     delegate_->set_observer(this);
     LoadIcon();
   }
@@ -73,7 +73,7 @@ class InfobarBridge : public ExtensionInfoBarDelegate::DelegateObserver {
   void LoadIcon() {
     const extensions::Extension* extension = delegate_->extension_host()->
         extension();
-    ExtensionResource icon_resource =
+    extensions::ExtensionResource icon_resource =
         extensions::IconsInfo::GetIconResource(
             extension,
             extension_misc::EXTENSION_ICON_BITTY,
@@ -152,7 +152,7 @@ class InfobarBridge : public ExtensionInfoBarDelegate::DelegateObserver {
     extensions::ExtensionHost* extensionHost =
         delegate_->AsExtensionInfoBarDelegate()->extension_host();
     Browser* browser =
-        chrome::FindBrowserWithWebContents(owner->GetWebContents());
+        chrome::FindBrowserWithWebContents(owner->web_contents());
     contextMenu_.reset([[ExtensionActionContextMenu alloc]
         initWithExtension:extensionHost->extension()
                   browser:browser
@@ -276,7 +276,7 @@ class InfobarBridge : public ExtensionInfoBarDelegate::DelegateObserver {
 
 InfoBar* ExtensionInfoBarDelegate::CreateInfoBar(InfoBarService* owner) {
   NSWindow* window =
-      [(NSView*)owner->GetWebContents()->GetView()->GetContentNativeView()
+      [(NSView*)owner->web_contents()->GetView()->GetContentNativeView()
           window];
   ExtensionInfoBarController* controller =
       [[ExtensionInfoBarController alloc] initWithDelegate:this

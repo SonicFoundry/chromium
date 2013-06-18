@@ -15,6 +15,7 @@
 class SkCanvas;
 
 namespace gfx {
+class Insets;
 class Point;
 class Rect;
 class Size;
@@ -60,6 +61,11 @@ class AURA_EXPORT RootWindowHost {
   virtual gfx::Rect GetBounds() const = 0;
   virtual void SetBounds(const gfx::Rect& bounds) = 0;
 
+  // Sets/Gets the insets that specifies the effective root window area
+  // in the host window.
+  virtual gfx::Insets GetInsets() const = 0;
+  virtual void SetInsets(const gfx::Insets& insets) = 0;
+
   // Returns the location of the RootWindow on native screen.
   virtual gfx::Point GetLocationOnNativeScreen() const = 0;
 
@@ -99,12 +105,6 @@ class AURA_EXPORT RootWindowHost {
   virtual bool CopyAreaToSkCanvas(const gfx::Rect& source_bounds,
                                   const gfx::Point& dest_offset,
                                   SkCanvas* canvas) = 0;
-
-  // Grabs the snapshot of the root window by using the platform-dependent APIs.
-  // The bounds need to be in physical pixels.
-  virtual bool GrabSnapshot(
-      const gfx::Rect& snapshot_bounds,
-      std::vector<unsigned char>* png_representation) = 0;
 
   // Posts |native_event| to the platform's event queue.
 #if !defined(OS_MACOSX)

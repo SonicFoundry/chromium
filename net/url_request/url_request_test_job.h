@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/memory/weak_ptr.h"
+#include "net/base/load_timing_info.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_job.h"
 
@@ -90,10 +91,17 @@ class NET_EXPORT_PRIVATE URLRequestTestJob : public URLRequestJob {
   bool auto_advance() { return auto_advance_; }
   void set_auto_advance(bool auto_advance) { auto_advance_ = auto_advance; }
 
+  void set_load_timing_info(const LoadTimingInfo& load_timing_info) {
+    load_timing_info_ = load_timing_info;
+  }
+
+  RequestPriority priority() const { return priority_; }
+
   // Factory method for protocol factory registration if callers don't subclass
   static URLRequest::ProtocolFactory Factory;
 
   // Job functions
+  virtual void SetPriority(RequestPriority priority) OVERRIDE;
   virtual void Start() OVERRIDE;
   virtual bool ReadRawData(IOBuffer* buf,
                            int buf_size,
@@ -101,6 +109,8 @@ class NET_EXPORT_PRIVATE URLRequestTestJob : public URLRequestJob {
   virtual void Kill() OVERRIDE;
   virtual bool GetMimeType(std::string* mime_type) const OVERRIDE;
   virtual void GetResponseInfo(HttpResponseInfo* info) OVERRIDE;
+  virtual void GetLoadTimingInfo(
+      LoadTimingInfo* load_timing_info) const OVERRIDE;
   virtual int GetResponseCode() const OVERRIDE;
   virtual bool IsRedirectResponse(GURL* location,
                                   int* http_status_code) OVERRIDE;
@@ -132,6 +142,8 @@ class NET_EXPORT_PRIVATE URLRequestTestJob : public URLRequestJob {
 
   Stage stage_;
 
+  RequestPriority priority_;
+
   // The headers the job should return, will be set in Start() if not provided
   // in the explicit ctor.
   scoped_refptr<HttpResponseHeaders> response_headers_;
@@ -146,6 +158,8 @@ class NET_EXPORT_PRIVATE URLRequestTestJob : public URLRequestJob {
   // Holds the buffer for an asynchronous ReadRawData call
   IOBuffer* async_buf_;
   int async_buf_size_;
+
+  LoadTimingInfo load_timing_info_;
 
   base::WeakPtrFactory<URLRequestTestJob> weak_factory_;
 };

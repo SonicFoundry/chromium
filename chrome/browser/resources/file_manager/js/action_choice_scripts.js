@@ -18,7 +18,16 @@
 //<include src="../../../../../ui/webui/resources/js/event_tracker.js"/>
 //<include src="../../../../../ui/webui/resources/js/cr/ui.js"/>
 //<include src="../../../../../ui/webui/resources/js/cr/event_target.js"/>
+//<include src="../../../../../ui/webui/resources/js/cr/ui/array_data_model.js"/>
 //<include src="../../../../../ui/webui/resources/js/cr/ui/touch_handler.js"/>
+//<include src="../../../../../ui/webui/resources/js/cr/ui/list_item.js"/>
+//<include src="../../../../../ui/webui/resources/js/cr/ui/list_selection_model.js"/>
+//<include src="../../../../../ui/webui/resources/js/cr/ui/list_single_selection_model.js"/>
+//<include src="../../../../../ui/webui/resources/js/cr/ui/list_selection_controller.js"/>
+//<include src="../../../../../ui/webui/resources/js/cr/ui/list.js"/>
+
+(function() {
+// 'strict mode' is invoked for this scope.
 
 //<include src="util.js"/>
 //<include src="file_type.js"/>
@@ -28,5 +37,11 @@
 //<include src="metrics.js"/>
 //<include src="image_editor/image_util.js"/>
 //<include src="media/media_util.js"/>
+//<include src="action_choice_util.js"/>
 
 //<include src="action_choice.js"/>
+
+// Exports
+window.ImageUtil = ImageUtil;
+
+})();

@@ -42,7 +42,7 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
                                            const GURL& url,
                                            const Referrer& referrer,
                                            PageTransition transition) OVERRIDE;
-  virtual webkit_glue::WebPreferences TestGetWebkitPrefs() OVERRIDE;
+  virtual WebPreferences TestGetWebkitPrefs() OVERRIDE;
 
   TestRenderViewHost* pending_test_rvh() const;
 
@@ -75,6 +75,9 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
 
   // Allows us to simulate this tab having an opener.
   void SetOpener(TestWebContents* opener);
+
+  // Allows us to simulate that a contents was created via CreateNewWindow.
+  void AddPendingContents(TestWebContents* contents);
 
   // Establish expected arguments for |SetHistoryLengthAndPrune()|. When
   // |SetHistoryLengthAndPrune()| is called, the arguments are compared

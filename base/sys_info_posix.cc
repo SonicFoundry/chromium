@@ -44,9 +44,8 @@ int64 SysInfo::AmountOfFreeDiskSpace(const FilePath& path) {
   base::ThreadRestrictions::AssertIOAllowed();
 
   struct statvfs stats;
-  if (statvfs(path.value().c_str(), &stats) != 0) {
+  if (HANDLE_EINTR(statvfs(path.value().c_str(), &stats)) != 0)
     return -1;
-  }
   return static_cast<int64>(stats.f_bavail) * stats.f_frsize;
 }
 
@@ -56,7 +55,7 @@ std::string SysInfo::OperatingSystemName() {
   struct utsname info;
   if (uname(&info) < 0) {
     NOTREACHED();
-    return "";
+    return std::string();
   }
   return std::string(info.sysname);
 }
@@ -68,7 +67,7 @@ std::string SysInfo::OperatingSystemVersion() {
   struct utsname info;
   if (uname(&info) < 0) {
     NOTREACHED();
-    return "";
+    return std::string();
   }
   return std::string(info.release);
 }
@@ -79,7 +78,7 @@ std::string SysInfo::OperatingSystemArchitecture() {
   struct utsname info;
   if (uname(&info) < 0) {
     NOTREACHED();
-    return "";
+    return std::string();
   }
   std::string arch(info.machine);
   if (arch == "i386" || arch == "i486" || arch == "i586" || arch == "i686") {

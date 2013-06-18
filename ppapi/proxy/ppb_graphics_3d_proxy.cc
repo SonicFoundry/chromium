@@ -175,6 +175,10 @@ class Graphics3D::LockingCommandBuffer : public gpu::CommandBuffer {
     MaybeLock lock(need_to_lock_);
     gpu_command_buffer_->SetContextLostReason(reason);
   }
+  virtual uint32 InsertSyncPoint() OVERRIDE {
+    MaybeLock lock(need_to_lock_);
+    return gpu_command_buffer_->InsertSyncPoint();
+  }
 
   // Weak pointer - see class Graphics3D for the scopted_ptr.
   gpu::CommandBuffer* gpu_command_buffer_;
@@ -248,6 +252,11 @@ PP_Graphics3DTrustedState Graphics3D::FlushSyncFast(int32_t put_offset,
   return GetErrorState();
 }
 
+uint32_t Graphics3D::InsertSyncPoint() {
+  NOTREACHED();
+  return 0;
+}
+
 gpu::CommandBuffer* Graphics3D::GetCommandBuffer() {
   return locking_command_buffer_.get();
 }
@@ -285,7 +294,7 @@ void Graphics3D::PopAlreadyLocked() {
 
 PPB_Graphics3D_Proxy::PPB_Graphics3D_Proxy(Dispatcher* dispatcher)
     : InterfaceProxy(dispatcher),
-      callback_factory_(ALLOW_THIS_IN_INITIALIZER_LIST(this)) {
+      callback_factory_(this) {
 }
 
 PPB_Graphics3D_Proxy::~PPB_Graphics3D_Proxy() {
@@ -360,6 +369,8 @@ bool PPB_Graphics3D_Proxy::OnMessageReceived(const IPC::Message& msg) {
                         OnMsgGetTransferBuffer)
     IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBGraphics3D_SwapBuffers,
                         OnMsgSwapBuffers)
+    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBGraphics3D_InsertSyncPoint,
+                        OnMsgInsertSyncPoint)
 #endif  // !defined(OS_NACL)
 
     IPC_MESSAGE_HANDLER(PpapiMsg_PPBGraphics3D_SwapBuffersACK,
@@ -488,6 +499,14 @@ void PPB_Graphics3D_Proxy::OnMsgSwapBuffers(const HostResource& context) {
       &PPB_Graphics3D_Proxy::SendSwapBuffersACKToPlugin, context);
   if (enter.succeeded())
     enter.SetResult(enter.object()->SwapBuffers(enter.callback()));
+}
+
+void PPB_Graphics3D_Proxy::OnMsgInsertSyncPoint(const HostResource& context,
+                                                uint32* sync_point) {
+  *sync_point = 0;
+  EnterHostFromHostResource<PPB_Graphics3D_API> enter(context);
+  if (enter.succeeded())
+    *sync_point = enter.object()->InsertSyncPoint();
 }
 #endif  // !defined(OS_NACL)
 

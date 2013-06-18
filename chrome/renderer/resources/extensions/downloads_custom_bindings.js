@@ -4,7 +4,10 @@
 
 // Custom bindings for the downloads API.
 
+var binding = require('binding').Binding.create('downloads');
 var chromeHidden = requireNative('chrome_hidden').GetChromeHidden();
+var downloadsInternal = require('binding').Binding.create(
+    'downloadsInternal').generate();
 
 chromeHidden.Event.registerArgumentMassager(
     'downloads.onDeterminingFilename',
@@ -22,15 +25,12 @@ chromeHidden.Event.registerArgumentMassager(
     if ((typeof(result) == 'object') &&
         result.filename &&
         (typeof(result.filename) == 'string') &&
-        ((result.overwrite === undefined) ||
-          (typeof(result.overwrite) == 'boolean'))) {
-      chromeHidden.internalAPIs.downloadsInternal.determineFilename(
-          downloadId,
-          result.filename,
-          result.overwrite || false);
+        ((result.conflict_action == undefined) ||
+          (typeof(result.conflict_action) == 'string'))) {
+      downloadsInternal.determineFilename(
+          downloadId, result.filename, result.conflict_action || "");
     } else {
-      chromeHidden.internalAPIs.downloadsInternal.determineFilename(
-          downloadId);
+      downloadsInternal.determineFilename(downloadId, "", "");
     }
   }
   try {
@@ -46,3 +46,4 @@ chromeHidden.Event.registerArgumentMassager(
     throw e;
   }
 });
+exports.binding = binding.generate();

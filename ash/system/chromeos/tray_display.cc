@@ -12,7 +12,7 @@
 #include "ash/system/tray/system_tray.h"
 #include "ash/system/tray/system_tray_delegate.h"
 #include "ash/system/tray/tray_constants.h"
-#include "ash/system/tray/tray_views.h"
+#include "base/chromeos/chromeos_version.h"
 #include "base/utf_string_conversions.h"
 #include "grit/ash_resources.h"
 #include "grit/ash_strings.h"
@@ -57,68 +57,58 @@ class DisplayView : public ash::internal::ActionableView {
   virtual ~DisplayView() {}
 
   void Update() {
-    switch (Shell::GetInstance()->output_configurator()->output_state()) {
+#if !defined(USE_X11)
+     SetVisible(false);
+#else
+    chromeos::OutputState state =
+        base::chromeos::IsRunningOnChromeOS() ?
+        Shell::GetInstance()->output_configurator()->output_state() :
+        InferOutputState();
+    switch (state) {
       case chromeos::STATE_INVALID:
       case chromeos::STATE_HEADLESS:
       case chromeos::STATE_SINGLE:
         SetVisible(false);
         return;
-      case chromeos::STATE_DUAL_MIRROR: {
+      case chromeos::STATE_DUAL_MIRROR:
         label_->SetText(l10n_util::GetStringFUTF16(
             IDS_ASH_STATUS_TRAY_DISPLAY_MIRRORING, GetExternalDisplayName()));
         SetVisible(true);
         return;
-      }
       case chromeos::STATE_DUAL_EXTENDED:
-      case chromeos::STATE_DUAL_UNKNOWN: {
         label_->SetText(l10n_util::GetStringFUTF16(
             IDS_ASH_STATUS_TRAY_DISPLAY_EXTENDED, GetExternalDisplayName()));
         SetVisible(true);
         return;
-      }
-      default:
-        NOTREACHED();
     }
+    NOTREACHED() << "Unhandled state " << state;
+#endif
+  }
+
+  chromeos::OutputState InferOutputState() const {
+    return Shell::GetScreen()->GetNumDisplays() == 1 ?
+        chromeos::STATE_SINGLE : chromeos::STATE_DUAL_EXTENDED;
   }
 
  private:
   // Returns the name of the currently connected external display.
-  string16 GetExternalDisplayName() {
-#if defined(USE_X11)
+  base::string16 GetExternalDisplayName() const {
     DisplayManager* display_manager = Shell::GetInstance()->display_manager();
-    int64 internal_display_id = gfx::Display::InternalDisplayId();
-    int64 primary_display_id =
-        gfx::Screen::GetNativeScreen()->GetPrimaryDisplay().id();
+    int64 external_id = display_manager->mirrored_display_id();
 
-    // Use xrandr features rather than DisplayManager to find out the external
-    // display's name. DisplayManager's API doesn't work well in mirroring mode
-    // since it's based on gfx::Display but in mirroring mode there's only one
-    // gfx::Display instance which represents both displays.
-    std::vector<XID> outputs;
-    ui::GetOutputDeviceHandles(&outputs);
-    for (size_t i = 0; i < outputs.size(); ++i) {
-      std::string name;
-      uint16 manufacturer_id = 0;
-      uint16 product_code = 0;
-      if (ui::GetOutputDeviceData(
-              outputs[i], &manufacturer_id, &product_code, &name)) {
-        int64 display_id = gfx::Display::GetID(
-            manufacturer_id, product_code, i);
-        if (display_id == internal_display_id)
-          continue;
-        // Some systems like stumpy don't have the internal display at all. It
-        // means both of the displays are external but we need to choose either
-        // one. Currently we adopt simple heuristics which just avoids the
-        // primary display.
-        if (!display_manager->HasInternalDisplay() &&
-            display_id == primary_display_id) {
-          continue;
+    if (external_id == gfx::Display::kInvalidDisplayID) {
+      int64 internal_display_id = gfx::Display::InternalDisplayId();
+      int64 first_display_id = display_manager->first_display_id();
+      for (size_t i = 0; i < display_manager->GetNumDisplays(); ++i) {
+        int64 id = display_manager->GetDisplayAt(i)->id();
+        if (id != internal_display_id && id != first_display_id) {
+          external_id = id;
+          break;
         }
-
-        return UTF8ToUTF16(name);
       }
     }
-#endif
+    if (external_id != gfx::Display::kInvalidDisplayID)
+      return UTF8ToUTF16(display_manager->GetDisplayNameForId(external_id));
     return l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_UNKNOWN_DISPLAY_NAME);
   }
 
@@ -151,12 +141,16 @@ TrayDisplay::TrayDisplay(SystemTray* system_tray)
     : SystemTrayItem(system_tray),
       default_(NULL) {
   Shell::GetScreen()->AddObserver(this);
+#if defined(USE_X11)
   Shell::GetInstance()->output_configurator()->AddObserver(this);
+#endif
 }
 
 TrayDisplay::~TrayDisplay() {
   Shell::GetScreen()->RemoveObserver(this);
+#if defined(USE_X11)
   Shell::GetInstance()->output_configurator()->RemoveObserver(this);
+#endif
 }
 
 views::View* TrayDisplay::CreateDefaultView(user::LoginStatus status) {
@@ -183,10 +177,12 @@ void TrayDisplay::OnDisplayRemoved(const gfx::Display& old_display) {
     default_->Update();
 }
 
+#if defined(OS_CHROMEOS)
 void TrayDisplay::OnDisplayModeChanged() {
   if (default_)
     default_->Update();
 }
+#endif
 
 }  // namespace internal
 }  // namespace ash

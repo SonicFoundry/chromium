@@ -7,18 +7,19 @@
 //
 //  OVERVIEW
 //
-// A MetricsService instance is typically created at application startup.  It
-// is the central controller for the acquisition of log data, and the automatic
+// A MetricsService instance is typically created at application startup.  It is
+// the central controller for the acquisition of log data, and the automatic
 // transmission of that log data to an external server.  Its major job is to
 // manage logs, grouping them for transmission, and transmitting them.  As part
 // of its grouping, MS finalizes logs by including some just-in-time gathered
 // memory statistics, snapshotting the current stats of numerous histograms,
-// closing the logs, translating to XML text, and compressing the results for
-// transmission.  Transmission includes submitting a compressed log as data in a
-// URL-post, and retransmitting (or retaining at process termination) if the
-// attempted transmission failed.  Retention across process terminations is done
-// using the the PrefServices facilities. The retained logs (the ones that never
-// got transmitted) are compressed and base64-encoded before being persisted.
+// closing the logs, translating to protocol buffer format, and compressing the
+// results for transmission.  Transmission includes submitting a compressed log
+// as data in a URL-post, and retransmitting (or retaining at process
+// termination) if the attempted transmission failed.  Retention across process
+// terminations is done using the the PrefServices facilities. The retained logs
+// (the ones that never got transmitted) are compressed and base64-encoded
+// before being persisted.
 //
 // Logs fall into one of two categories: "initial logs," and "ongoing logs."
 // There is at most one initial log sent for each complete run of the chromium
@@ -157,6 +158,7 @@
 #include "base/guid.h"
 #include "base/md5.h"
 #include "base/metrics/histogram.h"
+#include "base/metrics/sparse_histogram.h"
 #include "base/metrics/statistics_recorder.h"
 #include "base/prefs/pref_registry_simple.h"
 #include "base/prefs/pref_service.h"
@@ -177,6 +179,7 @@
 #include "chrome/browser/metrics/metrics_log.h"
 #include "chrome/browser/metrics/metrics_log_serializer.h"
 #include "chrome/browser/metrics/metrics_reporting_scheduler.h"
+#include "chrome/browser/metrics/time_ticks_experiment_win.h"
 #include "chrome/browser/metrics/tracking_synchronizer.h"
 #include "chrome/browser/net/http_pipelining_compatibility_client.h"
 #include "chrome/browser/net/network_stats.h"
@@ -186,6 +189,7 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_otr_state.h"
 #include "chrome/common/child_process_logging.h"
+#include "chrome/common/chrome_process_type.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/chrome_result_codes.h"
 #include "chrome/common/chrome_switches.h"
@@ -219,7 +223,6 @@
 
 #if defined(OS_WIN)
 #include <windows.h>  // Needed for STATUS_* codes
-#include "sandbox/win/src/sandbox_types.h"  // For termination codes.
 #endif
 
 using base::Time;
@@ -316,60 +319,6 @@ int MapCrashExitCodeForHistogram(int exit_code) {
   return std::abs(exit_code);
 }
 
-// Returns a list of all the likely exit codes for crashed renderer processes.
-// The exit codes are all positive, since that is what histograms expect.
-std::vector<int> GetAllCrashExitCodes() {
-  std::vector<int> codes;
-
-  // Chrome defines its own exit codes in the range
-  // 1 to RESULT_CODE_CHROME_LAST_CODE.
-  for (int i = 1; i < chrome::RESULT_CODE_CHROME_LAST_CODE; ++i)
-    codes.push_back(i);
-
-#if defined(OS_WIN)
-  // The exit code when crashing will be one of the Windows exception codes.
-  int kExceptionCodes[] = {
-    0xe06d7363,  // C++ EH exception
-    STATUS_ACCESS_VIOLATION,
-    STATUS_ARRAY_BOUNDS_EXCEEDED,
-    STATUS_BREAKPOINT,
-    STATUS_CONTROL_C_EXIT,
-    STATUS_DATATYPE_MISALIGNMENT,
-    STATUS_FLOAT_DENORMAL_OPERAND,
-    STATUS_FLOAT_DIVIDE_BY_ZERO,
-    STATUS_FLOAT_INEXACT_RESULT,
-    STATUS_FLOAT_INVALID_OPERATION,
-    STATUS_FLOAT_OVERFLOW,
-    STATUS_FLOAT_STACK_CHECK,
-    STATUS_FLOAT_UNDERFLOW,
-    STATUS_GUARD_PAGE_VIOLATION,
-    STATUS_ILLEGAL_INSTRUCTION,
-    STATUS_INTEGER_DIVIDE_BY_ZERO,
-    STATUS_INTEGER_OVERFLOW,
-    STATUS_INVALID_DISPOSITION,
-    STATUS_INVALID_HANDLE,
-    STATUS_INVALID_PARAMETER,
-    STATUS_IN_PAGE_ERROR,
-    STATUS_NONCONTINUABLE_EXCEPTION,
-    STATUS_NO_MEMORY,
-    STATUS_PRIVILEGED_INSTRUCTION,
-    STATUS_SINGLE_STEP,
-    STATUS_STACK_OVERFLOW,
-  };
-
-  for (size_t i = 0; i < arraysize(kExceptionCodes); ++i)
-    codes.push_back(MapCrashExitCodeForHistogram(kExceptionCodes[i]));
-
-  // Add the sandbox fatal termination codes.
-  for (int i = sandbox::SBOX_FATAL_INTEGRITY;
-       i <= sandbox::SBOX_FATAL_LAST; ++i) {
-    codes.push_back(MapCrashExitCodeForHistogram(i));
-  }
-#endif
-
-  return codes;
-}
-
 void MarkAppCleanShutdownAndCommit() {
   PrefService* pref = g_browser_process->local_state();
   pref->SetBoolean(prefs::kStabilityExitedCleanly, true);
@@ -389,12 +338,12 @@ MetricsService::ShutdownCleanliness MetricsService::clean_shutdown_status_ =
 // reported to the UMA server on next launch.
 struct MetricsService::ChildProcessStats {
  public:
-  explicit ChildProcessStats(content::ProcessType type)
+  explicit ChildProcessStats(int process_type)
       : process_launches(0),
         process_crashes(0),
         instances(0),
         loading_errors(0),
-        process_type(type) {}
+        process_type(process_type) {}
 
   // This constructor is only used by the map to return some default value for
   // an index for which no value has been assigned.
@@ -420,7 +369,7 @@ struct MetricsService::ChildProcessStats {
   // process.
   int loading_errors;
 
-  content::ProcessType process_type;
+  int process_type;
 };
 
 // Handles asynchronous fetching of memory details.
@@ -444,13 +393,13 @@ class MetricsMemoryDetails : public MemoryDetails {
 // static
 void MetricsService::RegisterPrefs(PrefRegistrySimple* registry) {
   DCHECK(IsSingleThreaded());
-  registry->RegisterStringPref(prefs::kMetricsClientID, "");
+  registry->RegisterStringPref(prefs::kMetricsClientID, std::string());
   registry->RegisterIntegerPref(prefs::kMetricsLowEntropySource,
                                 kLowEntropySourceNotSet);
   registry->RegisterInt64Pref(prefs::kMetricsClientIDTimestamp, 0);
   registry->RegisterInt64Pref(prefs::kStabilityLaunchTimeSec, 0);
   registry->RegisterInt64Pref(prefs::kStabilityLastTimestampSec, 0);
-  registry->RegisterStringPref(prefs::kStabilityStatsVersion, "");
+  registry->RegisterStringPref(prefs::kStabilityStatsVersion, std::string());
   registry->RegisterInt64Pref(prefs::kStabilityStatsBuildTime, 0);
   registry->RegisterBooleanPref(prefs::kStabilityExitedCleanly, true);
   registry->RegisterBooleanPref(prefs::kStabilitySessionEndCompleted, true);
@@ -477,10 +426,8 @@ void MetricsService::RegisterPrefs(PrefRegistrySimple* registry) {
 
   registry->RegisterDictionaryPref(prefs::kProfileMetrics);
   registry->RegisterIntegerPref(prefs::kNumKeywords, 0);
-  registry->RegisterListPref(prefs::kMetricsInitialLogsXml);
-  registry->RegisterListPref(prefs::kMetricsOngoingLogsXml);
-  registry->RegisterListPref(prefs::kMetricsInitialLogsProto);
-  registry->RegisterListPref(prefs::kMetricsOngoingLogsProto);
+  registry->RegisterListPref(prefs::kMetricsInitialLogs);
+  registry->RegisterListPref(prefs::kMetricsOngoingLogs);
 
   registry->RegisterInt64Pref(prefs::kInstallDate, 0);
   registry->RegisterInt64Pref(prefs::kUninstallMetricsPageLoadCount, 0);
@@ -513,10 +460,8 @@ void MetricsService::DiscardOldStabilityStats(PrefService* local_state) {
 
   local_state->ClearPref(prefs::kStabilityPluginStats);
 
-  local_state->ClearPref(prefs::kMetricsInitialLogsXml);
-  local_state->ClearPref(prefs::kMetricsOngoingLogsXml);
-  local_state->ClearPref(prefs::kMetricsInitialLogsProto);
-  local_state->ClearPref(prefs::kMetricsOngoingLogsProto);
+  local_state->ClearPref(prefs::kMetricsInitialLogs);
+  local_state->ClearPref(prefs::kMetricsOngoingLogs);
 }
 
 MetricsService::MetricsService()
@@ -524,11 +469,11 @@ MetricsService::MetricsService()
       reporting_active_(false),
       test_mode_active_(false),
       state_(INITIALIZED),
-      low_entropy_source_(0),
+      low_entropy_source_(kLowEntropySourceNotSet),
       idle_since_last_transmission_(false),
       next_window_id_(0),
-      ALLOW_THIS_IN_INITIALIZER_LIST(self_ptr_factory_(this)),
-      ALLOW_THIS_IN_INITIALIZER_LIST(state_saver_factory_(this)),
+      self_ptr_factory_(this),
+      state_saver_factory_(this),
       waiting_for_asynchronous_reporting_step_(false),
       entropy_source_returned_(LAST_ENTROPY_NONE) {
   DCHECK(IsSingleThreaded());
@@ -703,7 +648,7 @@ void MetricsService::BrowserChildProcessCrashed(
   GetChildProcessStats(data).process_crashes++;
   // Exclude plugin crashes from the count below because we report them via
   // a separate UMA metric.
-  if (!IsPluginProcess(data.type))
+  if (!IsPluginProcess(data.process_type))
     IncrementPrefValue(prefs::kStabilityChildProcessCrashCount);
 }
 
@@ -867,14 +812,10 @@ void MetricsService::RecordBreakpadHasDebugger(bool has_debugger) {
 
 void MetricsService::InitializeMetricsState() {
 #if defined(OS_POSIX)
-  server_url_xml_ = ASCIIToUTF16(kServerUrlXml);
-  server_url_proto_ = ASCIIToUTF16(kServerUrlProto);
   network_stats_server_ = chrome_common_net::kEchoTestServerLocation;
   http_pipelining_test_server_ = chrome_common_net::kPipelineTestServerBaseUrl;
 #else
   BrowserDistribution* dist = BrowserDistribution::GetDistribution();
-  server_url_xml_ = dist->GetStatsServerURL();
-  server_url_proto_ = ASCIIToUTF16(kServerUrlProto);
   network_stats_server_ = dist->GetNetworkStatsServer();
   http_pipelining_test_server_ = dist->GetHttpPipeliningTestServer();
 #endif
@@ -1062,7 +1003,7 @@ void MetricsService::OnUserAction(const std::string& action) {
 
 void MetricsService::ReceivedProfilerData(
     const tracked_objects::ProcessDataSnapshot& process_data,
-    content::ProcessType process_type) {
+    int process_type) {
   DCHECK_EQ(INIT_TASK_SCHEDULED, state_);
 
   // Upon the first callback, create the initial log so that we can immediately
@@ -1080,21 +1021,16 @@ void MetricsService::FinishedReceivingProfilerData() {
 
 int MetricsService::GetLowEntropySource() {
   // Note that the default value for the low entropy source and the default pref
-  // value are both zero, which is used to identify if the value has been set
-  // or not. Valid values start at 1.
-  if (low_entropy_source_)
+  // value are both kLowEntropySourceNotSet, which is used to identify if the
+  // value has been set or not.
+  if (low_entropy_source_ != kLowEntropySourceNotSet)
     return low_entropy_source_;
 
   PrefService* pref = g_browser_process->local_state();
   const CommandLine* command_line(CommandLine::ForCurrentProcess());
   // Only try to load the value from prefs if the user did not request a reset.
   // Otherwise, skip to generating a new value.
-  bool reset_variations =
-      command_line->HasSwitch(switches::kResetVariationState);
-  // TODO(stevet): This histogram is temporary. Remove this after default group
-  // investigations are complete.
-  UMA_HISTOGRAM_BOOLEAN("UMA.UsedResetVariationsFlag", reset_variations);
-  if (!reset_variations) {
+  if (!command_line->HasSwitch(switches::kResetVariationState)) {
     const int value = pref->GetInteger(prefs::kMetricsLowEntropySource);
     if (value != kLowEntropySourceNotSet) {
       // Ensure the prefs value is in the range [0, kMaxLowEntropySize). Old
@@ -1208,7 +1144,7 @@ void MetricsService::PushPendingLogsToPersistentStorage() {
   if (log_manager_.has_staged_log()) {
     // We may race here, and send second copy of the log later.
     MetricsLogManager::StoreType store_type;
-    if (current_fetch_xml_.get() || current_fetch_proto_.get())
+    if (current_fetch_.get())
       store_type = MetricsLogManager::PROVISIONAL_STORE;
     else
       store_type = MetricsLogManager::NORMAL_STORE;
@@ -1337,9 +1273,8 @@ void MetricsService::OnFinalLogInfoCollectionDone() {
   // If somehow there is a fetch in progress, we return and hope things work
   // out. The scheduler isn't informed since if this happens, the scheduler
   // will get a response from the upload.
-  DCHECK(!current_fetch_xml_.get());
-  DCHECK(!current_fetch_proto_.get());
-  if (current_fetch_xml_.get() || current_fetch_proto_.get())
+  DCHECK(!current_fetch_.get());
+  if (current_fetch_.get())
     return;
 
   // Abort if metrics were turned off during the final info gathering.
@@ -1434,7 +1369,7 @@ void MetricsService::SendStagedLog() {
 
   PrepareFetchWithStagedLog();
 
-  bool upload_created = current_fetch_xml_.get() || current_fetch_proto_.get();
+  bool upload_created = (current_fetch_.get() != NULL);
   UMA_HISTOGRAM_BOOLEAN("UMA.UploadCreation", upload_created);
   if (!upload_created) {
     // Compression failed, and log discarded :-/.
@@ -1447,10 +1382,7 @@ void MetricsService::SendStagedLog() {
   DCHECK(!waiting_for_asynchronous_reporting_step_);
   waiting_for_asynchronous_reporting_step_ = true;
 
-  if (current_fetch_xml_.get())
-    current_fetch_xml_->Start();
-  if (current_fetch_proto_.get())
-    current_fetch_proto_->Start();
+  current_fetch_->Start();
 
   HandleIdleSinceLastTransmission(true);
 }
@@ -1458,72 +1390,36 @@ void MetricsService::SendStagedLog() {
 void MetricsService::PrepareFetchWithStagedLog() {
   DCHECK(log_manager_.has_staged_log());
 
-  // Prepare the XML version.
-  DCHECK(!current_fetch_xml_.get());
-  if (log_manager_.has_staged_log_xml()) {
-    current_fetch_xml_.reset(net::URLFetcher::Create(
-        GURL(server_url_xml_), net::URLFetcher::POST, this));
-    current_fetch_xml_->SetRequestContext(
-        g_browser_process->system_request_context());
-    current_fetch_xml_->SetUploadData(kMimeTypeXml,
-                                      log_manager_.staged_log_text().xml);
-    // We already drop cookies server-side, but we might as well strip them out
-    // client-side as well.
-    current_fetch_xml_->SetLoadFlags(net::LOAD_DO_NOT_SAVE_COOKIES |
-                                     net::LOAD_DO_NOT_SEND_COOKIES);
-  }
-
   // Prepare the protobuf version.
-  DCHECK(!current_fetch_proto_.get());
-  if (log_manager_.has_staged_log_proto()) {
-    current_fetch_proto_.reset(net::URLFetcher::Create(
-        GURL(server_url_proto_), net::URLFetcher::POST, this));
-    current_fetch_proto_->SetRequestContext(
+  DCHECK(!current_fetch_.get());
+  if (log_manager_.has_staged_log()) {
+    current_fetch_.reset(net::URLFetcher::Create(
+        GURL(kServerUrl), net::URLFetcher::POST, this));
+    current_fetch_->SetRequestContext(
         g_browser_process->system_request_context());
-    current_fetch_proto_->SetUploadData(kMimeTypeProto,
-                                        log_manager_.staged_log_text().proto);
+    current_fetch_->SetUploadData(kMimeType, log_manager_.staged_log_text());
     // We already drop cookies server-side, but we might as well strip them out
     // client-side as well.
-    current_fetch_proto_->SetLoadFlags(net::LOAD_DO_NOT_SAVE_COOKIES |
-                                       net::LOAD_DO_NOT_SEND_COOKIES);
+    current_fetch_->SetLoadFlags(net::LOAD_DO_NOT_SAVE_COOKIES |
+                                 net::LOAD_DO_NOT_SEND_COOKIES);
   }
 }
 
-// We need to wait for two responses: the response to the XML upload, and the
-// response to the protobuf upload.  In the case that exactly one of the uploads
-// fails and needs to be retried, we "zap" the other pipeline's staged log to
-// avoid incorrectly re-uploading it as well.
 void MetricsService::OnURLFetchComplete(const net::URLFetcher* source) {
   DCHECK(waiting_for_asynchronous_reporting_step_);
 
   // We're not allowed to re-use the existing |URLFetcher|s, so free them here.
-  // Note however that |source| is aliased to one of these, so we should be
+  // Note however that |source| is aliased to the fetcher, so we should be
   // careful not to delete it too early.
-  scoped_ptr<net::URLFetcher> s;
-  bool is_xml;
-  if (source == current_fetch_xml_.get()) {
-    s.reset(current_fetch_xml_.release());
-    is_xml = true;
-  } else if (source == current_fetch_proto_.get()) {
-    s.reset(current_fetch_proto_.release());
-    is_xml = false;
-  } else {
-    NOTREACHED();
-    return;
-  }
+  DCHECK_EQ(current_fetch_.get(), source);
+  scoped_ptr<net::URLFetcher> s(current_fetch_.Pass());
 
   int response_code = source->GetResponseCode();
 
   // Log a histogram to track response success vs. failure rates.
-  if (is_xml) {
-    UMA_HISTOGRAM_ENUMERATION("UMA.UploadResponseStatus.XML",
-                              ResponseCodeToStatus(response_code),
-                              NUM_RESPONSE_STATUSES);
-  } else {
-    UMA_HISTOGRAM_ENUMERATION("UMA.UploadResponseStatus.Protobuf",
-                              ResponseCodeToStatus(response_code),
-                              NUM_RESPONSE_STATUSES);
-  }
+  UMA_HISTOGRAM_ENUMERATION("UMA.UploadResponseStatus.Protobuf",
+                            ResponseCodeToStatus(response_code),
+                            NUM_RESPONSE_STATUSES);
 
   // If the upload was provisionally stored, drop it now that the upload is
   // known to have gone through.
@@ -1533,9 +1429,7 @@ void MetricsService::OnURLFetchComplete(const net::URLFetcher* source) {
 
   // Provide boolean for error recovery (allow us to ignore response_code).
   bool discard_log = false;
-  const size_t log_size = is_xml ?
-      log_manager_.staged_log_text().xml.length() :
-      log_manager_.staged_log_text().proto.length();
+  const size_t log_size = log_manager_.staged_log_text().length();
   if (!upload_succeeded && log_size > kUploadLogAvoidRetransmitSize) {
     UMA_HISTOGRAM_COUNTS("UMA.Large Rejected Log was Discarded",
                          static_cast<int>(log_size));
@@ -1545,16 +1439,8 @@ void MetricsService::OnURLFetchComplete(const net::URLFetcher* source) {
     discard_log = true;
   }
 
-  if (upload_succeeded || discard_log) {
-    if (is_xml)
-      log_manager_.DiscardStagedLogXml();
-    else
-      log_manager_.DiscardStagedLogProto();
-  }
-
-  // If we're still waiting for one of the responses, keep waiting...
-  if (current_fetch_xml_.get() || current_fetch_proto_.get())
-    return;
+  if (upload_succeeded || discard_log)
+    log_manager_.DiscardStagedLog();
 
   waiting_for_asynchronous_reporting_step_ = false;
 
@@ -1587,15 +1473,6 @@ void MetricsService::OnURLFetchComplete(const net::URLFetcher* source) {
   // Error 400 indicates a problem with the log, not with the server, so
   // don't consider that a sign that the server is in trouble.
   bool server_is_healthy = upload_succeeded || response_code == 400;
-
-  // Note that we are essentially randomly choosing to report either the XML or
-  // the protobuf server's health status, but this is ok: In the case that the
-  // two statuses are not the same, one of the uploads succeeded but the other
-  // did not. In this case, we'll re-try only the upload that failed. This first
-  // re-try might ignore the server's unhealthiness; but the response to the
-  // re-tried upload will correctly propagate the server's health status for any
-  // subsequent re-tries. Hence, we'll at most delay slowing the upload rate by
-  // one re-try, which is fine.
   scheduler_->UploadFinished(server_is_healthy, log_manager_.has_unsent_logs());
 
   // Collect network stats if UMA upload succeeded.
@@ -1604,6 +1481,9 @@ void MetricsService::OnURLFetchComplete(const net::URLFetcher* source) {
     chrome_browser_net::CollectNetworkStats(network_stats_server_, io_thread);
     chrome_browser_net::CollectPipeliningCapabilityStatsOnUIThread(
         http_pipelining_test_server_, io_thread);
+#if defined(OS_WIN)
+    chrome::CollectTimeTicksStats();
+#endif
   }
 }
 
@@ -1699,15 +1579,13 @@ void MetricsService::LogRendererCrash(content::RenderProcessHost* host,
     if (was_extension_process) {
       IncrementPrefValue(prefs::kStabilityExtensionRendererCrashCount);
 
-      UMA_HISTOGRAM_CUSTOM_ENUMERATION("CrashExitCodes.Extension",
-                                       MapCrashExitCodeForHistogram(exit_code),
-                                       GetAllCrashExitCodes());
+      UMA_HISTOGRAM_SPARSE_SLOWLY("CrashExitCodes.Extension",
+                                  MapCrashExitCodeForHistogram(exit_code));
     } else {
       IncrementPrefValue(prefs::kStabilityRendererCrashCount);
 
-      UMA_HISTOGRAM_CUSTOM_ENUMERATION("CrashExitCodes.Renderer",
-                                       MapCrashExitCodeForHistogram(exit_code),
-                                       GetAllCrashExitCodes());
+      UMA_HISTOGRAM_SPARSE_SLOWLY("CrashExitCodes.Renderer",
+                                  MapCrashExitCodeForHistogram(exit_code));
     }
 
     UMA_HISTOGRAM_PERCENTAGE("BrowserRenderProcessHost.ChildCrashes",
@@ -1779,8 +1657,10 @@ void MetricsService::LogPluginLoadingError(const base::FilePath& plugin_path) {
 MetricsService::ChildProcessStats& MetricsService::GetChildProcessStats(
     const content::ChildProcessData& data) {
   const string16& child_name = data.name;
-  if (!ContainsKey(child_process_stats_buffer_, child_name))
-    child_process_stats_buffer_[child_name] = ChildProcessStats(data.type);
+  if (!ContainsKey(child_process_stats_buffer_, child_name)) {
+    child_process_stats_buffer_[child_name] =
+        ChildProcessStats(data.process_type);
+  }
   return child_process_stats_buffer_[child_name];
 }
 
@@ -1903,10 +1783,10 @@ void MetricsService::RecordCurrentState(PrefService* pref) {
 }
 
 // static
-bool MetricsService::IsPluginProcess(content::ProcessType type) {
-  return (type == content::PROCESS_TYPE_PLUGIN ||
-          type == content::PROCESS_TYPE_PPAPI_PLUGIN ||
-          type == content::PROCESS_TYPE_PPAPI_BROKER);
+bool MetricsService::IsPluginProcess(int process_type) {
+  return (process_type == content::PROCESS_TYPE_PLUGIN ||
+          process_type == content::PROCESS_TYPE_PPAPI_PLUGIN ||
+          process_type == content::PROCESS_TYPE_PPAPI_BROKER);
 }
 
 #if defined(OS_CHROMEOS)

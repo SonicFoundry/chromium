@@ -9,15 +9,14 @@ import android.test.suitebuilder.annotation.SmallTest;
 
 import org.chromium.android_webview.AndroidProtocolHandler;
 import org.chromium.android_webview.AwContents;
+import org.chromium.android_webview.AwSettings;
 import org.chromium.android_webview.test.util.CommonResources;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.UrlUtils;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.browser.ContentSettings;
 import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content.browser.LoadUrlParams;
+import org.chromium.content.browser.test.util.Criteria;
+import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content.browser.test.util.HistoryUtils;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
 import org.chromium.net.test.util.TestWebServer;
@@ -26,9 +25,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.util.concurrent.TimeUnit;
 
-public class LoadDataWithBaseUrlTest extends AndroidWebViewTestBase {
-
-    protected static int WAIT_TIMEOUT_SECONDS = 15;
+public class LoadDataWithBaseUrlTest extends AwTestBase {
 
     private TestAwContentsClient mContentsClient;
     private AwContents mAwContents;
@@ -103,7 +100,7 @@ public class LoadDataWithBaseUrlTest extends AndroidWebViewTestBase {
             webServer.setResponseBase64("/" + CommonResources.FAVICON_FILENAME,
                     CommonResources.FAVICON_DATA_BASE64, CommonResources.getImagePngHeaders(true));
 
-            ContentSettings contentSettings = getContentSettingsOnUiThread(mAwContents);
+            AwSettings contentSettings = getAwSettingsOnUiThread(mAwContents);
             contentSettings.setImagesEnabled(true);
             contentSettings.setJavaScriptEnabled(true);
 
@@ -128,7 +125,7 @@ public class LoadDataWithBaseUrlTest extends AndroidWebViewTestBase {
                     CommonResources.getTextJavascriptHeaders(true));
             final String pageHtml = getScriptFileTestPageHtml(scriptUrl);
 
-            getContentSettingsOnUiThread(mAwContents).setJavaScriptEnabled(true);
+            getAwSettingsOnUiThread(mAwContents).setJavaScriptEnabled(true);
             loadDataWithBaseUrlSync(pageHtml, "text/html", false, webServer.getBaseUrl(), null);
             assertEquals(SCRIPT_LOADED, getTitleOnUiThread(mAwContents));
 
@@ -147,7 +144,7 @@ public class LoadDataWithBaseUrlTest extends AndroidWebViewTestBase {
                     CommonResources.ABOUT_HTML, CommonResources.getTextHtmlHeaders(true));
             final String html = getCrossOriginAccessTestPageHtml(frameUrl);
 
-            getContentSettingsOnUiThread(mAwContents).setJavaScriptEnabled(true);
+            getAwSettingsOnUiThread(mAwContents).setJavaScriptEnabled(true);
             loadDataWithBaseUrlSync(html, "text/html", false, webServer.getBaseUrl(), null);
             assertEquals(frameUrl, getTitleOnUiThread(mAwContents));
 
@@ -167,7 +164,7 @@ public class LoadDataWithBaseUrlTest extends AndroidWebViewTestBase {
             final String html = getCrossOriginAccessTestPageHtml(frameUrl);
             final String baseUrl = webServer.getBaseUrl().replaceFirst("localhost", "127.0.0.1");
 
-            getContentSettingsOnUiThread(mAwContents).setJavaScriptEnabled(true);
+            getAwSettingsOnUiThread(mAwContents).setJavaScriptEnabled(true);
             loadDataWithBaseUrlSync(html, "text/html", false, baseUrl, null);
 
             // TODO(mnaganov): Catch a security exception and set the title accordingly,
@@ -182,7 +179,7 @@ public class LoadDataWithBaseUrlTest extends AndroidWebViewTestBase {
     @SmallTest
     @Feature({"AndroidWebView"})
     public void testNullBaseUrl() throws Throwable {
-        getContentSettingsOnUiThread(mAwContents).setJavaScriptEnabled(true);
+        getAwSettingsOnUiThread(mAwContents).setJavaScriptEnabled(true);
         final String pageHtml = "<html><body onload='document.title=document.location.href'>" +
                 "</body></html>";
         loadDataWithBaseUrlSync(pageHtml, "text/html", false, null, null);
@@ -297,7 +294,7 @@ public class LoadDataWithBaseUrlTest extends AndroidWebViewTestBase {
         fos.close();
         String imagePath = tempImage.getAbsolutePath();
 
-        ContentSettings contentSettings = getContentSettingsOnUiThread(mAwContents);
+        AwSettings contentSettings = getAwSettingsOnUiThread(mAwContents);
         contentSettings.setImagesEnabled(true);
         contentSettings.setJavaScriptEnabled(true);
 
@@ -305,7 +302,6 @@ public class LoadDataWithBaseUrlTest extends AndroidWebViewTestBase {
             final String DATA_BASE_URL = "data:";
             final String NON_DATA_BASE_URL = "http://example.com";
 
-            AndroidProtocolHandler.setResourceContextForTesting(getInstrumentation().getContext());
             mAwContents.getSettings().setAllowFileAccess(false);
             String token = "" + System.currentTimeMillis();
             // All access to file://, including android_asset and android_res is blocked
@@ -345,7 +341,6 @@ public class LoadDataWithBaseUrlTest extends AndroidWebViewTestBase {
                   "file://" + imagePath + "?" + token));
         } finally {
           if (!tempImage.delete()) throw new AssertionError();
-          AndroidProtocolHandler.setResourceContextForTesting(null);
         }
     }
 }

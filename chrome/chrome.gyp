@@ -33,7 +33,7 @@
           '../content/content.gyp:content_ppapi_plugin',
           '../content/content.gyp:content_worker',
           '../printing/printing.gyp:printing',
-          '../third_party/WebKit/Source/WebKit/chromium/WebKit.gyp:inspector_resources',
+          '../third_party/WebKit/Source/devtools/devtools.gyp:devtools_frontend_resources',
         ],
       }],
       ['OS=="win"', {
@@ -127,6 +127,10 @@
           'NACL_TARGET_SUBARCH=32',
         ],
       }],
+      ['target_arch=="mipsel"', {
+        'nacl_defines': [
+        ],
+      }],
     ],  # conditions
   },  # variables
   'includes': [
@@ -140,6 +144,7 @@
     'chrome_browser.gypi',
     'chrome_browser_ui.gypi',
     'chrome_common.gypi',
+    'chrome_installer_util.gypi',
     'chrome_tests_unit.gypi',
     'version.gypi',
   ],
@@ -151,7 +156,6 @@
         'chrome_dll.gypi',
         'chrome_exe.gypi',
         'chrome_installer.gypi',
-        'chrome_installer_util.gypi',
         'chrome_renderer.gypi',
         'chrome_tests.gypi',
         'nacl.gypi',
@@ -207,8 +211,12 @@
             '..',
           ],
           'sources': [
+            'browser/devtools/adb_client_socket.cc',
+            'browser/devtools/adb_client_socket.h',
             'browser/devtools/browser_list_tabcontents_provider.cc',
             'browser/devtools/browser_list_tabcontents_provider.h',
+            'browser/devtools/devtools_adb_bridge.cc',
+            'browser/devtools/devtools_adb_bridge.h',
             'browser/devtools/devtools_file_helper.cc',
             'browser/devtools/devtools_file_helper.h',
             'browser/devtools/devtools_toggle_action.h',
@@ -216,6 +224,8 @@
             'browser/devtools/devtools_window.h',
             'browser/devtools/remote_debugging_server.cc',
             'browser/devtools/remote_debugging_server.h',
+            'browser/devtools/tethering_adb_filter.cc',
+            'browser/devtools/tethering_adb_filter.h',
           ],
           'conditions': [
             ['toolkit_uses_gtk == 1', {
@@ -996,7 +1006,6 @@
           'target_name': 'crash_service',
           'type': 'executable',
           'dependencies': [
-            'app/policy/cloud_policy_codegen.gyp:policy',
             'installer_util',
             '../base/base.gyp:base',
             '../breakpad/breakpad.gyp:breakpad_handler',
@@ -1034,6 +1043,27 @@
     ],  # OS=="win"
     ['OS=="win" and target_arch=="ia32"',
       { 'targets': [
+        {
+          'target_name': 'chrome_user32_delay_imports',
+          'type': 'none',
+          'variables': {
+            'lib_dir': '<(INTERMEDIATE_DIR)',
+          },
+          'sources': [
+              'chrome.user32.delay.imports'
+          ],
+          'includes': [
+              '../build/win/importlibs/create_import_lib.gypi',
+          ],
+          'direct_dependent_settings': {
+            'msvs_settings': {
+              'VCLinkerTool': {
+                'AdditionalLibraryDirectories': ['<(lib_dir)', ],
+                'AdditionalDependencies': ['chrome.user32.delay.lib', ],
+              },
+            },
+          },
+        },
         {
           'target_name': 'crash_service_win64',
           'type': 'executable',
@@ -1080,9 +1110,13 @@
           'target_name': 'chrome_java',
           'type': 'none',
           'dependencies': [
+            'chrome_resources.gyp:chrome_strings',
+            'profile_sync_service_model_type_selection_java',
             'toolbar_model_security_levels_java',
             '../base/base.gyp:base',
+            '../components/components.gyp:autofill_java',
             '../components/components.gyp:navigation_interception_java',
+            '../components/components.gyp:sessions',
             '../components/components.gyp:web_contents_delegate_android_java',
             '../content/content.gyp:content_java',
             '../sync/sync.gyp:sync_java',
@@ -1095,6 +1129,9 @@
             'R_package': 'org.chromium.chrome',
             'R_package_relpath': 'org/chromium/chrome',
             'java_strings_grd': 'android_chrome_strings.grd',
+            # Include xml string files generated from generated_resources.grd
+            'res_extra_dirs': ['<(SHARED_INTERMEDIATE_DIR)/chrome/java/res'],
+            'res_extra_files': ['<!@pymod_do_main(grit_info <@(grit_defines) --outputs "<(SHARED_INTERMEDIATE_DIR)/chrome" app/generated_resources.grd)'],
           },
           'includes': [
             '../build/java.gypi',

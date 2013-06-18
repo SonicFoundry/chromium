@@ -2,17 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/autofill/risk/fingerprint.h"
+#include "components/autofill/browser/risk/fingerprint.h"
 
 #include "base/bind.h"
 #include "base/message_loop.h"
 #include "base/port.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/testing_pref_service.h"
-#include "chrome/browser/autofill/risk/proto/fingerprint.pb.h"
-#include "chrome/common/pref_names.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "components/autofill/browser/risk/proto/fingerprint.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebRect.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebScreenInfo.h"
@@ -37,9 +34,6 @@ class AutofillRiskFingerprintTest : public InProcessBrowserTest {
         message_loop_(MessageLoop::TYPE_UI) {}
 
   void GetFingerprintTestCallback(scoped_ptr<Fingerprint> fingerprint) {
-    // TODO(isherman): Investigating http://crbug.com/174296
-    LOG(WARNING) << "Callback called.";
-
     // Verify that all fields Chrome can fill have been filled.
     ASSERT_TRUE(fingerprint->has_machine_characteristics());
     const Fingerprint_MachineCharacteristics& machine =
@@ -69,6 +63,7 @@ class AutofillRiskFingerprintTest : public InProcessBrowserTest {
     ASSERT_TRUE(machine.graphics_card().has_vendor_id());
     ASSERT_TRUE(machine.graphics_card().has_device_id());
     ASSERT_TRUE(machine.has_browser_build());
+    ASSERT_TRUE(machine.has_browser_feature());
 
     ASSERT_TRUE(fingerprint->has_transient_state());
     const Fingerprint_TransientState& transient_state =
@@ -95,6 +90,9 @@ class AutofillRiskFingerprintTest : public InProcessBrowserTest {
               machine.unavailable_screen_size().width());
     EXPECT_EQ(kUnavailableScreenBounds.height(),
               machine.unavailable_screen_size().height());
+    EXPECT_EQ(
+        Fingerprint_MachineCharacteristics_BrowserFeature_FEATURE_AUTOCHECKOUT,
+        machine.browser_feature());
     EXPECT_EQ(kContentBounds.width(),
               transient_state.inner_window_size().width());
     EXPECT_EQ(kContentBounds.height(),
@@ -105,8 +103,6 @@ class AutofillRiskFingerprintTest : public InProcessBrowserTest {
               transient_state.outer_window_size().height());
     EXPECT_EQ(kGaiaId, fingerprint->metadata().gaia_id());
 
-    // TODO(isherman): Investigating http://crbug.com/174296
-    LOG(WARNING) << "Stopping the message loop.";
     message_loop_.Quit();
   }
 
@@ -127,26 +123,19 @@ class AutofillRiskFingerprintTest : public InProcessBrowserTest {
 #endif
 // Test that getting a fingerprint works on some basic level.
 IN_PROC_BROWSER_TEST_F(AutofillRiskFingerprintTest, MAYBE_GetFingerprint) {
-  TestingPrefServiceSimple prefs;
-  prefs.registry()->RegisterStringPref(prefs::kDefaultCharset, kCharset);
-  prefs.registry()->RegisterStringPref(prefs::kAcceptLanguages,
-                                       kAcceptLanguages);
-
   WebKit::WebScreenInfo screen_info;
   screen_info.depth = kScreenColorDepth;
   screen_info.rect = WebKit::WebRect(kScreenBounds);
   screen_info.availableRect = WebKit::WebRect(kAvailableScreenBounds);
 
-  // TODO(isherman): Investigating http://crbug.com/174296
-  LOG(WARNING) << "Loading fingerprint.";
   internal::GetFingerprintInternal(
-      kGaiaId, kWindowBounds, kContentBounds, screen_info, prefs,
+      kGaiaId, kWindowBounds, kContentBounds, screen_info, "25.0.0.123",
+      kCharset, kAcceptLanguages, base::Time::Now(), DIALOG_TYPE_AUTOCHECKOUT,
+      g_browser_process->GetApplicationLocale(),
       base::Bind(&AutofillRiskFingerprintTest::GetFingerprintTestCallback,
                  base::Unretained(this)));
 
   // Wait for the callback to be called.
-  // TODO(isherman): Investigating http://crbug.com/174296
-  LOG(WARNING) << "Waiting for the callback to be called.";
   message_loop_.Run();
 }
 

@@ -5,6 +5,8 @@
 #ifndef UI_MESSAGE_CENTER_MESSAGE_CENTER_TRAY_DELEGATE_H_
 #define UI_MESSAGE_CENTER_MESSAGE_CENTER_TRAY_DELEGATE_H_
 
+#include "ui/message_center/message_center_export.h"
+
 namespace message_center {
 
 // A MessageCenterTrayDelegate class is responsible for managing the various UI
@@ -33,10 +35,6 @@ class MESSAGE_CENTER_EXPORT MessageCenterTrayDelegate {
 
   // Remove the message center from the UI.
   virtual void HideMessageCenter() = 0;
-
-  // Called when a change to the message center could cause a change to the
-  // message center widget that is currently being displayed.
-  virtual void UpdateMessageCenter() = 0;
 };
 
 }  // namespace message_center

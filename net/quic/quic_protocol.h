@@ -17,7 +17,7 @@
 #include "base/basictypes.h"
 #include "base/hash_tables.h"
 #include "base/logging.h"
-#include "base/string_piece.h"
+#include "base/strings/string_piece.h"
 #include "net/base/int128.h"
 #include "net/base/net_export.h"
 #include "net/quic/quic_bandwidth.h"
@@ -37,6 +37,7 @@ typedef QuicPacketSequenceNumber QuicFecGroupNumber;
 typedef uint64 QuicPublicResetNonceProof;
 typedef uint8 QuicPacketEntropyHash;
 typedef uint32 QuicVersionTag;
+typedef std::vector<QuicVersionTag> QuicVersionTagList;
 
 // TODO(rch): Consider Quic specific names for these constants.
 // Maximum size in bytes of a QUIC packet.
@@ -72,6 +73,8 @@ NET_EXPORT_PRIVATE size_t GetPublicResetPacketSize();
 NET_EXPORT_PRIVATE size_t GetStartOfFecProtectedData(bool include_version);
 // Index of the first byte in a QUIC packet of encrypted data.
 NET_EXPORT_PRIVATE size_t GetStartOfEncryptedData(bool include_version);
+// Returns true if |version| is a supported protocol version.
+NET_EXPORT_PRIVATE bool IsSupportedVersion(QuicVersionTag version);
 
 // Index of the first byte in a QUIC packet which is used in hash calculation.
 const size_t kStartOfHashData = 0;
@@ -87,6 +90,16 @@ const QuicStreamId kCryptoStreamId = 1;
 const uint8 kNoFecOffset = 0xFF;
 
 const int64 kDefaultTimeoutUs = 600000000;  // 10 minutes.
+
+enum Retransmission {
+  NOT_RETRANSMISSION = 0,
+  IS_RETRANSMISSION = 1,
+};
+
+enum HasRetransmittableData {
+  HAS_RETRANSMITTABLE_DATA = 0,
+  NO_RETRANSMITTABLE_DATA = 1,
+};
 
 enum QuicFrameType {
   PADDING_FRAME = 0,
@@ -114,21 +127,32 @@ enum QuicPacketPrivateFlags {
   PACKET_PRIVATE_FLAGS_MAX = (1 << 3) - 1  // All bits set.
 };
 
-enum QuicErrorCode {
-  // Stream errors.
-  QUIC_NO_ERROR = 0,
+enum QuicRstStreamErrorCode {
+  QUIC_STREAM_NO_ERROR = 0,
 
-  // There were data frames after the a fin or reset.
-  QUIC_STREAM_DATA_AFTER_TERMINATION,
   // There was some server error which halted stream processing.
   QUIC_SERVER_ERROR_PROCESSING_STREAM,
   // We got two fin or reset offsets which did not match.
   QUIC_MULTIPLE_TERMINATION_OFFSETS,
   // We got bad payload and can not respond to it at the protocol level.
   QUIC_BAD_APPLICATION_PAYLOAD,
+  // Stream closed due to connection error. No reset frame is sent when this
+  // happens.
+  QUIC_STREAM_CONNECTION_ERROR,
+  // GoAway frame sent. No more stream can be created.
+  QUIC_STREAM_PEER_GOING_AWAY,
 
-  // Connection errors.
+  // No error. Used as bound while iterating.
+  QUIC_STREAM_LAST_ERROR,
+};
 
+enum QuicErrorCode {
+  QUIC_NO_ERROR = 0,
+
+  // Connection has reached an invalid state.
+  QUIC_INTERNAL_ERROR,
+  // There were data frames after the a fin or reset.
+  QUIC_STREAM_DATA_AFTER_TERMINATION,
   // Control frame is malformed.
   QUIC_INVALID_PACKET_HEADER,
   // Frame data is malformed.
@@ -143,6 +167,8 @@ enum QuicErrorCode {
   QUIC_INVALID_GOAWAY_DATA,
   // Ack data is malformed.
   QUIC_INVALID_ACK_DATA,
+  // Version negotiation packet is malformed.
+  QUIC_INVALID_VERSION_NEGOTIATION_PACKET,
   // There was an error decrypting.
   QUIC_DECRYPTION_FAILURE,
   // There was an error encrypting.
@@ -159,6 +185,8 @@ enum QuicErrorCode {
   QUIC_TOO_MANY_OPEN_STREAMS,
   // Received public reset for this connection.
   QUIC_PUBLIC_RESET,
+  // Invalid protocol version
+  QUIC_INVALID_VERSION,
 
   // We hit our prenegotiated (or default) timeout
   QUIC_CONNECTION_TIMED_OUT,
@@ -182,6 +210,25 @@ enum QuicErrorCode {
   // A crypto message was received with a parameter that has no overlap
   // with the local parameter.
   QUIC_CRYPTO_MESSAGE_PARAMETER_NO_OVERLAP,
+  // A crypto message was received that contained a parameter with too few
+  // values.
+  QUIC_CRYPTO_MESSAGE_INDEX_NOT_FOUND,
+  // An internal error occured in crypto processing.
+  QUIC_CRYPTO_INTERNAL_ERROR,
+  // A crypto handshake message specified an unsupported version.
+  QUIC_CRYPTO_VERSION_NOT_SUPPORTED,
+  // There was no intersection between the crypto primitives supported by the
+  // peer and ourselves.
+  QUIC_CRYPTO_NO_SUPPORT,
+  // The server rejected our client hello messages too many times.
+  QUIC_CRYPTO_TOO_MANY_REJECTS,
+  // The client rejected the server's certificate chain or signature.
+  QUIC_PROOF_INVALID,
+  // A crypto message was received with a duplicate tag.
+  QUIC_CRYPTO_DUPLICATE_TAG,
+
+  // No error. Used as bound while iterating.
+  QUIC_LAST_ERROR,
 };
 
 // Version and Crypto tags are written to the wire with a big-endian
@@ -190,23 +237,36 @@ enum QuicErrorCode {
 // following 4 bytes: 'C' 'H' 'L' 'O'.  Since it is
 // stored in memory as a little endian uint32, we need
 // to reverse the order of the bytes.
-#define MAKE_TAG(a, b, c, d) ((d << 24) + (c << 16) + (b << 8) + a)
+//
+// The TAG macro is used in header files to ensure that we don't create static
+// initialisers. In normal code, the MakeQuicTag function should be used.
+#define TAG(a, b, c, d) ((d << 24) + (c << 16) + (b << 8) + a)
+const QuicVersionTag kUnsupportedVersion = -1;
+const QuicVersionTag kQuicVersion1 = TAG('Q', '1', '.', '0');
+#undef TAG
 
-const QuicVersionTag kQuicVersion1 = MAKE_TAG('Q', '1', '.', '0');
+// MakeQuicTag returns a value given the four bytes. For example:
+//   MakeQuicTag('C', 'H', 'L', 'O');
+uint32 NET_EXPORT_PRIVATE MakeQuicTag(char a, char b, char c, char d);
 
 struct NET_EXPORT_PRIVATE QuicPacketPublicHeader {
+  QuicPacketPublicHeader();
+  explicit QuicPacketPublicHeader(const QuicPacketPublicHeader& other);
+  ~QuicPacketPublicHeader();
+
+  QuicPacketPublicHeader& operator=(const QuicPacketPublicHeader& other);
+
   // Universal header. All QuicPacket headers will have a guid and public flags.
   QuicGuid guid;
   bool reset_flag;
   bool version_flag;
-  QuicVersionTag version;
+  QuicVersionTagList versions;
 };
 
 // Header for Data or FEC packets.
-struct QuicPacketHeader {
-  QuicPacketHeader() {}
-  explicit QuicPacketHeader(const QuicPacketPublicHeader& header)
-      : public_header(header) {}
+struct NET_EXPORT_PRIVATE QuicPacketHeader {
+  QuicPacketHeader();
+  explicit QuicPacketHeader(const QuicPacketPublicHeader& header);
 
   NET_EXPORT_PRIVATE friend std::ostream& operator<<(
       std::ostream& os, const QuicPacketHeader& s);
@@ -220,7 +280,7 @@ struct QuicPacketHeader {
   QuicFecGroupNumber fec_group;
 };
 
-struct QuicPublicResetPacket {
+struct NET_EXPORT_PRIVATE QuicPublicResetPacket {
   QuicPublicResetPacket() {}
   explicit QuicPublicResetPacket(const QuicPacketPublicHeader& header)
       : public_header(header) {}
@@ -228,6 +288,14 @@ struct QuicPublicResetPacket {
   QuicPacketSequenceNumber rejected_sequence_number;
   QuicPublicResetNonceProof nonce_proof;
 };
+
+enum QuicVersionNegotiationState {
+  START_NEGOTIATION = 0,
+  SENT_NEGOTIATION_PACKET,
+  NEGOTIATED_VERSION
+};
+
+typedef QuicPacketPublicHeader QuicVersionNegotiationPacket;
 
 // A padding frame contains no payload.
 struct NET_EXPORT_PRIVATE QuicPaddingFrame {
@@ -272,6 +340,10 @@ struct NET_EXPORT_PRIVATE ReceivedPacketInfo {
   // list.
   QuicPacketSequenceNumber largest_observed;
 
+  // Time elapsed since largest_observed was received until this Ack frame was
+  // sent.
+  QuicTime::Delta delta_time_largest_observed;
+
   // TODO(satyamshekhar): Can be optimized using an interval set like data
   // structure.
   // The set of packets which we're expecting and have not received.
@@ -309,6 +381,7 @@ struct NET_EXPORT_PRIVATE QuicAckFrame {
   // Testing convenience method to construct a QuicAckFrame with all packets
   // from least_unacked to largest_observed acked.
   QuicAckFrame(QuicPacketSequenceNumber largest_observed,
+               QuicTime largest_observed_receive_time,
                QuicPacketSequenceNumber least_unacked);
 
   NET_EXPORT_PRIVATE friend std::ostream& operator<<(
@@ -363,13 +436,13 @@ struct NET_EXPORT_PRIVATE QuicCongestionFeedbackFrame {
 
 struct NET_EXPORT_PRIVATE QuicRstStreamFrame {
   QuicRstStreamFrame() {}
-  QuicRstStreamFrame(QuicStreamId stream_id, QuicErrorCode error_code)
+  QuicRstStreamFrame(QuicStreamId stream_id, QuicRstStreamErrorCode error_code)
       : stream_id(stream_id), error_code(error_code) {
     DCHECK_LE(error_code, std::numeric_limits<uint8>::max());
   }
 
   QuicStreamId stream_id;
-  QuicErrorCode error_code;
+  QuicRstStreamErrorCode error_code;
   std::string error_details;
 };
 
@@ -388,6 +461,18 @@ struct NET_EXPORT_PRIVATE QuicGoAwayFrame {
   QuicErrorCode error_code;
   QuicStreamId last_good_stream_id;
   std::string reason_phrase;
+};
+
+// EncryptionLevel enumerates the stages of encryption that a QUIC connection
+// progresses through. When retransmitting a packet, the encryption level needs
+// to be specified so that it is retransmitted at a level which the peer can
+// understand.
+enum EncryptionLevel {
+  ENCRYPTION_NONE = 0,
+  ENCRYPTION_INITIAL = 1,
+  ENCRYPTION_FORWARD_SECURE = 2,
+
+  NUM_ENCRYPTION_LEVELS,
 };
 
 struct NET_EXPORT_PRIVATE QuicFrame {
@@ -557,8 +642,14 @@ class NET_EXPORT_PRIVATE RetransmittableFrames {
   const QuicFrame& AddNonStreamFrame(const QuicFrame& frame);
   const QuicFrames& frames() const { return frames_; }
 
+  void set_encryption_level(EncryptionLevel level);
+  EncryptionLevel encryption_level() const {
+    return encryption_level_;
+  }
+
  private:
   QuicFrames frames_;
+  EncryptionLevel encryption_level_;
   // Data referenced by the StringPiece of a QuicStreamFrame.
   std::vector<std::string*> stream_data_;
 

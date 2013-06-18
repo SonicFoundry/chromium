@@ -4,6 +4,8 @@
 
 #include "ash/test/test_suite.h"
 
+#include "ash/ash_switches.h"
+#include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/path_service.h"
 #include "build/build_config.h"
@@ -36,14 +38,16 @@ void AuraShellTestSuite::Initialize() {
   base::TestSuite::Initialize();
 
 #if defined(OS_WIN)
-  if (base::win::GetVersion() >= base::win::VERSION_WIN8) {
+  if (base::win::GetVersion() >= base::win::VERSION_WIN8 &&
+      !CommandLine::ForCurrentProcess()->HasSwitch(
+          ash::switches::kForceAshToDesktop)) {
     ASSERT_TRUE(win8::RegisterTestDefaultBrowser(
         win8::test::kDefaultTestAppUserModelId,
         win8::test::kDefaultTestExeName));
 
     ui::win::CreateATLModuleIfNeeded();
 
-    std::vector<string16> choices;
+    std::vector<base::string16> choices;
     win8::OpenWithDialogController controller;
     controller.RunSynchronously(NULL, L"http", win8::test::kDefaultTestExeName,
                                 &choices);

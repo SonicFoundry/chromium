@@ -20,6 +20,18 @@ $ python
 
 ChromeDriver will use the system installed Chrome by default.
 
+To use ChromeDriver2 with Chrome on Android pass the Android package name in the
+chromeOptions.androidPackage capability when creating the driver. The path to
+adb_commands.py and the adb tool from the Android SDK must be set in PATH. For
+more detailed instructions see the wiki:
+    https://code.google.com/p/chromedriver/wiki/ChromeDriver2forAndroid
+
+NOTE: on 64-bit OSX machines (most modern ones, including laptops) it is
+necessary to set the environment variable VERSIONER_PYTHON_PREFER_32_BIT=yes,
+because the 'chromedriver2.so' library is 32-bit, while on 64-bit OSX machines
+(most modern ones including laptops), python starts as a 64-bit binary by
+default and would not be able to load the library.
+
 =====Architecture=====
 ChromeDriver is shipped separately from Chrome. It controls Chrome out of
 process through DevTools (WebKit Inspector). ChromeDriver is a shared library
@@ -36,6 +48,30 @@ background.
 ChromeDriver is also available as a standalone server executable which
 communicates via the WebDriver JSON wire protocol. This can be used with the
 open source WebDriver client libraries.
+
+=====Code structure=====
+Code under the 'chrome' subdirectory is intended to be unaware of WebDriver and
+serve as a basic C++ interface for controlling Chrome remotely via DevTools.
+As such, it should not have any WebDriver-related dependencies.
+
+1) chrome/test/chromedriver
+Implements chromedriver commands.
+
+2) chrome/test/chromedriver/chrome
+Code to deal with chrome specific stuff, like starting Chrome on different OS
+platforms, controlling Chrome via DevTools, handling events from DevTools, etc.
+
+3) chrome/test/chromedriver/js
+Javascript helper scripts.
+
+4) chrome/test/chromedriver/net
+Code to deal with network communication, such as connection to DevTools.
+
+5) chrome/test/chromedriver/server
+Code for the chromedriver server.
+
+6) chrome/test/chromedriver/third_party
+Third party libraries used by chromedriver.
 
 =====Testing=====
 There are 4 test suites for verifying ChromeDriver's correctness:
@@ -61,6 +97,6 @@ See http://src.chromium.org/viewvc/chrome/trunk/deps/third_party/webdriver
 
 =====Contributing=====
 Find an open issue and submit a patch for review by an individual listed in
-the OWNERS file in this directory. Issues are tracked in chromium's issue
-tracker with Feature=WebDriver:
-    https://code.google.com/p/chromium/issues/list?q=feature%3Dwebdriver
+the OWNERS file in this directory. Issues are tracked in chromedriver's issue
+tracker:
+    https://code.google.com/p/chromedriver/issues/list

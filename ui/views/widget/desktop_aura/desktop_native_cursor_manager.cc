@@ -6,23 +6,32 @@
 
 #include "ui/aura/root_window.h"
 #include "ui/base/cursor/cursor_loader.h"
+#include "ui/views/widget/desktop_aura/desktop_cursor_loader_updater.h"
 
 namespace views {
 
 DesktopNativeCursorManager::DesktopNativeCursorManager(
-    aura::RootWindow* window)
+    aura::RootWindow* window,
+    scoped_ptr<DesktopCursorLoaderUpdater> cursor_loader_updater)
     : root_window_(window),
+      cursor_loader_updater_(cursor_loader_updater.Pass()),
       cursor_loader_(ui::CursorLoader::Create()) {
+  if (cursor_loader_updater_.get())
+    cursor_loader_updater_->OnCreate(root_window_, cursor_loader_.get());
 }
 
 DesktopNativeCursorManager::~DesktopNativeCursorManager() {
 }
 
-void DesktopNativeCursorManager::SetDeviceScaleFactor(
-    float device_scale_factor,
+void DesktopNativeCursorManager::SetDisplay(
+    const gfx::Display& display,
     views::corewm::NativeCursorManagerDelegate* delegate) {
   cursor_loader_->UnloadAll();
-  cursor_loader_->set_device_scale_factor(device_scale_factor);
+  cursor_loader_->set_display(display);
+
+  if (cursor_loader_updater_.get())
+    cursor_loader_updater_->OnDisplayUpdated(display, cursor_loader_.get());
+
   SetCursor(delegate->GetCurrentCursor(), delegate);
 }
 
@@ -64,6 +73,11 @@ void DesktopNativeCursorManager::SetMouseEventsEnabled(
   SetVisibility(delegate->GetCurrentVisibility(), delegate);
 
   root_window_->OnMouseEventsEnableStateChanged(enabled);
+}
+
+void DesktopNativeCursorManager::SetCursorResourceModule(
+    const string16& module_name) {
+  cursor_loader_->SetCursorResourceModule(module_name);
 }
 
 }  // namespace views

@@ -36,11 +36,12 @@
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/tracked_objects.h"
-#include "cc/switches.h"
+#include "cc/base/switches.h"
 #include "content/browser/appcache/appcache_dispatcher_host.h"
 #include "content/browser/appcache/chrome_appcache_service.h"
 #include "content/browser/browser_main.h"
 #include "content/browser/browser_main_loop.h"
+#include "content/browser/browser_plugin/browser_plugin_geolocation_permission_context.h"
 #include "content/browser/browser_plugin/browser_plugin_message_filter.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/device_orientation/orientation_message_filter.h"
@@ -52,10 +53,11 @@
 #include "content/browser/geolocation/geolocation_dispatcher_host.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/browser/gpu/gpu_process_host.h"
+#include "content/browser/gpu/shader_disk_cache.h"
 #include "content/browser/histogram_message_filter.h"
 #include "content/browser/hyphenator/hyphenator_message_filter.h"
-#include "content/browser/in_process_webkit/indexed_db_context_impl.h"
 #include "content/browser/in_process_webkit/indexed_db_dispatcher_host.h"
+#include "content/browser/indexed_db/indexed_db_context_impl.h"
 #include "content/browser/loader/resource_message_filter.h"
 #include "content/browser/loader/resource_scheduler_filter.h"
 #include "content/browser/media/media_internals.h"
@@ -83,18 +85,19 @@
 #include "content/browser/renderer_host/socket_stream_dispatcher_host.h"
 #include "content/browser/renderer_host/text_input_client_message_filter.h"
 #include "content/browser/resolve_proxy_msg_helper.h"
-#include "content/browser/storage_partition_impl.h"
 #include "content/browser/speech/input_tag_speech_dispatcher_host.h"
 #include "content/browser/speech/speech_recognition_dispatcher_host.h"
+#include "content/browser/storage_partition_impl.h"
 #include "content/browser/tracing/trace_message_filter.h"
 #include "content/browser/webui/web_ui_controller_factory_registry.h"
-#include "content/browser/worker_host/worker_storage_partition.h"
 #include "content/browser/worker_host/worker_message_filter.h"
+#include "content/browser/worker_host/worker_storage_partition.h"
 #include "content/common/child_process_host_impl.h"
 #include "content/common/child_process_messages.h"
 #include "content/common/gpu/gpu_messages.h"
 #include "content/common/resource_messages.h"
 #include "content/common/view_messages.h"
+#include "content/port/browser/render_widget_host_view_frame_subscriber.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/notification_service.h"
@@ -109,6 +112,7 @@
 #include "content/public/common/url_constants.h"
 #include "content/renderer/render_process_impl.h"
 #include "content/renderer/render_thread_impl.h"
+#include "gpu/command_buffer/service/gpu_switches.h"
 #include "ipc/ipc_channel.h"
 #include "ipc/ipc_logging.h"
 #include "ipc/ipc_platform_file.h"
@@ -121,11 +125,14 @@
 #include "ui/gl/gl_switches.h"
 #include "webkit/fileapi/sandbox_mount_point_provider.h"
 #include "webkit/glue/resource_type.h"
+#include "webkit/media/media_switches.h"
 #include "webkit/plugins/plugin_switches.h"
 
 #if defined(OS_WIN)
 #include "base/win/scoped_com_initializer.h"
 #include "content/common/font_cache_dispatcher_win.h"
+#include "content/common/sandbox_win.h"
+#include "content/public/common/sandboxed_process_launcher_delegate.h"
 #endif
 
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -135,6 +142,19 @@ extern bool g_exited_main_message_loop;
 static const char* kSiteProcessMapKeyName = "content_site_process_map";
 
 namespace content {
+namespace {
+
+base::MessageLoop* g_in_process_thread;
+
+void CacheShaderInfo(int32 id, base::FilePath path) {
+  ShaderCacheFactory::GetInstance()->SetCacheInfo(id, path);
+}
+
+void RemoveShaderInfo(int32 id) {
+  ShaderCacheFactory::GetInstance()->RemoveCacheInfo(id);
+}
+
+}  // namespace
 
 // This class creates the IO thread for the renderer when running in
 // single-process mode.  It's not used in multi-process mode.
@@ -153,9 +173,11 @@ class RendererMainThread : public base::Thread {
   virtual void Init() OVERRIDE {
     render_process_.reset(new RenderProcessImpl());
     new RenderThreadImpl(channel_id_);
+    g_in_process_thread = message_loop();
   }
 
   virtual void CleanUp() OVERRIDE {
+    g_in_process_thread = NULL;
     render_process_.reset();
 
     // It's a little lame to manually set this flag.  But the single process
@@ -215,6 +237,9 @@ class RendererURLRequestContextSelector
 base::LazyInstance<IDMap<RenderProcessHost> >::Leaky
     g_all_hosts = LAZY_INSTANCE_INITIALIZER;
 
+base::LazyInstance<scoped_refptr<BrowserPluginGeolocationPermissionContext> >
+    g_browser_plugin_geolocation_context = LAZY_INSTANCE_INITIALIZER;
+
 // Map of site to process, to ensure we only have one RenderProcessHost per
 // site in process-per-site mode.  Each map is specific to a BrowserContext.
 class SiteProcessMap : public base::SupportsUserData::Data {
@@ -269,6 +294,31 @@ SiteProcessMap* GetSiteProcessMapForBrowserContext(BrowserContext* context) {
   }
   return map;
 }
+
+#if defined(OS_WIN)
+// NOTE: changes to this class need to be reviewed by the security team.
+class RendererSandboxedProcessLauncherDelegate
+    : public content::SandboxedProcessLauncherDelegate {
+ public:
+  RendererSandboxedProcessLauncherDelegate() {}
+  virtual ~RendererSandboxedProcessLauncherDelegate() {}
+
+  virtual void ShouldSandbox(bool* in_sandbox) OVERRIDE {
+#if !defined (GOOGLE_CHROME_BUILD)
+    if (CommandLine::ForCurrentProcess()->HasSwitch(
+        switches::kInProcessPlugins)) {
+      *in_sandbox = false;
+    }
+#endif
+  }
+
+  virtual void PreSpawnTarget(sandbox::TargetPolicy* policy,
+                              bool* success) {
+    AddBaseHandleClosePolicy(policy);
+    GetContentClient()->browser()->PreSpawnRenderer(policy, success);
+  }
+};
+#endif  // OS_WIN
 
 }  // namespace
 
@@ -326,15 +376,16 @@ void RenderProcessHost::SetMaxRendererProcessCount(size_t count) {
 RenderProcessHostImpl::RenderProcessHostImpl(
     BrowserContext* browser_context,
     StoragePartitionImpl* storage_partition_impl,
+    bool supports_browser_plugin,
     bool is_guest)
         : fast_shutdown_started_(false),
           deleting_soon_(false),
           pending_views_(0),
           visible_widgets_(0),
           backgrounded_(true),
-          ALLOW_THIS_IN_INITIALIZER_LIST(cached_dibs_cleaner_(
-                FROM_HERE, base::TimeDelta::FromSeconds(5),
-                this, &RenderProcessHostImpl::ClearTransportDIBCache)),
+          cached_dibs_cleaner_(
+              FROM_HERE, base::TimeDelta::FromSeconds(5),
+              this, &RenderProcessHostImpl::ClearTransportDIBCache),
           is_initialized_(false),
           id_(ChildProcessHostImpl::GenerateChildProcessUniqueId()),
           browser_context_(browser_context),
@@ -344,6 +395,7 @@ RenderProcessHostImpl::RenderProcessHostImpl(
 #if defined(OS_ANDROID)
           dummy_shutdown_event_(false, false),
 #endif
+          supports_browser_plugin_(supports_browser_plugin),
           is_guest_(is_guest) {
   widget_helper_ = new RenderWidgetHelper();
 
@@ -354,6 +406,15 @@ RenderProcessHostImpl::RenderProcessHostImpl(
   g_all_hosts.Get().set_check_on_null_data(true);
   // Initialize |child_process_activity_time_| to a reasonable value.
   mark_child_process_activity_time();
+
+  if (!GetBrowserContext()->IsOffTheRecord() &&
+      !CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableGpuShaderDiskCache)) {
+    BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                            base::Bind(&CacheShaderInfo, GetID(),
+                                       storage_partition_impl_->GetPath()));
+  }
+
   // Note: When we create the RenderProcessHostImpl, it's technically
   //       backgrounded, because it has no visible listeners.  But the process
   //       doesn't actually exist yet, so we'll Background it later, after
@@ -373,6 +434,12 @@ RenderProcessHostImpl::~RenderProcessHostImpl() {
 
   ClearTransportDIBCache();
   UnregisterHost(GetID());
+
+  if (!CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kDisableGpuShaderDiskCache)) {
+    BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                            base::Bind(&RemoveShaderInfo, GetID()));
+  }
 }
 
 void RenderProcessHostImpl::EnableSendQueue() {
@@ -382,7 +449,7 @@ void RenderProcessHostImpl::EnableSendQueue() {
 bool RenderProcessHostImpl::Init() {
   // calling Init() more than once does nothing, this makes it more convenient
   // for the view host which may not be sure in some cases
-  if (channel_.get())
+  if (channel_)
     return true;
 
   CommandLine::StringType renderer_prefix;
@@ -439,13 +506,13 @@ bool RenderProcessHostImpl::Init() {
     in_process_renderer_.reset(new RendererMainThread(channel_id));
 
     base::Thread::Options options;
-#if !defined(TOOLKIT_GTK) && !defined(OS_ANDROID)
+#if defined(OS_WIN) && !defined(OS_MACOSX)
     // In-process plugins require this to be a UI message loop.
-    options.message_loop_type = MessageLoop::TYPE_UI;
+    options.message_loop_type = base::MessageLoop::TYPE_UI;
 #else
-    // We can't have multiple UI loops on GTK and Android, so we don't support
+    // We can't have multiple UI loops on Linux and Android, so we don't support
     // in-process plugins.
-    options.message_loop_type = MessageLoop::TYPE_DEFAULT;
+    options.message_loop_type = base::MessageLoop::TYPE_DEFAULT;
 #endif
     in_process_renderer_->StartWithOptions(options);
 
@@ -464,7 +531,7 @@ bool RenderProcessHostImpl::Init() {
     // at this stage.
     child_process_launcher_.reset(new ChildProcessLauncher(
 #if defined(OS_WIN)
-        base::FilePath(),
+        new RendererSandboxedProcessLauncherDelegate,
 #elif defined(OS_POSIX)
         renderer_prefix.empty(),
         base::EnvironmentVector(),
@@ -490,11 +557,9 @@ void RenderProcessHostImpl::CreateMessageFilters() {
   MediaInternals* media_internals = MediaInternals::GetInstance();;
   // Add BrowserPluginMessageFilter to ensure it gets the first stab at messages
   // from guests.
-  if (IsGuest()) {
+  if (supports_browser_plugin_) {
     scoped_refptr<BrowserPluginMessageFilter> bp_message_filter(
-        new BrowserPluginMessageFilter(
-            GetID(),
-            GetBrowserContext()));
+        new BrowserPluginMessageFilter(GetID(), IsGuest()));
     channel_->AddFilter(bp_message_filter);
   }
 
@@ -544,8 +609,17 @@ void RenderProcessHostImpl::CreateMessageFilters() {
       new IndexedDBDispatcherHost(
           GetID(),
           storage_partition_impl_->GetIndexedDBContext()));
-  channel_->AddFilter(GeolocationDispatcherHost::New(
-      GetID(), browser_context->GetGeolocationPermissionContext()));
+  if (IsGuest()) {
+    if (!g_browser_plugin_geolocation_context.Get()) {
+      g_browser_plugin_geolocation_context.Get() =
+          new BrowserPluginGeolocationPermissionContext();
+    }
+    channel_->AddFilter(GeolocationDispatcherHost::New(
+        GetID(), g_browser_plugin_geolocation_context.Get()));
+  } else {
+    channel_->AddFilter(GeolocationDispatcherHost::New(
+        GetID(), browser_context->GetGeolocationPermissionContext()));
+  }
   gpu_message_filter_ = new GpuMessageFilter(GetID(), widget_helper_.get());
   channel_->AddFilter(gpu_message_filter_);
 #if defined(ENABLE_WEBRTC)
@@ -554,8 +628,7 @@ void RenderProcessHostImpl::CreateMessageFilters() {
   channel_->AddFilter(new MediaStreamDispatcherHost(GetID()));
 #endif
 #if defined(ENABLE_PLUGINS)
-  channel_->AddFilter(new PepperMessageFilter(PROCESS_TYPE_RENDERER,
-                                              GetID(), browser_context));
+  channel_->AddFilter(new PepperMessageFilter(GetID(), browser_context));
 #endif
 #if defined(ENABLE_INPUT_SPEECH)
   channel_->AddFilter(new InputTagSpeechDispatcherHost(
@@ -595,6 +668,7 @@ void RenderProcessHostImpl::CreateMessageFilters() {
               storage_partition_impl_->GetURLRequestContext(),
               storage_partition_impl_->GetMediaURLRequestContext(),
               storage_partition_impl_->GetAppCacheService(),
+              storage_partition_impl_->GetQuotaManager(),
               storage_partition_impl_->GetFileSystemContext(),
               storage_partition_impl_->GetDatabaseTracker(),
               storage_partition_impl_->GetIndexedDBContext()),
@@ -620,10 +694,6 @@ void RenderProcessHostImpl::CreateMessageFilters() {
 
 int RenderProcessHostImpl::GetNextRoutingID() {
   return widget_helper_->GetNextRoutingID();
-}
-
-void RenderProcessHostImpl::CancelResourceRequests(int render_widget_id) {
-  widget_helper_->CancelResourceRequests(render_widget_id);
 }
 
 void RenderProcessHostImpl::SimulateSwapOutACK(
@@ -728,23 +798,15 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
   // Propagate the following switches to the renderer command line (along
   // with any associated values) if present in the browser command line.
   static const char* const kSwitchNames[] = {
-    // We propagate the Chrome Frame command line here as well in case the
-    // renderer is not run in the sandbox.
     switches::kAudioBufferSize,
     switches::kAuditAllHandles,
     switches::kAuditHandles,
-    switches::kChromeFrame,
     switches::kDisable3DAPIs,
     switches::kDisableAcceleratedCompositing,
     switches::kDisableAcceleratedVideoDecode,
     switches::kDisableApplicationCache,
     switches::kDisableAudio,
-    switches::kDisableAudioOutputResampler,
     switches::kDisableBreakpad,
-#if defined(OS_MACOSX)
-    switches::kDisableCompositedCoreAnimationPlugins,
-#endif
-    switches::kDisableDataTransferItems,
     switches::kDisableDatabases,
     switches::kDisableDesktopNotifications,
     switches::kDisableDeviceOrientation,
@@ -752,28 +814,29 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
     switches::kDisableGeolocation,
     switches::kDisableGLMultisampling,
     switches::kDisableGpuVsync,
+    switches::kDisableGpu,
     switches::kDisableHistogramCustomizer,
     switches::kDisableJavaScriptI18NAPI,
     switches::kDisableLocalStorage,
     switches::kDisableLogging,
     switches::kDisableSeccompFilterSandbox,
-    switches::kDisableSeccompSandbox,
     switches::kDisableSessionStorage,
     switches::kDisableSharedWorkers,
     switches::kDisableSpeechInput,
+    switches::kDisableTouchDragDrop,
+    switches::kDisableTouchEditing,
 #if defined(OS_ANDROID)
     switches::kEnableWebAudio,
     switches::kEnableWebRTC,
 #else
     switches::kDisableWebAudio,
 #endif
-    switches::kEnableWebAudioInput,
-    switches::kDisableWebSockets,
+    switches::kEnableWebMIDI,
+    switches::kEnableExperimentalCanvasFeatures,
+    switches::kEnableExperimentalWebSocket,
     switches::kDomAutomationController,
     switches::kEnableAccessibilityLogging,
-    switches::kEnableBrowserPluginCompositing,
     switches::kEnableBrowserPluginForAllViewTypes,
-    switches::kEnableBrowserPluginPointerLock,
     switches::kEnableDCHECK,
     switches::kEnableDelegatedRenderer,
     switches::kDisableEncryptedMedia,
@@ -786,22 +849,27 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
     switches::kEnableGpuBenchmarking,
     switches::kEnableMemoryBenchmarking,
     switches::kEnableLogging,
+    switches::kEnableSpeechSynthesis,
+    switches::kEnableTouchDragDrop,
+    switches::kEnableTouchEditing,
+    switches::kEnableVsyncNotification,
+    switches::kEnableWebPInAcceptHeader,
     switches::kDisableMediaSource,
-    switches::kDisableRendererSideMixing,
     switches::kEnableStrictSiteIsolation,
     switches::kDisableFullScreen,
     switches::kEnableNewDialogStyle,
 #if defined(ENABLE_PLUGINS)
     switches::kEnablePepperTesting,
+    switches::kDisablePepper3d,
 #endif
     switches::kEnablePreparsedJsCaching,
     switches::kEnablePruneGpuCommandBuffers,
     switches::kEnablePinch,
+    switches::kDisablePinch,
 #if defined(OS_MACOSX)
     // Allow this to be set when invoking the browser and relayed along.
     switches::kEnableSandboxLogging,
 #endif
-    switches::kEnableSeccompSandbox,
     switches::kEnableSoftwareCompositingGLAdapter,
     switches::kEnableStatsTable,
     switches::kEnableThreadedCompositing,
@@ -809,17 +877,17 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
     switches::kEnableHighDpiCompositingForFixedPosition,
     switches::kDisableCompositingForFixedPosition,
     switches::kEnableAcceleratedPainting,
-    switches::kEnableTouchDragDrop,
     switches::kDisableThreadedCompositing,
     switches::kDisableTouchAdjustment,
     switches::kDefaultTileWidth,
     switches::kDefaultTileHeight,
     switches::kMaxUntiledLayerWidth,
     switches::kMaxUntiledLayerHeight,
-    switches::kShowFPSCounter,
     switches::kEnableViewport,
     switches::kEnableOpusPlayback,
     switches::kEnableVp9Playback,
+    switches::kEnableVp8AlphaPlayback,
+    switches::kEnableEac3Playback,
     switches::kForceDeviceScaleFactor,
     switches::kFullMemoryCrashReport,
 #if !defined (GOOGLE_CHROME_BUILD)
@@ -827,18 +895,16 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
     // for official Google Chrome builds.
     switches::kInProcessPlugins,
 #endif  // GOOGLE_CHROME_BUILD
-    switches::kInProcessWebGL,
     switches::kJavaScriptFlags,
     switches::kLoggingLevel,
     switches::kMemoryMetrics,
 #if defined(OS_ANDROID)
-    switches::kMediaPlayerInRenderProcess,
     switches::kNetworkCountryIso,
     switches::kDisableGestureRequirementForMediaPlayback,
+    switches::kUseExternalVideoSurfaceThresholdInPixels,
 #endif
     switches::kNoReferrers,
     switches::kNoSandbox,
-    switches::kOldCheckboxStyle,
     switches::kPpapiInProcess,
     switches::kRegisterPepperPlugins,
     switches::kRendererAssertTest,
@@ -847,8 +913,6 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
 #endif
     switches::kRendererStartupDialog,
     switches::kShowPaintRects,
-    switches::kShowCompositedLayerBorders,
-    switches::kShowCompositedLayerTree,
     switches::kSitePerProcess,
     switches::kTestSandbox,
     switches::kTouchEvents,
@@ -862,17 +926,29 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
     switches::kVideoThreads,
     switches::kVModule,
     switches::kWebCoreLogChannels,
+    // Please keep these in alphabetical order. Compositor switches here should
+    // also be added to chrome/browser/chromeos/login/chrome_restart_request.cc.
     cc::switches::kBackgroundColorInsteadOfCheckerboard,
+    cc::switches::kCompositeToMailbox,
+    cc::switches::kDisableColorEstimator,
     cc::switches::kDisableImplSidePainting,
     cc::switches::kDisableThreadedAnimation,
     cc::switches::kEnableCompositorFrameMessage,
     cc::switches::kEnableImplSidePainting,
     cc::switches::kEnablePartialSwap,
     cc::switches::kEnablePerTilePainting,
+    cc::switches::kEnablePinchZoomScrollbars,
+    cc::switches::kDisablePinchZoomScrollbars,
+    cc::switches::kEnablePredictionBenchmarking,
     cc::switches::kEnableRightAlignedScheduling,
     cc::switches::kEnableTopControlsPositionCalculation,
     cc::switches::kLowResolutionContentsScaleFactor,
+    cc::switches::kMaxUnusedResourceMemoryUsagePercentage,
     cc::switches::kNumRasterThreads,
+    cc::switches::kMaxTilesForInterestArea,
+    cc::switches::kShowCompositedLayerBorders,
+    cc::switches::kShowCompositedLayerTree,
+    cc::switches::kShowFPSCounter,
     cc::switches::kShowNonOccludingRects,
     cc::switches::kShowOccludingRects,
     cc::switches::kShowPropertyChangedRects,
@@ -880,13 +956,12 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
     cc::switches::kShowScreenSpaceRects,
     cc::switches::kShowSurfaceDamageRects,
     cc::switches::kSlowDownRasterScaleFactor,
+    cc::switches::kStrictLayerPropertyChangeChecking,
     cc::switches::kTopControlsHeight,
     cc::switches::kTopControlsHideThreshold,
     cc::switches::kTopControlsShowThreshold,
     cc::switches::kTraceAllRenderedFrames,
     cc::switches::kTraceOverdraw,
-    cc::switches::kUseCheapnessEstimator,
-    cc::switches::kCompositeToMailbox,
   };
   renderer_cmd->CopySwitchesFrom(browser_cmd, kSwitchNames,
                                  arraysize(kSwitchNames));
@@ -960,15 +1035,15 @@ TransportDIB* RenderProcessHostImpl::MapTransportDIB(
                   STANDARD_RIGHTS_REQUIRED | FILE_MAP_READ | FILE_MAP_WRITE,
                   FALSE, 0);
   return TransportDIB::Map(section);
-#elif defined(OS_MACOSX)
-  // On OSX, the browser allocates all DIBs and keeps a file descriptor around
-  // for each.
-  return widget_helper_->MapTransportDIB(dib_id);
+#elif defined(TOOLKIT_GTK) || (defined(OS_LINUX) && defined(USE_AURA))
+  return TransportDIB::Map(dib_id.shmkey);
 #elif defined(OS_ANDROID)
   return TransportDIB::Map(dib_id);
-#elif defined(OS_POSIX)
-  return TransportDIB::Map(dib_id.shmkey);
-#endif  // defined(OS_POSIX)
+#else
+  // On POSIX, the browser allocates all DIBs and keeps a file descriptor around
+  // for each.
+  return widget_helper_->MapTransportDIB(dib_id);
+#endif
 }
 
 TransportDIB* RenderProcessHostImpl::GetTransportDIB(
@@ -1000,7 +1075,7 @@ TransportDIB* RenderProcessHostImpl::GetTransportDIB(
       }
     }
 
-#if defined(USE_X11)
+#if defined(TOOLKIT_GTK) || (defined(OS_LINUX) && defined(USE_AURA))
     smallest_iterator->second->Detach();
 #else
     delete smallest_iterator->second;
@@ -1014,7 +1089,7 @@ TransportDIB* RenderProcessHostImpl::GetTransportDIB(
 }
 
 void RenderProcessHostImpl::ClearTransportDIBCache() {
-#if defined(USE_X11)
+#if defined(TOOLKIT_GTK) || (defined(OS_LINUX) && defined(USE_AURA))
   std::map<TransportDIB::Id, TransportDIB*>::const_iterator dib =
       cached_dibs_.begin();
   for (; dib != cached_dibs_.end(); ++dib)
@@ -1027,7 +1102,7 @@ void RenderProcessHostImpl::ClearTransportDIBCache() {
 }
 
 bool RenderProcessHostImpl::Send(IPC::Message* msg) {
-  if (!channel_.get()) {
+  if (!channel_) {
     if (!is_initialized_) {
       queued_messages_.push(msg);
       return true;
@@ -1159,9 +1234,6 @@ void RenderProcessHostImpl::Release(int routing_id) {
   DCHECK(render_widget_hosts_.Lookup(routing_id) != NULL);
   render_widget_hosts_.Remove(routing_id);
 
-  // Make sure that all associated resource requests are stopped.
-  CancelResourceRequests(routing_id);
-
 #if defined(OS_WIN)
   // Dump the handle table if handle auditing is enabled.
   const CommandLine& browser_command_line =
@@ -1189,7 +1261,7 @@ void RenderProcessHostImpl::Cleanup() {
         Source<RenderProcessHost>(this),
         NotificationService::NoDetails());
 
-    MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+    base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
     deleting_soon_ = true;
     // It's important not to wait for the DeleteTask to delete the channel
     // proxy. Kill it off now. That way, in case the profile is going away, the
@@ -1479,6 +1551,11 @@ void RenderProcessHostImpl::RegisterProcessHostForSite(
     map->RegisterProcess(site, process);
 }
 
+base::MessageLoop*
+    RenderProcessHostImpl::GetInProcessRendererThreadForTesting() {
+  return g_in_process_thread;
+}
+
 void RenderProcessHostImpl::ProcessDied(bool already_dead) {
   // Our child process has died.  If we didn't expect it, it's a crash.
   // In any case, we need to let everyone know it's gone.
@@ -1545,6 +1622,28 @@ int RenderProcessHostImpl::GetActiveViewCount() {
   return num_active_views;
 }
 
+// Frame subscription API for this class is for accelerated composited path
+// only. These calls are redirected to GpuMessageFilter.
+void RenderProcessHostImpl::BeginFrameSubscription(
+    int route_id,
+    scoped_ptr<RenderWidgetHostViewFrameSubscriber> subscriber) {
+  if (!gpu_message_filter_)
+    return;
+  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE, base::Bind(
+      &GpuMessageFilter::BeginFrameSubscription,
+      gpu_message_filter_,
+      route_id, base::Passed(&subscriber)));
+}
+
+void RenderProcessHostImpl::EndFrameSubscription(int route_id) {
+  if (!gpu_message_filter_)
+    return;
+  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE, base::Bind(
+      &GpuMessageFilter::EndFrameSubscription,
+      gpu_message_filter_,
+      route_id));
+}
+
 void RenderProcessHostImpl::OnShutdownRequest() {
   // Don't shut down if there are more active RenderViews than the one asking
   // to close, or if there are pending RenderViews being swapped back in.
@@ -1601,7 +1700,7 @@ void RenderProcessHostImpl::OnProcessLaunched() {
   if (deleting_soon_)
     return;
 
-  if (child_process_launcher_.get()) {
+  if (child_process_launcher_) {
     if (!child_process_launcher_->GetHandle()) {
       OnChannelError();
       return;

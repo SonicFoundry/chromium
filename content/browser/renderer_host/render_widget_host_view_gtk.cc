@@ -4,11 +4,6 @@
 
 #include "content/browser/renderer_host/render_widget_host_view_gtk.h"
 
-// If this gets included after the gtk headers, then a bunch of compiler
-// errors happen because of a "#define Status int" in Xlib.h, which interacts
-// badly with net::URLRequestStatus::Status.
-#include "content/common/view_messages.h"
-
 #include <cairo/cairo.h>
 #include <gdk/gdk.h>
 #include <gdk/gdkkeysyms.h>
@@ -29,6 +24,7 @@
 #include "base/time.h"
 #include "base/utf_string_conversions.h"
 #include "content/browser/accessibility/browser_accessibility_gtk.h"
+#include "content/browser/accessibility/browser_accessibility_manager_gtk.h"
 #include "content/browser/renderer_host/backing_store_gtk.h"
 #include "content/browser/renderer_host/gtk_im_context_wrapper.h"
 #include "content/browser/renderer_host/gtk_key_bindings_handler.h"
@@ -36,6 +32,8 @@
 #include "content/browser/renderer_host/render_view_host_delegate.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/common/gpu/gpu_messages.h"
+#include "content/common/input_messages.h"
+#include "content/common/view_messages.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/common/content_switches.h"
@@ -711,6 +709,8 @@ void RenderWidgetHostViewGtk::WasHidden() {
   // If we have a renderer, then inform it that we are being hidden so it can
   // reduce its resource utilization.
   host_->WasHidden();
+
+  web_contents_switch_paint_time_ = base::TimeTicks();
 }
 
 void RenderWidgetHostViewGtk::SetSize(const gfx::Size& size) {
@@ -772,7 +772,7 @@ void RenderWidgetHostViewGtk::Blur() {
 }
 
 bool RenderWidgetHostViewGtk::HasFocus() const {
-  return gtk_widget_is_focus(view_.get());
+  return gtk_widget_has_focus(view_.get());
 }
 
 void RenderWidgetHostViewGtk::ActiveWindowChanged(GdkWindow* window) {
@@ -928,7 +928,7 @@ void RenderWidgetHostViewGtk::Destroy() {
   // The RenderWidgetHost's destruction led here, so don't call it.
   host_ = NULL;
 
-  MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+  base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
 }
 
 void RenderWidgetHostViewGtk::SetTooltipText(const string16& tooltip_text) {
@@ -1050,47 +1050,9 @@ void RenderWidgetHostViewGtk::CopyFromCompositingSurface(
     const gfx::Rect& src_subrect,
     const gfx::Size& /* dst_size */,
     const base::Callback<void(bool, const SkBitmap&)>& callback) {
-  base::ScopedClosureRunner scoped_callback_runner(
-      base::Bind(callback, false, SkBitmap()));
-
-  XID parent_window = ui::GetParentWindow(compositing_surface_);
-  if (parent_window == None)
-    return;
-
-  // Get the window offset with respect to its parent.
-  XWindowAttributes attr;
-  if (!XGetWindowAttributes(ui::GetXDisplay(), compositing_surface_, &attr))
-    return;
-
-  gfx::Rect src_subrect_in_parent(src_subrect);
-  src_subrect_in_parent.Offset(attr.x, attr.y);
-
-  ui::XScopedImage image(XGetImage(ui::GetXDisplay(), parent_window,
-                                   src_subrect_in_parent.x(),
-                                   src_subrect_in_parent.y(),
-                                   src_subrect_in_parent.width(),
-                                   src_subrect_in_parent.height(),
-                                   AllPlanes, ZPixmap));
-  if (!image.get())
-    return;
-
-  SkBitmap bitmap;
-  bitmap.setConfig(SkBitmap::kARGB_8888_Config,
-                   image->width,
-                   image->height,
-                   image->bytes_per_line);
-  if (!bitmap.allocPixels())
-    return;
-  bitmap.setIsOpaque(true);
-
-  const size_t bitmap_size = bitmap.getSize();
-  DCHECK_EQ(bitmap_size,
-            static_cast<size_t>(image->height * image->bytes_per_line));
-  unsigned char* pixels = static_cast<unsigned char*>(bitmap.getPixels());
-  memcpy(pixels, image->data, bitmap_size);
-
-  scoped_callback_runner.Release();
-  callback.Run(true, bitmap);
+  // Grab the snapshot from the renderer as that's the only reliable way to
+  // readback from the GPU for this platform right now.
+  GetRenderWidgetHost()->GetSnapshotFromRenderer(src_subrect, callback);
 }
 
 void RenderWidgetHostViewGtk::CopyFromCompositingSurfaceToVideoFrame(
@@ -1406,7 +1368,7 @@ void RenderWidgetHostViewGtk::ForwardKeyboardEvent(
   EditCommands edit_commands;
   if (!event.skip_in_browser &&
       key_bindings_handler_->Match(event, &edit_commands)) {
-    Send(new ViewMsg_SetEditCommandsForNextKeyEvent(
+    Send(new InputMsg_SetEditCommandsForNextKeyEvent(
         host_->GetRoutingID(), edit_commands));
     NativeWebKeyboardEvent copy_event(event);
     copy_event.match_edit_command = true;
@@ -1571,26 +1533,35 @@ gfx::Point RenderWidgetHostViewGtk::GetLastTouchEventLocation() const {
   return gfx::Point();
 }
 
+void RenderWidgetHostViewGtk::FatalAccessibilityTreeError() {
+  if (host_) {
+    host_->FatalAccessibilityTreeError();
+    SetBrowserAccessibilityManager(NULL);
+  } else {
+    CHECK(FALSE);
+  }
+}
+
 void RenderWidgetHostViewGtk::OnAccessibilityNotifications(
     const std::vector<AccessibilityHostMsg_NotificationParams>& params) {
-  if (!browser_accessibility_manager_.get()) {
+  if (!browser_accessibility_manager_) {
     GtkWidget* parent = gtk_widget_get_parent(view_.get());
     browser_accessibility_manager_.reset(
-        BrowserAccessibilityManager::CreateEmptyDocument(
+        new BrowserAccessibilityManagerGtk(
             parent,
-            static_cast<AccessibilityNodeData::State>(0),
+            BrowserAccessibilityManagerGtk::GetEmptyDocument(),
             this));
   }
   browser_accessibility_manager_->OnAccessibilityNotifications(params);
 }
 
 AtkObject* RenderWidgetHostViewGtk::GetAccessible() {
-  if (!browser_accessibility_manager_.get()) {
+  if (!browser_accessibility_manager_) {
     GtkWidget* parent = gtk_widget_get_parent(view_.get());
     browser_accessibility_manager_.reset(
-        BrowserAccessibilityManager::CreateEmptyDocument(
+        new BrowserAccessibilityManagerGtk(
             parent,
-            static_cast<AccessibilityNodeData::State>(0),
+            BrowserAccessibilityManagerGtk::GetEmptyDocument(),
             this));
   }
   BrowserAccessibilityGtk* root =

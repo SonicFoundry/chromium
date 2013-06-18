@@ -26,7 +26,7 @@ PlusDecoration::PlusDecoration(LocationBarViewMac* owner,
                                Browser* browser)
     : owner_(owner),
       browser_(browser),
-      ALLOW_THIS_IN_INITIALIZER_LIST(controller_(browser, this)) {
+      controller_(browser, this) {
   SetVisible(true);
   ResetIcon();
 }
@@ -46,7 +46,7 @@ void PlusDecoration::ResetIcon() {
   SetIcons(
       IDR_ACTION_BOX_BUTTON_NORMAL,
       IDR_ACTION_BOX_BUTTON_HOVER,
-      IDR_ACTION_BOX_BUTTON_PUSHED);
+      IDR_ACTION_BOX_BUTTON_PRESSED);
 }
 
 void PlusDecoration::SetTemporaryIcon(int image_id) {

@@ -45,6 +45,7 @@ class VIEWS_EXPORT DesktopRootWindowHost {
   // Caller takes ownership of returned RootWindow.
   virtual aura::RootWindow* Init(aura::Window* content_window,
                                  const Widget::InitParams& params) = 0;
+  virtual void InitFocus(aura::Window* window) = 0;
 
   virtual void Close() = 0;
   virtual void CloseNow() = 0;
@@ -104,10 +105,6 @@ class VIEWS_EXPORT DesktopRootWindowHost {
   virtual void SetWindowIcons(const gfx::ImageSkia& window_icon,
                               const gfx::ImageSkia& app_icon) = 0;
 
-  virtual void SetAccessibleName(const string16& name) = 0;
-  virtual void SetAccessibleRole(ui::AccessibilityTypes::Role role) = 0;
-  virtual void SetAccessibleState(ui::AccessibilityTypes::State state) = 0;
-
   virtual void InitModalType(ui::ModalType modal_type) = 0;
 
   virtual void FlashFrame(bool flash_frame) = 0;
@@ -116,6 +113,9 @@ class VIEWS_EXPORT DesktopRootWindowHost {
   // blurred.
   virtual void OnNativeWidgetFocus() = 0;
   virtual void OnNativeWidgetBlur() = 0;
+
+  // Paints the host window as activated depending on the bool passed in.
+  virtual void SetInactiveRenderingDisabled(bool disable_inactive) = 0;
 };
 
 }  // namespace views

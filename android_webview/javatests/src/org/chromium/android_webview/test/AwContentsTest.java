@@ -34,7 +34,7 @@ import java.util.List;
 /**
  * AwContents tests.
  */
-public class AwContentsTest extends AndroidWebViewTestBase {
+public class AwContentsTest extends AwTestBase {
     public static class OnDownloadStartHelper extends CallbackHelper {
         String mUrl;
         String mUserAgent;
@@ -291,7 +291,7 @@ public class AwContentsTest extends AndroidWebViewTestBase {
             // the page load completes which makes it slightly hard to test.
             final Bitmap defaultFavicon = awContents.getFavicon();
 
-            getContentSettingsOnUiThread(awContents).setImagesEnabled(true);
+            getAwSettingsOnUiThread(awContents).setImagesEnabled(true);
             loadUrlSync(awContents, mContentsClient.getOnPageFinishedHelper(), pageUrl);
 
             assertTrue(CriteriaHelper.pollForCriteria(new Criteria() {

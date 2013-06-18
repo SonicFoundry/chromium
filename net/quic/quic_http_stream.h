@@ -27,6 +27,7 @@ class NET_EXPORT_PRIVATE QuicHttpStream :
 
   // HttpStream implementation.
   virtual int InitializeStream(const HttpRequestInfo* request_info,
+                               RequestPriority priority,
                                const BoundNetLog& net_log,
                                const CompletionCallback& callback) OVERRIDE;
   virtual int SendRequest(const HttpRequestHeaders& request_headers,
@@ -42,7 +43,6 @@ class NET_EXPORT_PRIVATE QuicHttpStream :
   virtual HttpStream* RenewStreamForAuth() OVERRIDE;
   virtual bool IsResponseBodyComplete() const OVERRIDE;
   virtual bool CanFindEndOfResponse() const OVERRIDE;
-  virtual bool IsMoreDataBuffered() const OVERRIDE;
   virtual bool IsConnectionReused() const OVERRIDE;
   virtual void SetConnectionReused() OVERRIDE;
   virtual bool IsConnectionReusable() const OVERRIDE;
@@ -52,7 +52,6 @@ class NET_EXPORT_PRIVATE QuicHttpStream :
   virtual void GetSSLCertRequestInfo(
       SSLCertRequestInfo* cert_request_info) OVERRIDE;
   virtual bool IsSpdyHttpStream() const OVERRIDE;
-  virtual void LogNumRttVsBytesMetrics() const OVERRIDE {}
   virtual void Drain(HttpNetworkSession* session) OVERRIDE;
 
   // QuicReliableClientStream::Delegate implementation

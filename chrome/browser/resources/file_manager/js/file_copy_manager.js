@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+'use strict';
+
 if (chrome.extension) {
   var getContentWindows = function() {
     return chrome.extension.getViews();
@@ -9,16 +11,14 @@ if (chrome.extension) {
 }
 
 /**
- * @param {DirectoryEntry} root Root directory entry.
  * @constructor
  */
-function FileCopyManager(root) {
+function FileCopyManager() {
   this.copyTasks_ = [];
   this.deleteTasks_ = [];
   this.cancelObservers_ = [];
   this.cancelRequested_ = false;
   this.cancelCallback_ = null;
-  this.root_ = root;
   this.unloadTimeout_ = null;
 
   window.addEventListener('error', function(e) {
@@ -211,6 +211,22 @@ FileCopyManager.Error.FILESYSTEM_ERROR = 3;
 // FileCopyManager methods.
 
 /**
+ * Initializes the filesystem if it is not done yet.
+ * @param {function()} callback Completion callback.
+ */
+FileCopyManager.prototype.initialize = function(callback) {
+  // Already initialized.
+  if (this.root_) {
+    callback();
+    return;
+  }
+  chrome.fileBrowserPrivate.requestLocalFileSystem(function(filesystem) {
+    this.root_ = filesystem.root;
+    callback();
+  }.bind(this));
+};
+
+/**
  * Called before a new method is run in the manager. Prepares the manager's
  * state for running a new method.
  */
@@ -303,9 +319,17 @@ FileCopyManager.prototype.sendEvent_ = function(eventName, eventArgs) {
   var windows = getContentWindows();
   for (var i = 0; i < windows.length; i++) {
     var w = windows[i];
-    if (w.fileCopyManagerWrapper)
-      w.fileCopyManagerWrapper.onEvent(eventName, eventArgs);
+    if (w.FileCopyManagerWrapper)
+      w.FileCopyManagerWrapper.getInstance().onEvent(eventName, eventArgs);
   }
+};
+
+/**
+ * Says if there are any tasks in the queue.
+ * @return {boolean} True, if there are any tasks.
+ */
+FileCopyManager.prototype.hasQueuedTasks = function() {
+  return this.copyTasks_.length > 0 || this.deleteTasks_.length > 0;
 };
 
 /**
@@ -316,9 +340,11 @@ FileCopyManager.prototype.sendEvent_ = function(eventName, eventArgs) {
  * @private
  */
 FileCopyManager.prototype.maybeScheduleCloseBackgroundPage_ = function() {
-  if (this.copyTasks_.length === 0 && this.deleteTasks_.length === 0) {
-    if (this.unloadTimeout_ === null)
-      this.unloadTimeout_ = setTimeout(close, 5000);
+  if (!this.hasQueuedTasks()) {
+    if (this.unloadTimeout_ === null) {
+      this.unloadTimeout_ = setTimeout(
+          util.platform.v2() ? maybeCloseBackgroundPage : close, 5000);
+    }
   } else if (this.unloadTimeout_) {
     clearTimeout(this.unloadTimeout_);
     this.unloadTimeout_ = null;
@@ -326,14 +352,13 @@ FileCopyManager.prototype.maybeScheduleCloseBackgroundPage_ = function() {
 };
 
 /**
- * Write to console.log on all the active FileManager windows.
- *
+ * Reports an error on all of the active Files.app's windows.
  * @private
  */
 FileCopyManager.prototype.log_ = function() {
   var windows = getContentWindows();
   for (var i = 0; i < windows.length; i++) {
-    windows[i].console.log.apply(windows[i].console, arguments);
+    windows[i].console.error.apply(windows[i].console, arguments);
   }
 };
 
@@ -499,7 +524,8 @@ FileCopyManager.prototype.paste = function(clipboard, targetPath,
                   onPathError);
   };
 
-  if (clipboard.sourceDir) {
+  if (clipboard.sourceDir &&
+      !PathUtil.isSpecialSearchRoot(clipboard.sourceDir)) {
     this.root_.getDirectory(clipboard.sourceDir,
                             {create: false},
                             onSourceEntryFound,
@@ -853,13 +879,15 @@ FileCopyManager.prototype.serviceNextTaskEntry_ = function(
       return;
     }
 
-    // TODO(benchan): DriveFileSystem has not implemented directory copy,
+    // TODO(benchan): drive::FileSystem has not implemented directory copy,
     // and thus we only call FileEntry.copyTo() for files. Revisit this
-    // code when DriveFileSystem supports directory copy.
+    // code when drive::FileSystem supports directory copy.
     if (sourceEntry.isFile && (task.sourceOnDrive || task.targetOnDrive)) {
       var sourceFileUrl = sourceEntry.toURL();
       var targetFileUrl = targetDirEntry.toURL() + '/' +
                           encodeURIComponent(targetRelativePath);
+      var sourceFilePath = util.extractFilePath(sourceFileUrl);
+      var targetFilePath = util.extractFilePath(targetFileUrl);
       var transferedBytes = 0;
 
       var onStartTransfer = function() {
@@ -890,14 +918,17 @@ FileCopyManager.prototype.serviceNextTaskEntry_ = function(
       var onFileTransfersUpdated = function(statusList) {
         for (var i = 0; i < statusList.length; i++) {
           var s = statusList[i];
-          if (s.fileUrl == sourceFileUrl || s.fileUrl == targetFileUrl) {
+          // Comparing urls is unreliable, since they may use different
+          // url encoding schemes (eg. rfc2396 vs. rfc3986).
+          var filePath = util.extractFilePath(s.fileUrl);
+          if (filePath == sourceFilePath || filePath == targetFilePath) {
             var processed = s.processed;
 
             // It becomes tricky when both the sides are on Drive.
             // Currently, it is implemented by download followed by upload.
             // Note, however, download will not happen if the file is cached.
             if (task.sourceOnDrive && task.targetOnDrive) {
-              if (s.fileUrl == sourceFileUrl) {
+              if (filePath == sourceFilePath) {
                 // Download transfer is detected. Let's halve the progress.
                 downTransfer = processed = (s.processed >> 1);
               } else {
@@ -956,7 +987,7 @@ FileCopyManager.prototype.serviceNextTaskEntry_ = function(
         }
       };
 
-      // TODO(benchan): Until DriveFileSystem supports FileWriter, we use the
+      // TODO(benchan): Until drive::FileSystem supports FileWriter, we use the
       // transferFile API to copy files into or out from a drive file system.
       onStartTransfer();
       chrome.fileBrowserPrivate.transferFile(

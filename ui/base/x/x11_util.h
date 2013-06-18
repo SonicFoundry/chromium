@@ -27,7 +27,9 @@ typedef unsigned long XSharedMemoryId;  // ShmSeg in the X headers.
 typedef struct _XDisplay Display;
 typedef unsigned long Cursor;
 typedef struct _XcursorImage XcursorImage;
+typedef union _XEvent XEvent;
 typedef struct _XImage XImage;
+typedef struct _XGC *GC;
 
 #if defined(TOOLKIT_GTK)
 typedef struct _GdkDrawable GdkWindow;
@@ -164,6 +166,9 @@ UI_EXPORT bool PropertyExists(XID window, const std::string& property_name);
 
 // Get the value of an int, int array, atom array or string property.  On
 // success, true is returned and the value is stored in |value|.
+//
+// TODO(erg): Once we remove the gtk port and are 100% aura, all of these
+// should accept an Atom instead of a string.
 UI_EXPORT bool GetIntProperty(XID window, const std::string& property_name,
                               int* value);
 UI_EXPORT bool GetIntArrayProperty(XID window, const std::string& property_name,
@@ -266,11 +271,6 @@ UI_EXPORT void PutARGBImage(Display* display,
 void FreePicture(Display* display, XID picture);
 void FreePixmap(Display* display, XID pixmap);
 
-// Gets the list of the output displaying device handles via XRandR, and sets to
-// |outputs|.  Returns false if it fails to get the list and |outputs| is
-// cleared.
-UI_EXPORT bool GetOutputDeviceHandles(std::vector<XID>* outputs);
-
 // Gets some useful data from the specified output device, such like
 // manufacturer's ID, product code, and human readable name. Returns false if it
 // fails to get those data and doesn't touch manufacturer ID/product code/name.
@@ -312,6 +312,7 @@ enum WindowManagerName {
   WM_ICE_WM,
   WM_KWIN,
   WM_METACITY,
+  WM_MUFFIN,
   WM_MUTTER,
   WM_OPENBOX,
   WM_XFWM4,

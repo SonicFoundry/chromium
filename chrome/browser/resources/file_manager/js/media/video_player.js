@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+'use strict';
+
 /**
  * Display error message.
  * @param {string} message Message id.
@@ -49,7 +51,7 @@ function FullWindowVideoControls(
   VideoControls.call(this,
       controlsContainer,
       onPlaybackError,
-      function() { chrome.fileBrowserPrivate.toggleFullscreen() },
+      this.toggleFullScreen_.bind(this),
       videoContainer);
 
   this.playerContainer_ = playerContainer;
@@ -58,13 +60,20 @@ function FullWindowVideoControls(
   window.addEventListener('resize', this.updateStyle.bind(this));
 
   document.addEventListener('keydown', function(e) {
-    if (e.keyIdentifier == 'U+0020') {
+    if (e.keyIdentifier == 'U+0020') {  // Space
       this.togglePlayStateWithFeedback();
+      e.preventDefault();
+    }
+    if (e.keyIdentifier == 'U+001B') {  // Escape
+      util.toggleFullScreen(this.playerContainer_.ownerDocument,
+                            false);  // Leave the full screen mode.
       e.preventDefault();
     }
   }.bind(this));
 
   util.disableBrowserShortcutKeys(document);
+  if (!util.platform.v2())
+    util.enableNewFullScreenHandler(document);
 
   videoContainer.addEventListener('click',
       this.togglePlayStateWithFeedback.bind(this));
@@ -94,6 +103,15 @@ FullWindowVideoControls.prototype.restorePlayState = function() {
     VideoControls.prototype.restorePlayState.apply(this, arguments);
     this.play();
   }
+};
+
+/**
+ * Toggles the full screen mode.
+ * @private
+ */
+FullWindowVideoControls.prototype.toggleFullScreen_ = function() {
+  util.toggleFullScreen(this.playerContainer_.ownerDocument,
+                        !util.isFullScreen());
 };
 
 // TODO(mtomasz): Convert it to class members: crbug.com/171191.
@@ -188,15 +206,9 @@ function reload() {
   document.title = decodeURIComponent(src.split('/').pop());
 
   metadataCache.get(src, 'streaming', function(streaming) {
-    if (streaming && streaming.url) {
-      if (!navigator.onLine) {
-        showErrorMessage('GALLERY_VIDEO_OFFLINE');
-        return;
-      }
-      src = streaming.url;
-      console.log('Streaming: ' + src);
-    } else {
-      console.log('Playing local file: ' + src);
+    if (streaming && !navigator.onLine) {
+      showErrorMessage('GALLERY_VIDEO_OFFLINE');
+      return;
     }
 
     // Detach the previous video element, if exists.

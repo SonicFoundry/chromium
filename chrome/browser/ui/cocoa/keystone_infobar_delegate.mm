@@ -13,9 +13,9 @@
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop.h"
 #include "base/prefs/pref_service.h"
-#include "chrome/browser/api/infobars/confirm_infobar_delegate.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
 #include "chrome/browser/first_run/first_run.h"
+#include "chrome/browser/infobars/confirm_infobar_delegate.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #import "chrome/browser/mac/keystone_glue.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -98,7 +98,7 @@ KeystonePromotionInfoBarDelegate::KeystonePromotionInfoBarDelegate(
     : ConfirmInfoBarDelegate(infobar_service),
       prefs_(prefs),
       can_expire_(false),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_(this)) {
+      weak_ptr_factory_(this) {
   const base::TimeDelta kCanExpireOnNavigationAfterDelay =
       base::TimeDelta::FromSeconds(8);
   MessageLoop::current()->PostDelayedTask(FROM_HERE,

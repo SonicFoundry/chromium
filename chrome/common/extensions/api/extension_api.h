@@ -13,7 +13,7 @@
 #include "base/memory/linked_ptr.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/singleton.h"
-#include "base/string_piece.h"
+#include "base/strings/string_piece.h"
 #include "base/values.h"
 #include "chrome/common/extensions/features/feature.h"
 #include "chrome/common/extensions/features/feature_provider.h"
@@ -37,7 +37,7 @@ class Feature;
 // WARNING: This class is accessed on multiple threads in the browser process
 // (see ExtensionFunctionDispatcher). No state should be modified after
 // construction.
-class ExtensionAPI : public FeatureProvider {
+class ExtensionAPI {
  public:
   // Returns a single shared instance of this class. This is the typical use
   // case in Chrome.
@@ -71,9 +71,10 @@ class ExtensionAPI : public FeatureProvider {
   // either a namespace name (like "bookmarks") or a member name (like
   // "bookmarks.create"). Returns true if the feature and all of its
   // dependencies are available to the specified context.
-  bool IsAvailable(const std::string& api_full_name,
-                   const Extension* extension,
-                   Feature::Context context);
+  Feature::Availability IsAvailable(const std::string& api_full_name,
+                                    const Extension* extension,
+                                    Feature::Context context,
+                                    const GURL& url);
 
   // Returns true if |name| is a privileged API path. Privileged paths can only
   // be called from extension code which is running in its own designated
@@ -85,16 +86,7 @@ class ExtensionAPI : public FeatureProvider {
   // Ownership remains with this object.
   const base::DictionaryValue* GetSchema(const std::string& full_name);
 
-  // Gets the APIs available to |context| given an |extension| and |url|. The
-  // extension or URL may not be relevant to all contexts, and may be left
-  // NULL/empty.
-  scoped_ptr<std::set<std::string> > GetAPIsForContext(
-      Feature::Context context, const Extension* extension, const GURL& url);
-
-  // Gets a Feature object describing the API with the specified |full_name|.
-  // This can be either an API namespace (like history, or
-  // experimental.bookmarks), or it can be an individual function or event.
-  virtual Feature* GetFeature(const std::string& full_name) OVERRIDE;
+  std::set<std::string> GetAllAPINames();
 
   // Splits a full name from the extension API into its API and child name
   // parts. Some examples:
@@ -110,8 +102,9 @@ class ExtensionAPI : public FeatureProvider {
 
   void InitDefaultConfiguration();
 
-  // Loads the schemas registered with RegisterSchema().
-  void LoadAllSchemas();
+  // Gets a feature from any dependency provider registered with ExtensionAPI.
+  // Returns NULL if the feature could not be found.
+  Feature* GetFeatureDependency(const std::string& dependency_name);
 
  private:
   friend struct DefaultSingletonTraits<ExtensionAPI>;
@@ -125,40 +118,30 @@ class ExtensionAPI : public FeatureProvider {
   bool IsChildNamePrivileged(const base::DictionaryValue* namespace_node,
                              const std::string& child_name);
 
-  // Adds all APIs to |out| that |extension| has any permission (required or
-  // optional) to use.
-  // NOTE: This only works for non-feature-controlled APIs.
-  // TODO(aa): Remove this when all APIs are converted to the feature system.
-  void GetAllowedAPIs(const Extension* extension, std::set<std::string>* out);
+  // NOTE: This IsAPIAllowed() and IsNonFeatureAPIAvailable only work for
+  // non-feature-controlled APIs.
+  // TODO(aa): Remove these when all APIs are converted to the feature system.
 
-  // Gets a feature from any dependency provider.
-  Feature* GetFeatureDependency(const std::string& dependency_name);
+  // Checks if API |name| is allowed.
+  bool IsAPIAllowed(const std::string& name, const Extension* extension);
 
-  // Adds dependent schemas to |out| as determined by the "dependencies"
-  // property.
-  // TODO(aa): Consider making public and adding tests.
-  void ResolveDependencies(std::set<std::string>* out);
+  // Check if an API is available to |context| given an |extension| and |url|.
+  // The extension or URL may not be relevant to all contexts, and may be left
+  // NULL/empty.
+  bool IsNonFeatureAPIAvailable(const std::string& name,
+                                Feature::Context context,
+                                const Extension* extension,
+                                const GURL& url);
 
-  // Adds any APIs listed in "dependencies" found in the schema for |api_name|
-  // but not in |excluding| to |out|.
-  void GetMissingDependencies(
-      const std::string& api_name,
-      const std::set<std::string>& excluding,
-      std::set<std::string>* out);
-
-  // Removes all APIs from |apis| which are *entirely* privileged. This won't
-  // include APIs such as "storage" which is entirely unprivileged, nor
-  // "extension" which has unprivileged components.
-  void RemovePrivilegedAPIs(std::set<std::string>* apis);
-
-  // Adds an APIs that match |url| to |out|.
-  // NOTE: This only works for non-feature-controlled APIs.
-  // TODO(aa): Remove this when all APIs are converted to the feature system.
-  void GetAPIsMatchingURL(const GURL& url, std::set<std::string>* out);
+  // Checks if an API is *entirely* privileged. This won't include APIs such as
+  // "storage" which is entirely unprivileged, nor "extension" which has
+  // unprivileged components.
+  bool IsPrivilegedAPI(const std::string& name);
 
   // Map from each API that hasn't been loaded yet to the schema which defines
   // it. Note that there may be multiple APIs per schema.
-  std::map<std::string, base::StringPiece> unloaded_schemas_;
+  typedef std::map<std::string, base::StringPiece> UnloadedSchemaMap;
+  UnloadedSchemaMap unloaded_schemas_;
 
   // Schemas for each namespace.
   typedef std::map<std::string, linked_ptr<const DictionaryValue> > SchemaMap;
@@ -169,13 +152,6 @@ class ExtensionAPI : public FeatureProvider {
 
   // APIs that are not entirely unprivileged, but have unprivileged components.
   std::set<std::string> partially_unprivileged_apis_;
-
-  // APIs that have URL matching permissions.
-  std::map<std::string, URLPatternSet> url_matching_apis_;
-
-  typedef std::map<std::string, linked_ptr<Feature> > FeatureMap;
-  typedef std::map<std::string, linked_ptr<FeatureMap> > APIFeatureMap;
-  APIFeatureMap features_;
 
   // FeatureProviders used for resolving dependencies.
   typedef std::map<std::string, FeatureProvider*> FeatureProviderMap;

@@ -7,9 +7,14 @@
 
 #include "base/compiler_specific.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
+#include "content/public/browser/render_view_host.h"
 #include "content/public/test/test_navigation_observer.h"
 
 class TabStripModel;
+
+namespace content {
+class JsInjectionReadyObserver;
+}
 
 // In order to support testing of print preview, we need to wait for the
 // constrained window to block the current tab, and then observe notifications
@@ -29,6 +34,10 @@ class TestTabStripModelObserver : public content::TestNavigationObserver,
   virtual ~TestTabStripModelObserver();
 
  private:
+  class RenderViewHostInitializedObserver;
+
+  void RenderViewHostCreated(content::RenderViewHost* rvh);
+
   // Callback to observer the print preview dialog associated with |contents|.
   void ObservePrintPreviewDialog(content::WebContents* contents);
 
@@ -39,6 +48,13 @@ class TestTabStripModelObserver : public content::TestNavigationObserver,
   // |tab_strip_model_| is the object this observes. The constructor will
   // register this as an observer, and the destructor will remove the observer.
   TabStripModel* tab_strip_model_;
+
+  content::RenderViewHost::CreatedCallback rvh_created_callback_;
+
+  // RenderViewHost watched for JS injection.
+  scoped_ptr<RenderViewHostInitializedObserver> rvh_observer_;
+
+  content::JsInjectionReadyObserver* injection_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(TestTabStripModelObserver);
 };

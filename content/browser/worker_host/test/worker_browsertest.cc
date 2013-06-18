@@ -24,7 +24,7 @@
 #include "content/test/layout_browsertest.h"
 #include "googleurl/src/gurl.h"
 #include "net/base/test_data_directory.h"
-#include "net/test/test_server.h"
+#include "net/test/spawned_test_server.h"
 
 namespace content {
 
@@ -260,7 +260,7 @@ class WorkerTest : public ContentBrowserTest {
     for (WorkerProcessHostIterator iter; !iter.Done(); ++iter)
       (*cur_process_count)++;
     BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE, MessageLoop::QuitClosure());
+        BrowserThread::UI, FROM_HERE, base::MessageLoop::QuitClosure());
   }
 
   bool WaitForWorkerProcessCount(int count) {
@@ -289,7 +289,7 @@ class WorkerTest : public ContentBrowserTest {
 
   void NavigateAndWaitForAuth(const GURL& url) {
     ShellContentBrowserClient* browser_client =
-        static_cast<ShellContentBrowserClient*>(GetContentClient()->browser());
+        ShellContentBrowserClient::Get();
     scoped_refptr<MessageLoopRunner> runner = new MessageLoopRunner();
     browser_client->resource_dispatcher_host_delegate()->
         set_login_request_callback(
@@ -300,11 +300,11 @@ class WorkerTest : public ContentBrowserTest {
 };
 
 IN_PROC_BROWSER_TEST_F(WorkerTest, SingleWorker) {
-  RunTest("single_worker.html", "");
+  RunTest("single_worker.html", std::string());
 }
 
 IN_PROC_BROWSER_TEST_F(WorkerTest, MultipleWorkers) {
-  RunTest("multi_worker.html", "");
+  RunTest("multi_worker.html", std::string());
 }
 
 IN_PROC_BROWSER_TEST_F(WorkerTest, SingleSharedWorker) {
@@ -320,10 +320,10 @@ IN_PROC_BROWSER_TEST_F(WorkerTest, MultipleSharedWorkers) {
 // http://crbug.com/30021
 IN_PROC_BROWSER_TEST_F(WorkerTest, IncognitoSharedWorkers) {
   // Load a non-incognito tab and have it create a shared worker
-  RunTest("incognito_worker.html", "");
+  RunTest("incognito_worker.html", std::string());
 
   // Incognito worker should not share with non-incognito
-  RunTest(CreateOffTheRecordBrowser(), "incognito_worker.html", "");
+  RunTest(CreateOffTheRecordBrowser(), "incognito_worker.html", std::string());
 }
 
 // Make sure that auth dialog is displayed from worker context.
@@ -351,7 +351,7 @@ IN_PROC_BROWSER_TEST_F(WorkerTest, DISABLED_LimitPerPage) {
 IN_PROC_BROWSER_TEST_F(WorkerTest, LimitPerPage) {
 #endif
   int max_workers_per_tab = WorkerServiceImpl::kMaxWorkersPerTabWhenSeparate;
-  std::string query = StringPrintf("?count=%d", max_workers_per_tab + 1);
+  std::string query = base::StringPrintf("?count=%d", max_workers_per_tab + 1);
 
   GURL url = GetTestURL("many_shared_workers.html", query);
   NavigateToURL(shell(), url);
@@ -374,15 +374,17 @@ IN_PROC_BROWSER_TEST_F(WorkerTest, LimitTotal) {
   int max_workers_per_tab = WorkerServiceImpl::kMaxWorkersPerTabWhenSeparate;
   int total_workers = WorkerServiceImpl::kMaxWorkersWhenSeparate;
 
-  std::string query = StringPrintf("?count=%d", max_workers_per_tab);
+  std::string query = base::StringPrintf("?count=%d", max_workers_per_tab);
   GURL url = GetTestURL("many_shared_workers.html", query);
-  NavigateToURL(shell(), GURL(url.spec() + StringPrintf("&client_id=0")));
+  NavigateToURL(shell(),
+                GURL(url.spec() + base::StringPrintf("&client_id=0")));
 
   // Adding 1 so that we cause some workers to be queued.
   int tab_count = (total_workers / max_workers_per_tab) + 1;
   for (int i = 1; i < tab_count; ++i) {
     NavigateToURL(
-        CreateBrowser(), GURL(url.spec() + StringPrintf("&client_id=%d", i)));
+        CreateBrowser(),
+        GURL(url.spec() + base::StringPrintf("&client_id=%d", i)));
   }
 
   // Check that we didn't create more than the max number of workers.
@@ -397,16 +399,22 @@ IN_PROC_BROWSER_TEST_F(WorkerTest, LimitTotal) {
 
 // Flaky, http://crbug.com/59786.
 IN_PROC_BROWSER_TEST_F(WorkerTest, WorkerClose) {
-  RunTest("worker_close.html", "");
+  RunTest("worker_close.html", std::string());
   ASSERT_TRUE(WaitForWorkerProcessCount(0));
 }
 
 // Flaky, http://crbug.com/70861.
-IN_PROC_BROWSER_TEST_F(WorkerTest, QueuedSharedWorkerShutdown) {
+// Times out regularly on Windows debug bots. See http://crbug.com/212339 .
+#if defined(OS_WIN) && !defined(NDEBUG)
+#define MAYBE_QueuedSharedWorkerShutdown DISABLED_QueuedSharedWorkerShutdown
+#else
+#define MAYBE_QueuedSharedWorkerShutdown QueuedSharedWorkerShutdown
+#endif
+IN_PROC_BROWSER_TEST_F(WorkerTest, MAYBE_QueuedSharedWorkerShutdown) {
   // Tests to make sure that queued shared workers are started up when shared
   // workers shut down.
   int max_workers_per_tab = WorkerServiceImpl::kMaxWorkersPerTabWhenSeparate;
-  std::string query = StringPrintf("?count=%d", max_workers_per_tab);
+  std::string query = base::StringPrintf("?count=%d", max_workers_per_tab);
   RunTest("queued_shared_worker_shutdown.html", query);
   ASSERT_TRUE(WaitForWorkerProcessCount(max_workers_per_tab));
 }
@@ -418,7 +426,7 @@ IN_PROC_BROWSER_TEST_F(WorkerTest, DISABLED_MultipleTabsQueuedSharedWorker) {
   // Tests to make sure that only one instance of queued shared workers are
   // started up even when those instances are on multiple tabs.
   int max_workers_per_tab = WorkerServiceImpl::kMaxWorkersPerTabWhenSeparate;
-  std::string query = StringPrintf("?count=%d", max_workers_per_tab + 1);
+  std::string query = base::StringPrintf("?count=%d", max_workers_per_tab + 1);
   GURL url = GetTestURL("many_shared_workers.html", query);
   NavigateToURL(shell(), url);
   ASSERT_TRUE(WaitForWorkerProcessCount(max_workers_per_tab));
@@ -441,7 +449,7 @@ IN_PROC_BROWSER_TEST_F(WorkerTest, DISABLED_QueuedSharedWorkerStartedFromOtherTa
   // Tests to make sure that queued shared workers are started up when
   // an instance is launched from another tab.
   int max_workers_per_tab = WorkerServiceImpl::kMaxWorkersPerTabWhenSeparate;
-  std::string query = StringPrintf("?count=%d", max_workers_per_tab + 1);
+  std::string query = base::StringPrintf("?count=%d", max_workers_per_tab + 1);
   GURL url = GetTestURL("many_shared_workers.html", query);
   NavigateToURL(shell(), url);
   ASSERT_TRUE(WaitForWorkerProcessCount(max_workers_per_tab));
@@ -449,7 +457,7 @@ IN_PROC_BROWSER_TEST_F(WorkerTest, DISABLED_QueuedSharedWorkerStartedFromOtherTa
   // First window has hit its limit. Now launch second window which creates
   // the same worker that was queued in the first window, to ensure it gets
   // connected to the first window too.
-  query = StringPrintf("?id=%d", max_workers_per_tab);
+  query = base::StringPrintf("?id=%d", max_workers_per_tab);
   url = GetTestURL("single_shared_worker.html", query);
   NavigateToURL(CreateBrowser(), url);
 
@@ -458,9 +466,9 @@ IN_PROC_BROWSER_TEST_F(WorkerTest, DISABLED_QueuedSharedWorkerStartedFromOtherTa
 
 IN_PROC_BROWSER_TEST_F(WorkerTest, WebSocketSharedWorker) {
   // Launch WebSocket server.
-  net::TestServer ws_server(net::TestServer::TYPE_WS,
-                            net::TestServer::kLocalhost,
-                            net::GetWebSocketTestDataDirectory());
+  net::SpawnedTestServer ws_server(net::SpawnedTestServer::TYPE_WS,
+                                   net::SpawnedTestServer::kLocalhost,
+                                   net::GetWebSocketTestDataDirectory());
   ASSERT_TRUE(ws_server.Start());
 
   // Generate test URL.

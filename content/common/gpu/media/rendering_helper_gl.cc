@@ -119,7 +119,7 @@ class RenderingHelperGL : public RenderingHelper {
   void MakeCurrent(int window_id);
 
 
-  MessageLoop* message_loop_;
+  base::MessageLoop* message_loop_;
   std::vector<gfx::Size> dimensions_;
   bool suppress_swap_to_display_;
 
@@ -210,7 +210,7 @@ void RenderingHelperGL::Initialize(
 
   CHECK_GT(dimensions.size(), 0U);
   dimensions_ = dimensions;
-  message_loop_ = MessageLoop::current();
+  message_loop_ = base::MessageLoop::current();
   CHECK_GT(num_windows, 0);
 
 #if GL_VARIANT_GLX
@@ -398,7 +398,7 @@ void RenderingHelperGL::Initialize(
 }
 
 void RenderingHelperGL::UnInitialize(base::WaitableEvent* done) {
-  CHECK_EQ(MessageLoop::current(), message_loop_);
+  CHECK_EQ(base::MessageLoop::current(), message_loop_);
 #if GL_VARIANT_GLX
 
   glXDestroyContext(x_display_, gl_context_);
@@ -417,7 +417,7 @@ void RenderingHelperGL::CreateTexture(int window_id,
                                       uint32 texture_target,
                                       uint32* texture_id,
                                       base::WaitableEvent* done) {
-  if (MessageLoop::current() != message_loop_) {
+  if (base::MessageLoop::current() != message_loop_) {
     message_loop_->PostTask(
         FROM_HERE,
         base::Bind(&RenderingHelper::CreateTexture, base::Unretained(this),
@@ -444,7 +444,15 @@ void RenderingHelperGL::CreateTexture(int window_id,
 }
 
 void RenderingHelperGL::RenderTexture(uint32 texture_id) {
-  CHECK_EQ(MessageLoop::current(), message_loop_);
+  CHECK_EQ(base::MessageLoop::current(), message_loop_);
+  size_t window_id = texture_id_to_surface_index_[texture_id];
+  MakeCurrent(window_id);
+  int dimensions_id = window_id % dimensions_.size();
+  int width = dimensions_[dimensions_id].width();
+  int height = dimensions_[dimensions_id].height();
+  glViewport(0, 0, width, height);
+  glScissor(0, 0, width, height);
+
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, texture_id);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -452,8 +460,6 @@ void RenderingHelperGL::RenderTexture(uint32 texture_id) {
   if (suppress_swap_to_display_)
     return;
 
-  int window_id = texture_id_to_surface_index_[texture_id];
-  MakeCurrent(window_id);
 #if GL_VARIANT_GLX
   glXSwapBuffers(x_display_, x_windows_[window_id]);
 #else  // EGL

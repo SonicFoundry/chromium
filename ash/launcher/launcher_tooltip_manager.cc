@@ -5,9 +5,9 @@
 #include "ash/launcher/launcher_tooltip_manager.h"
 
 #include "ash/launcher/launcher_view.h"
+#include "ash/shelf/shelf_layout_manager.h"
 #include "ash/shell.h"
 #include "ash/shell_window_ids.h"
-#include "ash/wm/shelf_layout_manager.h"
 #include "ash/wm/window_animations.h"
 #include "base/bind.h"
 #include "base/message_loop.h"
@@ -37,8 +37,11 @@ const SkColor kTooltipTextColor = SkColorSetRGB(0x22, 0x22, 0x22);
 // ash/tooltip/tooltip_controller.cc
 const int kTooltipMaxWidth = 250;
 
-// The distance between the arrow tip and edge of the anchor view.
-const int kArrowOffset = 10;
+// The offset for the tooltip bubble - making sure that the bubble is flush
+// with the shelf. The offset includes the arrow size in pixels as well as
+// the activation bar and other spacing elements.
+const int kArrowOffsetLeftRight = 11;
+const int kArrowOffsetTopBottom = 7;
 
 }  // namespace
 
@@ -47,10 +50,10 @@ class LauncherTooltipManager::LauncherTooltipBubble
     : public views::BubbleDelegateView {
  public:
   LauncherTooltipBubble(views::View* anchor,
-                        views::BubbleBorder::ArrowLocation arrow_location,
+                        views::BubbleBorder::Arrow arrow,
                         LauncherTooltipManager* host);
 
-  void SetText(const string16& text);
+  void SetText(const base::string16& text);
   void Close();
 
  private:
@@ -68,12 +71,20 @@ class LauncherTooltipManager::LauncherTooltipBubble
 
 LauncherTooltipManager::LauncherTooltipBubble::LauncherTooltipBubble(
     views::View* anchor,
-    views::BubbleBorder::ArrowLocation arrow_location,
+    views::BubbleBorder::Arrow arrow,
     LauncherTooltipManager* host)
-    : views::BubbleDelegateView(anchor, arrow_location),
+    : views::BubbleDelegateView(anchor, arrow),
       host_(host) {
-  set_anchor_insets(gfx::Insets(kArrowOffset, kArrowOffset, kArrowOffset,
-      kArrowOffset));
+  gfx::Insets insets = gfx::Insets(kArrowOffsetTopBottom,
+                                   kArrowOffsetLeftRight,
+                                   kArrowOffsetTopBottom,
+                                   kArrowOffsetLeftRight);
+  // Launcher items can have an asymmetrical border for spacing reasons.
+  // Adjust anchor location for this.
+  if (anchor->border())
+    insets += anchor->border()->GetInsets();
+
+  set_anchor_view_insets(insets);
   set_close_on_esc(false);
   set_close_on_deactivate(false);
   set_use_focusless(true);
@@ -98,7 +109,7 @@ LauncherTooltipManager::LauncherTooltipBubble::LauncherTooltipBubble(
 }
 
 void LauncherTooltipManager::LauncherTooltipBubble::SetText(
-    const string16& text) {
+    const base::string16& text) {
   label_->SetText(text);
   SizeToContents();
 }
@@ -149,7 +160,7 @@ LauncherTooltipManager::~LauncherTooltipManager() {
 }
 
 void LauncherTooltipManager::ShowDelayed(views::View* anchor,
-                                         const string16& text) {
+                                         const base::string16& text) {
   if (view_) {
     if (timer_.get() && timer_->IsRunning()) {
       return;
@@ -167,7 +178,7 @@ void LauncherTooltipManager::ShowDelayed(views::View* anchor,
 }
 
 void LauncherTooltipManager::ShowImmediately(views::View* anchor,
-                                             const string16& text) {
+                                             const base::string16& text) {
   if (view_) {
     if (timer_.get() && timer_->IsRunning())
       StopTimer();
@@ -198,7 +209,7 @@ void LauncherTooltipManager::OnBubbleClosed(views::BubbleDelegateView* view) {
   }
 }
 
-void LauncherTooltipManager::UpdateArrowLocation() {
+void LauncherTooltipManager::UpdateArrow() {
   if (view_) {
     CancelHidingAnimation();
     Close();
@@ -321,32 +332,32 @@ void LauncherTooltipManager::CancelHidingAnimation() {
 }
 
 void LauncherTooltipManager::CloseSoon() {
-  MessageLoopForUI::current()->PostTask(
+  base::MessageLoopForUI::current()->PostTask(
       FROM_HERE,
       base::Bind(&LauncherTooltipManager::Close, base::Unretained(this)));
 }
 
 void LauncherTooltipManager::ShowInternal() {
   if (view_)
-    view_->Show();
+    view_->GetWidget()->Show();
 
   timer_.reset();
 }
 
 void LauncherTooltipManager::CreateBubble(views::View* anchor,
-                                          const string16& text) {
+                                          const base::string16& text) {
   DCHECK(!view_);
 
   anchor_ = anchor;
   text_ = text;
-  views::BubbleBorder::ArrowLocation arrow_location =
+  views::BubbleBorder::Arrow arrow =
       shelf_layout_manager_->SelectValueForShelfAlignment(
           views::BubbleBorder::BOTTOM_CENTER,
           views::BubbleBorder::LEFT_CENTER,
           views::BubbleBorder::RIGHT_CENTER,
           views::BubbleBorder::TOP_CENTER);
 
-  view_ = new LauncherTooltipBubble(anchor, arrow_location, this);
+  view_ = new LauncherTooltipBubble(anchor, arrow, this);
   widget_ = view_->GetWidget();
   view_->SetText(text_);
 

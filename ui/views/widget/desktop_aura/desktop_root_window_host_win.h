@@ -5,6 +5,7 @@
 #ifndef UI_VIEWS_WIDGET_DESKTOP_AURA_DESKTOP_ROOT_WINDOW_HOST_WIN_H_
 #define UI_VIEWS_WIDGET_DESKTOP_AURA_DESKTOP_ROOT_WINDOW_HOST_WIN_H_
 
+#include "ui/aura/client/animation_host.h"
 #include "ui/aura/root_window_host.h"
 #include "ui/views/views_export.h"
 #include "ui/views/widget/desktop_aura/desktop_root_window_host.h"
@@ -12,7 +13,6 @@
 
 namespace aura {
 namespace client {
-class DefaultCaptureClient;
 class FocusClient;
 class ScreenPositionClient;
 }
@@ -20,6 +20,7 @@ class ScreenPositionClient;
 
 namespace views {
 class DesktopActivationClient;
+class DesktopCaptureClient;
 class DesktopCursorClient;
 class DesktopDispatcherClient;
 class DesktopDragDropClientWin;
@@ -31,6 +32,7 @@ class CursorManager;
 
 class VIEWS_EXPORT DesktopRootWindowHostWin
     : public DesktopRootWindowHost,
+      public aura::client::AnimationHost,
       public aura::RootWindowHost,
       public HWNDMessageHandlerDelegate {
  public:
@@ -47,6 +49,7 @@ class VIEWS_EXPORT DesktopRootWindowHostWin
   // Overridden from DesktopRootWindowHost:
   virtual aura::RootWindow* Init(aura::Window* content_window,
                                  const Widget::InitParams& params) OVERRIDE;
+  virtual void InitFocus(aura::Window* window) OVERRIDE;
   virtual void Close() OVERRIDE;
   virtual void CloseNow() OVERRIDE;
   virtual aura::RootWindowHost* AsRootWindowHost() OVERRIDE;
@@ -89,13 +92,11 @@ class VIEWS_EXPORT DesktopRootWindowHostWin
   virtual void SetOpacity(unsigned char opacity) OVERRIDE;
   virtual void SetWindowIcons(const gfx::ImageSkia& window_icon,
                               const gfx::ImageSkia& app_icon) OVERRIDE;
-  virtual void SetAccessibleName(const string16& name) OVERRIDE;
-  virtual void SetAccessibleRole(ui::AccessibilityTypes::Role role) OVERRIDE;
-  virtual void SetAccessibleState(ui::AccessibilityTypes::State state) OVERRIDE;
   virtual void InitModalType(ui::ModalType modal_type) OVERRIDE;
   virtual void FlashFrame(bool flash_frame) OVERRIDE;
   virtual void OnNativeWidgetFocus() OVERRIDE;
   virtual void OnNativeWidgetBlur() OVERRIDE;
+  virtual void SetInactiveRenderingDisabled(bool disable_inactive) OVERRIDE;
 
   // Overridden from aura::RootWindowHost:
   virtual void SetDelegate(aura::RootWindowHostDelegate* delegate) OVERRIDE;
@@ -106,6 +107,8 @@ class VIEWS_EXPORT DesktopRootWindowHostWin
   virtual void ToggleFullScreen() OVERRIDE;
   virtual gfx::Rect GetBounds() const OVERRIDE;
   virtual void SetBounds(const gfx::Rect& bounds) OVERRIDE;
+  virtual gfx::Insets GetInsets() const OVERRIDE;
+  virtual void SetInsets(const gfx::Insets& insets) OVERRIDE;
   virtual gfx::Point GetLocationOnNativeScreen() const OVERRIDE;
   virtual void SetCapture() OVERRIDE;
   virtual void ReleaseCapture() OVERRIDE;
@@ -119,12 +122,13 @@ class VIEWS_EXPORT DesktopRootWindowHostWin
   virtual bool CopyAreaToSkCanvas(const gfx::Rect& source_bounds,
                                   const gfx::Point& dest_offset,
                                   SkCanvas* canvas) OVERRIDE;
-  virtual bool GrabSnapshot(
-      const gfx::Rect& snapshot_bounds,
-      std::vector<unsigned char>* png_representation) OVERRIDE;
   virtual void PostNativeEvent(const base::NativeEvent& native_event) OVERRIDE;
   virtual void OnDeviceScaleFactorChanged(float device_scale_factor) OVERRIDE;
   virtual void PrepareForShutdown() OVERRIDE;
+
+  // Overridden from aura::client::AnimationHost
+  virtual void SetHostTransitionBounds(const gfx::Rect& bounds) OVERRIDE;
+  virtual void OnWindowHidingAnimationCompleted() OVERRIDE;
 
   // Overridden from HWNDMessageHandlerDelegate:
   virtual bool IsWidgetWindow() const OVERRIDE;
@@ -152,6 +156,7 @@ class VIEWS_EXPORT DesktopRootWindowHostWin
   virtual void ResetWindowControls() OVERRIDE;
   virtual void PaintLayeredWindow(gfx::Canvas* canvas) OVERRIDE;
   virtual gfx::NativeViewAccessible GetNativeViewAccessible() OVERRIDE;
+  virtual bool ShouldHandleSystemCommands() const OVERRIDE;
   virtual InputMethod* GetInputMethod() OVERRIDE;
   virtual void HandleAppDeactivated() OVERRIDE;
   virtual void HandleActivationChanged(bool active) OVERRIDE;
@@ -187,7 +192,6 @@ class VIEWS_EXPORT DesktopRootWindowHostWin
                                          HKL input_language_id) OVERRIDE;
   virtual bool HandlePaintAccelerated(const gfx::Rect& invalid_rect) OVERRIDE;
   virtual void HandlePaint(gfx::Canvas* canvas) OVERRIDE;
-  virtual void HandleScreenReaderDetected() OVERRIDE;
   virtual bool HandleTooltipNotify(int w_param,
                                    NMHDR* l_param,
                                    LRESULT* l_result) OVERRIDE;
@@ -211,7 +215,7 @@ class VIEWS_EXPORT DesktopRootWindowHostWin
   aura::RootWindow* root_window_;
 
   scoped_ptr<HWNDMessageHandler> message_handler_;
-  scoped_ptr<aura::client::DefaultCaptureClient> capture_client_;
+  scoped_ptr<DesktopCaptureClient> capture_client_;
   scoped_ptr<DesktopDispatcherClient> dispatcher_client_;
   scoped_ptr<aura::client::FocusClient> focus_client_;
   // Depends on focus_manager_.
@@ -234,6 +238,28 @@ class VIEWS_EXPORT DesktopRootWindowHostWin
   scoped_ptr<views::corewm::CursorManager> cursor_client_;
 
   scoped_ptr<DesktopDragDropClientWin> drag_drop_client_;
+
+  // Extra size added to the host window. Typically, the window size matches
+  // the contained content, however, when performing a translating or scaling
+  // animation the window has to be enlarged so that the content is not
+  // clipped.
+  gfx::Rect window_expansion_;
+
+  // Whether the window close should be converted to a hide, and then actually
+  // closed on the completion of the hide animation. This is cached because
+  // the property is set on the contained window which has a shorter lifetime.
+  bool should_animate_window_close_;
+
+  // When Close()d and animations are being applied to this window, the close
+  // of the window needs to be deferred to when the close animation is
+  // completed. This variable indicates that a Close was converted to a Hide,
+  // so that when the Hide is completed the host window should be closed.
+  bool pending_close_;
+
+  // True if the widget is going to have a non_client_view. We cache this value
+  // rather than asking the Widget for the non_client_view so that we know at
+  // Init time, before the Widget has created the NonClientView.
+  bool has_non_client_view_;
 
   DISALLOW_COPY_AND_ASSIGN(DesktopRootWindowHostWin);
 };

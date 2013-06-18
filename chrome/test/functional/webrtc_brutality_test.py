@@ -20,6 +20,9 @@ class WebrtcBrutalityTest(webrtc_test_base.WebrtcTestBase):
     The test will make repeated getUserMedia requests with refreshes between
     them. Sometimes it will click past the bar and then refresh.
     """
+    if self.PlatformIsWinXP():
+      print 'Skipping this test on Windows XP due to flakiness.'
+      return
     self.LoadTestPageInOneTab()
     for i in range(1, 100):
       if i % 10 == 0:
@@ -33,6 +36,9 @@ class WebrtcBrutalityTest(webrtc_test_base.WebrtcTestBase):
 
     The test will alternate unanswered requests with requests that get answered.
     """
+    if self.PlatformIsWinXP():
+      print 'Skipping this test on Windows XP due to flakiness.'
+      return
     self.LoadTestPageInOneTab()
     for i in range(1, 100):
       if i % 10 == 0:

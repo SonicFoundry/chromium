@@ -13,7 +13,7 @@
 #include "base/message_loop.h"
 #include "base/prefs/pref_service.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/background/background_application_list_model.h"
@@ -184,8 +184,6 @@ void RecordLastRunAppBundlePath() {
 - (void)getUrl:(NSAppleEventDescriptor*)event
      withReply:(NSAppleEventDescriptor*)reply;
 - (void)submitCloudPrintJob:(NSAppleEventDescriptor*)event;
-- (void)launchPlatformApp:(NSAppleEventDescriptor*)event
-                withReply:(NSAppleEventDescriptor*)reply;
 - (void)windowLayeringDidChange:(NSNotification*)inNotification;
 - (void)windowChangedToProfile:(Profile*)profile;
 - (void)checkForAnyKeyWindows;
@@ -216,11 +214,6 @@ void RecordLastRunAppBundlePath() {
           andSelector:@selector(getUrl:withReply:)
         forEventClass:'WWW!'    // A particularly ancient AppleEvent that dates
            andEventID:'OURL'];  // back to the Spyglass days.
-
-  [em setEventHandler:self
-          andSelector:@selector(launchPlatformApp:withReply:)
-        forEventClass:app_mode::kAEChromeAppClass
-           andEventID:app_mode::kAEChromeAppLaunch];
 
   // Register for various window layering changes. We use these to update
   // various UI elements (command-key equivalents, etc) when the frontmost
@@ -556,15 +549,13 @@ void RecordLastRunAppBundlePath() {
 }
 
 // If the auto-update interval is not set, make it 5 hours.
-// This code is specific to Mac Chrome Dev Channel.
 // Placed here for 2 reasons:
 // 1) Same spot as other Pref stuff
 // 2) Try and be friendly by keeping this after app launch
-// TODO(jrg): remove once we go Beta.
 - (void)setUpdateCheckInterval {
 #if defined(GOOGLE_CHROME_BUILD)
-  CFStringRef app = (CFStringRef)@"com.google.Keystone.Agent";
-  CFStringRef checkInterval = (CFStringRef)@"checkInterval";
+  CFStringRef app = CFSTR("com.google.Keystone.Agent");
+  CFStringRef checkInterval = CFSTR("checkInterval");
   CFPropertyListRef plist = CFPreferencesCopyAppValue(checkInterval, app);
   if (!plist) {
     const float fiveHoursInSeconds = 5.0 * 60.0 * 60.0;
@@ -1144,38 +1135,6 @@ void RecordLastRunAppBundlePath() {
   gurlVector.push_back(gurl);
 
   [self openUrls:gurlVector];
-}
-
-- (void)launchPlatformApp:(NSAppleEventDescriptor*)event
-                withReply:(NSAppleEventDescriptor*)reply {
-  NSString* appId =
-      [[event paramDescriptorForKeyword:keyDirectObject] stringValue];
-  NSString* profileDir =
-      [[event paramDescriptorForKeyword:app_mode::kAEProfileDirKey]
-          stringValue];
-
-  ProfileManager* profileManager = g_browser_process->profile_manager();
-  base::FilePath path = base::FilePath(base::SysNSStringToUTF8(profileDir));
-  path = profileManager->user_data_dir().Append(path);
-  Profile* profile = profileManager->GetProfile(path);
-  if (!profile) {
-    LOG(ERROR) << "Unable to locate a suitable profile for profile directory '"
-               << profileDir << "' while trying to load app with id '"
-               << appId << "'.";
-    return;
-  }
-  ExtensionServiceInterface* extensionService =
-      extensions::ExtensionSystem::Get(profile)->extension_service();
-  const extensions::Extension* extension =
-      extensionService->GetExtensionById(
-          base::SysNSStringToUTF8(appId), false);
-  if (!extension) {
-    LOG(ERROR) << "Shortcut attempted to launch nonexistent app with id '"
-               << base::SysNSStringToUTF8(appId) << "'.";
-    return;
-  }
-  chrome::OpenApplication(chrome::AppLaunchParams(
-      profile, extension, extension_misc::LAUNCH_NONE, NEW_WINDOW));
 }
 
 // Apple Event handler that receives print event from service

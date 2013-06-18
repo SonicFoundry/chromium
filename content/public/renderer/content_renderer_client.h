@@ -22,6 +22,7 @@ class SkBitmap;
 
 namespace base {
 class FilePath;
+class MessageLoop;
 }
 
 namespace WebKit {
@@ -36,6 +37,9 @@ class WebPlugin;
 class WebPluginContainer;
 class WebRTCPeerConnectionHandler;
 class WebRTCPeerConnectionHandlerClient;
+class WebSpeechSynthesizer;
+class WebSpeechSynthesizerClient;
+class WebThemeEngine;
 class WebURLRequest;
 struct WebPluginParams;
 struct WebURLError;
@@ -57,6 +61,7 @@ class WebMediaPlayerParams;
 namespace content {
 
 class RenderView;
+class SynchronousCompositor;
 
 // Embedder API for participating in renderer logic.
 class CONTENT_EXPORT ContentRendererClient {
@@ -113,6 +118,7 @@ class CONTENT_EXPORT ContentRendererClient {
   // (lack of information on the error code) so the caller should take care to
   // initialize the string values with safe defaults before the call.
   virtual void GetNavigationErrorStrings(
+      WebKit::WebFrame* frame,
       const WebKit::WebURLRequest& failed_request,
       const WebKit::WebURLError& error,
       std::string* error_html,
@@ -149,6 +155,15 @@ class CONTENT_EXPORT ContentRendererClient {
   // Allows the embedder to override the WebKit::WebHyphenator used. If it
   // returns NULL the content layer will handle hyphenation.
   virtual WebKit::WebHyphenator* OverrideWebHyphenator();
+
+  // Allows the embedder to override the WebThemeEngine used. If it returns NULL
+  // the content layer will provide an engine.
+  virtual WebKit::WebThemeEngine* OverrideThemeEngine();
+
+  // Allows the embedder to override the WebSpeechSynthesizer used.
+  // If it returns NULL the content layer will provide an engine.
+  virtual WebKit::WebSpeechSynthesizer* OverrideSpeechSynthesizer(
+      WebKit::WebSpeechSynthesizerClient* client);
 
   // Returns true if the renderer process should schedule the idle handler when
   // all widgets are hidden.
@@ -193,7 +208,7 @@ class CONTENT_EXPORT ContentRendererClient {
                                         v8::Handle<v8::Context>,
                                         int world_id) {}
   virtual bool WillSetSecurityToken(WebKit::WebFrame* frame,
-                                    v8::Handle<v8::Context>);
+                                    v8::Handle<v8::Context>) { return false; }
 
   // See WebKit::Platform.
   virtual unsigned long long VisitedLinkHash(const char* canonical_url,
@@ -223,6 +238,22 @@ class CONTENT_EXPORT ContentRendererClient {
 
   // Returns whether BrowserPlugin should be allowed within the |container|.
   virtual bool AllowBrowserPlugin(WebKit::WebPluginContainer* container) const;
+
+  // Allow the embedder to specify a different renderer compositor MessageLoop.
+  // If not NULL, the returned MessageLoop must be valid for the lifetime of
+  // RenderThreadImpl. If NULL, then a new thread will be created.
+  virtual base::MessageLoop* OverrideCompositorMessageLoop() const;
+
+  // Called when a render view's compositor instance is created, when the
+  // kEnableSynchronousRendererCompositor flag is used.
+  // NOTE this is called on the Compositor thread: the embedder must
+  // implement OverrideCompositorMessageLoop() when using this interface.
+  virtual void DidCreateSynchronousCompositor(
+      int render_view_id,
+      SynchronousCompositor* compositor) {}
+
+  // Allow the embedder to disable input event filtering by the compositor.
+  virtual bool ShouldCreateCompositorInputHandler() const;
 };
 
 }  // namespace content

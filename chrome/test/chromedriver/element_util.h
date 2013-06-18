@@ -22,6 +22,8 @@ class WebView;
 
 base::DictionaryValue* CreateElement(const std::string& element_id);
 
+base::Value* CreateValueFrom(const WebPoint& point);
+
 // |root_element_id| could be null when no root element is given.
 Status FindElement(
     int interval_ms,
@@ -47,14 +49,18 @@ Status IsElementAttributeEqualToIgnoreCase(
     const std::string& attribute_value,
     bool* is_equal);
 
-// |is_clickable| could be null.
-// If not null, it's set to indicate whether center of the element is clickable.
 Status GetElementClickableLocation(
     Session* session,
     WebView* web_view,
     const std::string& element_id,
-    WebPoint* location,
-    bool* is_clickable);
+    WebPoint* location);
+
+Status GetElementEffectiveStyle(
+    Session* session,
+    WebView* web_view,
+    const std::string& element_id,
+    const std::string& property_name,
+    std::string* property_value);
 
 Status GetElementRegion(
     Session* session,
@@ -73,13 +79,6 @@ Status GetElementSize(
     WebView* web_view,
     const std::string& element_id,
     WebSize* size);
-
-Status IsElementClickable(
-    Session* session,
-    WebView* web_view,
-    const std::string& element_id,
-    WebPoint* location,
-    bool* is_clickable);
 
 Status IsElementDisplayed(
     Session* session,
@@ -129,6 +128,7 @@ Status ScrollElementRegionIntoView(
     const std::string& element_id,
     const WebRect& region,
     bool center,
+    bool verify_clickable,
     WebPoint* location);
 
 #endif  // CHROME_TEST_CHROMEDRIVER_ELEMENT_UTIL_H_

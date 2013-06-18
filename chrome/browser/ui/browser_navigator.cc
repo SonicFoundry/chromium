@@ -359,8 +359,7 @@ bool SwapInPrerender(WebContents* target_contents, const GURL& url) {
 bool SwapInInstantNTP(chrome::NavigateParams* params,
                       const GURL& url,
                       content::WebContents* source_contents) {
-  chrome::BrowserInstantController* instant =
-      params->browser->instant_controller();
+  BrowserInstantController* instant = params->browser->instant_controller();
   return instant && instant->MaybeSwapInInstantNTPContents(
       url, source_contents, &params->target_contents);
 }
@@ -436,6 +435,18 @@ NavigateParams::NavigateParams(Profile* a_profile,
       is_cross_site_redirect(false) {}
 
 NavigateParams::~NavigateParams() {}
+
+void FillNavigateParamsFromOpenURLParams(chrome::NavigateParams* nav_params,
+                                         const content::OpenURLParams& params) {
+  nav_params->referrer = params.referrer;
+  nav_params->extra_headers = params.extra_headers;
+  nav_params->disposition = params.disposition;
+  nav_params->override_encoding = params.override_encoding;
+  nav_params->is_renderer_initiated = params.is_renderer_initiated;
+  nav_params->transferred_global_request_id =
+      params.transferred_global_request_id;
+  nav_params->is_cross_site_redirect = params.is_cross_site_redirect;
+}
 
 void Navigate(NavigateParams* params) {
   Browser* source_browser = params->browser;
@@ -629,6 +640,17 @@ void Navigate(NavigateParams* params) {
 
 bool IsURLAllowedInIncognito(const GURL& url,
                              content::BrowserContext* browser_context) {
+  if (url.scheme() == chrome::kViewSourceScheme) {
+    // A view-source URL is allowed in incognito mode only if the URL itself
+    // is allowed in incognito mode. Remove the "view-source:" from the start
+    // of the URL and validate the rest.
+    std::string stripped_spec = url.spec();
+    DCHECK_GT(stripped_spec.size(), strlen(kViewSourceScheme));
+    stripped_spec.erase(0, strlen(kViewSourceScheme)+1);
+    GURL stripped_url(stripped_spec);
+    return stripped_url.is_valid() &&
+        IsURLAllowedInIncognito(stripped_url, browser_context);
+  }
   // Most URLs are allowed in incognito; the following are exceptions.
   // chrome://extensions is on the list because it redirects to
   // chrome://settings.

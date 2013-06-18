@@ -15,7 +15,6 @@
 #include "base/memory/scoped_ptr.h"
 #import "chrome/browser/ui/cocoa/chrome_browser_window.h"
 #import "chrome/browser/ui/cocoa/tab_contents/tab_contents_controller.h"
-#import "chrome/browser/ui/cocoa/tracking_area.h"
 #include "chrome/browser/ui/panels/panel.h"
 
 class PanelCocoa;
@@ -126,16 +125,25 @@ class PanelCocoa;
 // Returns true if Panel requested activation of the window.
 - (BOOL)activationRequestedByPanel;
 
-- (void)ensureFullyVisible;
-
 // Adjust NSStatusWindowLevel based on whether panel is always on top
 // and whether the panel is minimized. The first version wraps the second
 // version using the current panel expanstion state.
 - (void)updateWindowLevel;
 - (void)updateWindowLevel:(BOOL)panelIsMinimized;
 
+// Adjusts NSWindowCollectionBehavior based on whether panel is always on top.
+- (void)updateWindowCollectionBehavior;
+
 // Turns on user-resizable corners/sides indications and enables live resize.
 - (void)enableResizeByMouse:(BOOL)enable;
+
+// Turns on/off shadow effect around the window shape.
+- (void)showShadow:(BOOL)show;
+
+// Minimize the window to the dock.
+- (void)miniaturize;
+// Returns true if the window is minimized to the dock.
+- (BOOL)isMiniaturized;
 
 - (NSRect)frameRectForContentRect:(NSRect)contentRect;
 - (NSRect)contentRectForFrameRect:(NSRect)frameRect;

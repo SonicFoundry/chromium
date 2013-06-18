@@ -6,7 +6,7 @@
 #define CHROME_BROWSER_CUSTOM_HANDLERS_REGISTER_PROTOCOL_HANDLER_INFOBAR_DELEGATE_H_
 
 #include "base/string16.h"
-#include "chrome/browser/api/infobars/confirm_infobar_delegate.h"
+#include "chrome/browser/infobars/confirm_infobar_delegate.h"
 #include "chrome/common/custom_handlers/protocol_handler.h"
 
 class InfoBarService;
@@ -23,8 +23,16 @@ class RegisterProtocolHandlerInfoBarDelegate : public ConfirmInfoBarDelegate {
                      ProtocolHandlerRegistry* registry,
                      const ProtocolHandler& handler);
 
+ private:
+  RegisterProtocolHandlerInfoBarDelegate(InfoBarService* infobar_service,
+                                         ProtocolHandlerRegistry* registry,
+                                         const ProtocolHandler& handler);
+
   // ConfirmInfoBarDelegate:
+  virtual InfoBarAutomationType GetInfoBarAutomationType() const OVERRIDE;
   virtual Type GetInfoBarType() const OVERRIDE;
+  virtual RegisterProtocolHandlerInfoBarDelegate*
+      AsRegisterProtocolHandlerInfoBarDelegate() OVERRIDE;
   virtual string16 GetMessageText() const OVERRIDE;
   virtual string16 GetButtonLabel(InfoBarButton button) const OVERRIDE;
   virtual bool NeedElevation(InfoBarButton button) const OVERRIDE;
@@ -33,18 +41,9 @@ class RegisterProtocolHandlerInfoBarDelegate : public ConfirmInfoBarDelegate {
   virtual string16 GetLinkText() const OVERRIDE;
   virtual bool LinkClicked(WindowOpenDisposition disposition) OVERRIDE;
 
-  virtual RegisterProtocolHandlerInfoBarDelegate*
-      AsRegisterProtocolHandlerInfoBarDelegate() OVERRIDE;
-
-  virtual InfoBarAutomationType GetInfoBarAutomationType() const OVERRIDE;
-
- private:
-  RegisterProtocolHandlerInfoBarDelegate(InfoBarService* infobar_service,
-                                         ProtocolHandlerRegistry* registry,
-                                         const ProtocolHandler& handler);
-
   // Returns a user-friendly name for the protocol of this protocol handler.
   string16 GetProtocolName(const ProtocolHandler& handler) const;
+
   ProtocolHandlerRegistry* registry_;
   ProtocolHandler handler_;
 

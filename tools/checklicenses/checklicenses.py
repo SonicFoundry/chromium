@@ -40,6 +40,7 @@ WHITELISTED_LICENSES = [
     'BSD (2 clause)',
     'BSD (2 clause) MIT/X11 (BSD like)',
     'BSD (3 clause)',
+    'BSD (3 clause) GPL (v2)',
     'BSD (3 clause) ISC',
     'BSD (3 clause) LGPL (v2 or later)',
     'BSD (3 clause) LGPL (v2.1 or later)',
@@ -152,21 +153,6 @@ PATH_SPECIFIC_WHITELISTED_LICENSES = {
         'GPL (v2 or later)',
         'UNKNOWN',
     ],
-
-    # http://crbug.com/98107
-    'ppapi/c/documentation/check.sh': [
-        'UNKNOWN',
-    ],
-    'ppapi/cpp/documentation/check.sh': [
-        'UNKNOWN',
-    ],
-    'ppapi/lib/gl/include': [
-        'UNKNOWN',
-    ],
-    'ppapi/native_client/tests/earth/earth_image.inc': [
-        'UNKNOWN',
-    ],
-
     'third_party/WebKit': [
         'UNKNOWN',
     ],
@@ -194,9 +180,13 @@ PATH_SPECIFIC_WHITELISTED_LICENSES = {
     'third_party/bzip2': [
         'UNKNOWN',
     ],
-    'third_party/cld/encodings/compact_lang_det': [  # http://crbug.com/98120
+
+    # http://crbug.com/222828
+    # http://bugs.python.org/issue17514
+    'third_party/chromite/third_party/argparse.py': [
         'UNKNOWN',
     ],
+
     # Not used. http://crbug.com/156020
     # Using third_party/cros_dbus_cplusplus/cros_dbus_cplusplus.gyp instead.
     'third_party/cros_dbus_cplusplus/source/autogen.sh': [
@@ -323,6 +313,9 @@ PATH_SPECIFIC_WHITELISTED_LICENSES = {
     'third_party/npapi/npspy/extern/java': [
         'GPL (unversioned/unknown version)',
     ],
+    'third_party/openmax_dl/dl' : [
+        'Khronos Group',
+    ],
     'third_party/openssl': [  # http://crbug.com/98451
         'UNKNOWN',
     ],
@@ -344,6 +337,13 @@ PATH_SPECIFIC_WHITELISTED_LICENSES = {
     'third_party/protobuf': [  # http://crbug.com/98455
         'UNKNOWN',
     ],
+
+    # http://crbug.com/222831
+    # https://bitbucket.org/eliben/pyelftools/issue/12
+    'third_party/pyelftools': [
+        'UNKNOWN',
+    ],
+
     'third_party/pylib': [
         'UNKNOWN',
     ],
@@ -361,6 +361,9 @@ PATH_SPECIFIC_WHITELISTED_LICENSES = {
     ],
     'third_party/smhasher/src': [  # http://crbug.com/98465
         'UNKNOWN',
+    ],
+    'third_party/speech-dispatcher/libspeechd.h': [
+        'GPL (v2 or later)',
     ],
     'third_party/sqlite': [
         'UNKNOWN',

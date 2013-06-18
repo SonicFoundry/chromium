@@ -64,6 +64,9 @@ namespace extension_filenames {
   // The filename to use for a background page generated from
   // background.scripts.
   extern const char kGeneratedBackgroundPageFilename[];
+
+  // Path to imported modules.
+  extern const char kModulesDir[];
 }
 
 // Keys in the dictionary returned by Extension::GetBasicInfo().
@@ -73,6 +76,7 @@ namespace extension_info_keys {
   extern const char kHomepageUrlKey[];
   extern const char kIdKey[];
   extern const char kNameKey[];
+  extern const char kKioskEnabledKey[];
   extern const char kOfflineEnabledKey[];
   extern const char kOptionsUrlKey[];
   extern const char kDetailsUrlKey[];
@@ -90,6 +94,9 @@ namespace extension_misc {
   // The extension id of the bookmark manager.
   extern const char kBookmarkManagerId[];
 
+  // The extension id of the Chrome component application.
+  extern const char kChromeAppId[];
+
   // The extension id of the Citrix Receiver application.
   extern const char kCitrixReceiverAppId[];
 
@@ -99,8 +106,29 @@ namespace extension_misc {
   // The extension id of the dev Citrix Receiver application.
   extern const char kCitrixReceiverAppDevId[];
 
+  // The extension id of the Cloud Print component application.
+  extern const char kCloudPrintAppId[];
+
   // The extension id of the Enterprise Web Store component application.
   extern const char kEnterpriseWebStoreAppId[];
+
+  // The extension id of GMail application.
+  extern const char kGmailAppId[];
+
+  // The extension id of the Google Doc application.
+  extern const char kGoogleDocAppId[];
+
+  // The extension id of the Google Play Music application.
+  extern const char kGooglePlayMusicAppId[];
+
+  // The extension id of the Google Search application.
+  extern const char kGoogleSearchAppId[];
+
+  // The extension id of the Google Sheets application.
+  extern const char kGoogleSheetsAppId[];
+
+  // The extension id of the Google Slides application.
+  extern const char kGoogleSlidesAppId[];
 
   // The extension id of the HTerm app for ChromeOS.
   extern const char kHTermAppId[];
@@ -111,23 +139,26 @@ namespace extension_misc {
   // The extension id of the Crosh component app for ChromeOS.
   extern const char kCroshBuiltinAppId[];
 
-  // The extension id of the Office Viewer extension.
-  extern const char kQuickOfficeExtensionId[];
+  // The extension id of the Office Viewer component extension.
+  extern const char kQuickOfficeComponentExtensionId[];
 
   // The extension id of the Office Viewer dev extension.
   extern const char kQuickOfficeDevExtensionId[];
 
-  // The extension id of the Web Store component application.
-  extern const char kWebStoreAppId[];
-
-  // The extension id of the Cloud Print component application.
-  extern const char kCloudPrintAppId[];
-
-  // The extension id of the Chrome component application.
-  extern const char kChromeAppId[];
+  // The extension id of the Office Viewer extension.
+  extern const char kQuickOfficeExtensionId[];
 
   // The extension id of the settings application.
   extern const char kSettingsAppId[];
+
+  // The extension id used for testing streamsPrivate
+  extern const char kStreamsPrivateTestExtensionId[];
+
+  // The extension id of the Web Store component application.
+  extern const char kWebStoreAppId[];
+
+  // The extension id of the Youtube application.
+  extern const char kYoutubeAppId[];
 
   // Note: this structure is an ASN.1 which encodes the algorithm used
   // with its parameters. This is defined in PKCS #1 v2.1 (RFC 3447).
@@ -150,6 +181,9 @@ namespace extension_misc {
 
   // The name of the app launch histogram.
   extern const char kAppLaunchHistogram[];
+
+  // The name of the app launch histogram for platform apps.
+  extern const char kPlatformAppLaunchHistogram[];
 
   // The buckets used for app launches.
   enum AppLaunchBucket {
@@ -215,6 +249,12 @@ namespace extension_misc {
     // User clicked [+] icon in apps page.
     APP_LAUNCH_NTP_WEBSTORE_PLUS_ICON,
 
+    // User clicked icon in app launcher main view.
+    APP_LAUNCH_APP_LIST_MAIN,
+
+    // User clicked app launcher search result.
+    APP_LAUNCH_APP_LIST_SEARCH,
+
     APP_LAUNCH_BUCKET_BOUNDARY,
     APP_LAUNCH_BUCKET_INVALID
   };
@@ -261,10 +301,6 @@ namespace extension_misc {
   // The path part of the file system url used for media file systems.
   extern const char kMediaFileSystemPathPart[];
 
-  // Error indicating that the app notifications API is not accessible by split
-  // mode extensions in incognito windows.
-  extern const char kAppNotificationsIncognitoError[];
-
   // NOTE: If you change this list, you should also change kExtensionIconSizes
   // in cc file.
   enum ExtensionIcons {
@@ -290,7 +326,6 @@ namespace extension_misc {
   // List of sizes for extension icons that can be defined in the manifest.
   extern const int kScriptBadgeIconSizes[];
   extern const size_t kNumScriptBadgeIconSizes;
-
-}  // extension_misc
+}  // namespace extension_misc
 
 #endif  // CHROME_COMMON_EXTENSIONS_EXTENSION_CONSTANTS_H_

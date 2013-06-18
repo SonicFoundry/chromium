@@ -86,7 +86,7 @@ void OnlineAttempt::OnClientLoginSuccess(
     TryClientLogin();
     return;
   }
-  TriggerResolve(LoginFailure::None());
+  TriggerResolve(LoginFailure::LoginFailureNone());
 }
 
 void OnlineAttempt::OnClientLoginFailure(
@@ -121,7 +121,7 @@ void OnlineAttempt::OnClientLoginFailure(
 
   if (error.state() == GoogleServiceAuthError::TWO_FACTOR) {
     LOG(WARNING) << "Two factor authenticated. Sync will not work.";
-    TriggerResolve(LoginFailure::None());
+    TriggerResolve(LoginFailure::LoginFailureNone());
 
     return;
   }
@@ -138,8 +138,8 @@ void OnlineAttempt::TryClientLogin() {
       base::TimeDelta::FromMilliseconds(kClientLoginTimeoutMs));
 
   client_fetcher_->StartClientLogin(
-      attempt_->username,
-      attempt_->password,
+      attempt_->user_context.username,
+      attempt_->user_context.password,
       GaiaConstants::kSyncService,
       attempt_->login_token,
       attempt_->login_captcha,

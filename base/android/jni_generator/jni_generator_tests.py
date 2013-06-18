@@ -325,7 +325,7 @@ static void GotOrientation(JNIEnv* env, jobject obj,
 static bool RegisterNativesImpl(JNIEnv* env) {
 
   g_TestJni_clazz = reinterpret_cast<jclass>(env->NewGlobalRef(
-      base::android::GetUnscopedClass(env, kTestJniClassPath)));
+      base::android::GetClass(env, kTestJniClassPath).obj()));
   static const JNINativeMethod kMethodsTestJni[] = {
     { "nativeInit",
 "("
@@ -483,7 +483,7 @@ static jint Init(JNIEnv* env, jobject obj);
 static bool RegisterNativesImpl(JNIEnv* env) {
 
   g_TestJni_clazz = reinterpret_cast<jclass>(env->NewGlobalRef(
-      base::android::GetUnscopedClass(env, kTestJniClassPath)));
+      base::android::GetClass(env, kTestJniClassPath).obj()));
   static const JNINativeMethod kMethodsMyInnerClass[] = {
     { "nativeInit",
 "("
@@ -574,7 +574,7 @@ static jint Init(JNIEnv* env, jobject obj);
 static bool RegisterNativesImpl(JNIEnv* env) {
 
   g_TestJni_clazz = reinterpret_cast<jclass>(env->NewGlobalRef(
-      base::android::GetUnscopedClass(env, kTestJniClassPath)));
+      base::android::GetClass(env, kTestJniClassPath).obj()));
   static const JNINativeMethod kMethodsMyOtherInnerClass[] = {
     { "nativeInit",
 "("
@@ -679,7 +679,7 @@ static jint Init(JNIEnv* env, jobject obj);
 static bool RegisterNativesImpl(JNIEnv* env) {
 
   g_TestJni_clazz = reinterpret_cast<jclass>(env->NewGlobalRef(
-      base::android::GetUnscopedClass(env, kTestJniClassPath)));
+      base::android::GetClass(env, kTestJniClassPath).obj()));
   static const JNINativeMethod kMethodsMyOtherInnerClass[] = {
     { "nativeInit",
 "("
@@ -723,6 +723,7 @@ static bool RegisterNativesImpl(JNIEnv* env) {
     import android.graphics.Bitmap;
     import android.view.View;
     import java.io.InputStream;
+    import java.util.List;
 
     class InnerClass {}
 
@@ -796,6 +797,12 @@ static bool RegisterNativesImpl(JNIEnv* env) {
 
     @CalledByNative
     public byte[][] returnArrayOfByteArray();
+
+    @CalledByNative
+    public Bitmap.CompressFormat getCompressFormat();
+
+    @CalledByNative
+    public List<Bitmap.CompressFormat> getCompressFormatList();
     """
     jni_generator.JniParams.SetFullyQualifiedClass('org/chromium/Foo')
     jni_generator.JniParams.ExtractImportsAndInnerClasses(test_data)
@@ -992,6 +999,28 @@ static bool RegisterNativesImpl(JNIEnv* env) {
             env_call=('Void', ''),
             unchecked=False,
         ),
+        CalledByNative(
+            return_type='Bitmap.CompressFormat',
+            system_class=False,
+            static=False,
+            name='getCompressFormat',
+            method_id_var_name='getCompressFormat',
+            java_class_name='',
+            params=[],
+            env_call=('Void', ''),
+            unchecked=False,
+        ),
+        CalledByNative(
+            return_type='List<Bitmap.CompressFormat>',
+            system_class=False,
+            static=False,
+            name='getCompressFormatList',
+            method_id_var_name='getCompressFormatList',
+            java_class_name='',
+            params=[],
+            env_call=('Void', ''),
+            unchecked=False,
+        ),
     ]
     self.assertListEquals(golden_called_by_natives, called_by_natives)
     h = jni_generator.InlHeaderFileGenerator('', 'org/chromium/TestJni',
@@ -1040,7 +1069,7 @@ static ScopedJavaLocalRef<jobject> Java_TestJni_showConfirmInfoBar(JNIEnv* env,
   /* Must call RegisterNativesImpl()  */
   DCHECK(g_TestJni_clazz);
   jmethodID method_id =
-  base::android::MethodID::LazyGet<
+      base::android::MethodID::LazyGet<
       base::android::MethodID::TYPE_INSTANCE>(
       env, g_TestJni_clazz,
       "showConfirmInfoBar",
@@ -1071,7 +1100,7 @@ static ScopedJavaLocalRef<jobject> Java_TestJni_showAutoLoginInfoBar(JNIEnv*
   /* Must call RegisterNativesImpl()  */
   DCHECK(g_TestJni_clazz);
   jmethodID method_id =
-  base::android::MethodID::LazyGet<
+      base::android::MethodID::LazyGet<
       base::android::MethodID::TYPE_INSTANCE>(
       env, g_TestJni_clazz,
       "showAutoLoginInfoBar",
@@ -1097,7 +1126,7 @@ static void Java_InfoBar_dismiss(JNIEnv* env, jobject obj) {
   /* Must call RegisterNativesImpl()  */
   DCHECK(g_InfoBar_clazz);
   jmethodID method_id =
-  base::android::MethodID::LazyGet<
+      base::android::MethodID::LazyGet<
       base::android::MethodID::TYPE_INSTANCE>(
       env, g_InfoBar_clazz,
       "dismiss",
@@ -1121,7 +1150,7 @@ static jboolean Java_TestJni_shouldShowAutoLogin(JNIEnv* env, jobject view,
   /* Must call RegisterNativesImpl()  */
   DCHECK(g_TestJni_clazz);
   jmethodID method_id =
-  base::android::MethodID::LazyGet<
+      base::android::MethodID::LazyGet<
       base::android::MethodID::TYPE_STATIC>(
       env, g_TestJni_clazz,
       "shouldShowAutoLogin",
@@ -1148,7 +1177,7 @@ static ScopedJavaLocalRef<jobject> Java_TestJni_openUrl(JNIEnv* env, jstring
   /* Must call RegisterNativesImpl()  */
   DCHECK(g_TestJni_clazz);
   jmethodID method_id =
-  base::android::MethodID::LazyGet<
+      base::android::MethodID::LazyGet<
       base::android::MethodID::TYPE_STATIC>(
       env, g_TestJni_clazz,
       "openUrl",
@@ -1176,7 +1205,7 @@ static void Java_TestJni_activateHardwareAcceleration(JNIEnv* env, jobject obj,
   /* Must call RegisterNativesImpl()  */
   DCHECK(g_TestJni_clazz);
   jmethodID method_id =
-  base::android::MethodID::LazyGet<
+      base::android::MethodID::LazyGet<
       base::android::MethodID::TYPE_INSTANCE>(
       env, g_TestJni_clazz,
       "activateHardwareAcceleration",
@@ -1202,7 +1231,7 @@ static void Java_TestJni_uncheckedCall(JNIEnv* env, jobject obj, jint iParam) {
   /* Must call RegisterNativesImpl()  */
   DCHECK(g_TestJni_clazz);
   jmethodID method_id =
-  base::android::MethodID::LazyGet<
+      base::android::MethodID::LazyGet<
       base::android::MethodID::TYPE_INSTANCE>(
       env, g_TestJni_clazz,
       "uncheckedCall",
@@ -1404,7 +1433,7 @@ static ScopedJavaLocalRef<jobjectArray> Java_TestJni_returnObjectArray(JNIEnv*
 
 static base::subtle::AtomicWord g_TestJni_returnArrayOfByteArray = 0;
 static ScopedJavaLocalRef<jobjectArray>
-Java_TestJni_returnArrayOfByteArray(JNIEnv* env, jobject obj) {
+    Java_TestJni_returnArrayOfByteArray(JNIEnv* env, jobject obj) {
   /* Must call RegisterNativesImpl()  */
   DCHECK(g_TestJni_clazz);
   jmethodID method_id =
@@ -1425,14 +1454,60 @@ Java_TestJni_returnArrayOfByteArray(JNIEnv* env, jobject obj) {
   return ScopedJavaLocalRef<jobjectArray>(env, ret);
 }
 
+static base::subtle::AtomicWord g_TestJni_getCompressFormat = 0;
+static ScopedJavaLocalRef<jobject> Java_TestJni_getCompressFormat(JNIEnv* env,
+    jobject obj) {
+  /* Must call RegisterNativesImpl()  */
+  DCHECK(g_TestJni_clazz);
+  jmethodID method_id =
+      base::android::MethodID::LazyGet<
+      base::android::MethodID::TYPE_INSTANCE>(
+      env, g_TestJni_clazz,
+      "getCompressFormat",
+
+"("
+")"
+"Landroid/graphics/Bitmap$CompressFormat;",
+      &g_TestJni_getCompressFormat);
+
+  jobject ret =
+    env->CallObjectMethod(obj,
+      method_id);
+  base::android::CheckException(env);
+  return ScopedJavaLocalRef<jobject>(env, ret);
+}
+
+static base::subtle::AtomicWord g_TestJni_getCompressFormatList = 0;
+static ScopedJavaLocalRef<jobject> Java_TestJni_getCompressFormatList(JNIEnv*
+    env, jobject obj) {
+  /* Must call RegisterNativesImpl()  */
+  DCHECK(g_TestJni_clazz);
+  jmethodID method_id =
+      base::android::MethodID::LazyGet<
+      base::android::MethodID::TYPE_INSTANCE>(
+      env, g_TestJni_clazz,
+      "getCompressFormatList",
+
+"("
+")"
+"Ljava/util/List;",
+      &g_TestJni_getCompressFormatList);
+
+  jobject ret =
+    env->CallObjectMethod(obj,
+      method_id);
+  base::android::CheckException(env);
+  return ScopedJavaLocalRef<jobject>(env, ret);
+}
+
 // Step 3: RegisterNatives.
 
 static bool RegisterNativesImpl(JNIEnv* env) {
 
   g_TestJni_clazz = reinterpret_cast<jclass>(env->NewGlobalRef(
-      base::android::GetUnscopedClass(env, kTestJniClassPath)));
+      base::android::GetClass(env, kTestJniClassPath).obj()));
   g_InfoBar_clazz = reinterpret_cast<jclass>(env->NewGlobalRef(
-      base::android::GetUnscopedClass(env, kInfoBarClassPath)));
+      base::android::GetClass(env, kInfoBarClassPath).obj()));
   return true;
 }
 
@@ -1795,7 +1870,7 @@ static ScopedJavaLocalRef<jobject> Java_InputStream_Constructor(JNIEnv* env) {
 static bool RegisterNativesImpl(JNIEnv* env) {
 
   g_InputStream_clazz = reinterpret_cast<jclass>(env->NewGlobalRef(
-      base::android::GetUnscopedClass(env, kInputStreamClassPath)));
+      base::android::GetClass(env, kInputStreamClassPath).obj()));
   return true;
 }
 }  // namespace JNI_InputStream
@@ -1836,7 +1911,9 @@ static bool RegisterNativesImpl(JNIEnv* env) {
 
   def testJniSelfDocumentingExample(self):
     script_dir = os.path.dirname(sys.argv[0])
-    content = file(os.path.join(script_dir, 'SampleForTests.java')).read()
+    content = file(os.path.join(script_dir,
+        'java/src/org/chromium/example/jni_generator/SampleForTests.java')
+        ).read()
     golden_content = file(os.path.join(script_dir,
                                        'golden_sample_for_tests_jni.h')).read()
     jni_from_java = jni_generator.JNIFromJavaSource(
@@ -1888,7 +1965,6 @@ import org.chromium.content.app.ContentMain;
 import org.chromium.content.browser.SandboxedProcessConnection;
 import org.chromium.content.common.ISandboxedProcessCallback;
 import org.chromium.content.common.ISandboxedProcessService;
-import org.chromium.content.common.SurfaceCallback;
 import org.chromium.content.common.WillNotRaise.AnException;
 import org.chromium.content.common.WillRaise.AnException;
 

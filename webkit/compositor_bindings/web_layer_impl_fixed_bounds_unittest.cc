@@ -2,18 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "cc/layer_tree_host_common.h"
-#include "cc/picture_image_layer.h"
+#include <vector>
+#include "cc/layers/picture_image_layer.h"
 #include "cc/test/geometry_test_utils.h"
+#include "cc/trees/layer_tree_host_common.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebFloatPoint.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebSize.h"
-#include "third_party/WebKit/Source/Platform/chromium/public/WebTransformationMatrix.h"
 #include "third_party/skia/include/utils/SkMatrix44.h"
 #include "ui/gfx/point3_f.h"
 #include "webkit/compositor_bindings/web_layer_impl_fixed_bounds.h"
 
-using namespace WebKit;
+using WebKit::WebFloatPoint;
+using WebKit::WebSize;
+
+namespace webkit {
+namespace {
 
 TEST(WebLayerImplFixedBoundsTest, IdentityBounds) {
   scoped_ptr<WebLayerImplFixedBounds> layer(new WebLayerImplFixedBounds());
@@ -55,7 +59,7 @@ void CheckBoundsScaleSimple(WebLayerImplFixedBounds* layer,
                     TransformPoint(layer->layer()->transform(),
                                    original_point));
   EXPECT_POINT3F_EQ(original_point,
-                    TransformPoint(layer->layer()->sublayerTransform(),
+                    TransformPoint(layer->layer()->sublayer_transform(),
                                    scaled_point));
 }
 
@@ -70,11 +74,11 @@ TEST(WebLayerImplFixedBoundsTest, BoundsScaleSimple) {
 }
 
 void ExpectEqualLayerRectsInTarget(cc::Layer* layer1, cc::Layer* layer2) {
-  gfx::RectF layer1_rect_in_target(layer1->contentBounds());
-  layer1->drawTransform().TransformRect(&layer1_rect_in_target);
+  gfx::RectF layer1_rect_in_target(layer1->content_bounds());
+  layer1->draw_transform().TransformRect(&layer1_rect_in_target);
 
-  gfx::RectF layer2_rect_in_target(layer2->contentBounds());
-  layer2->drawTransform().TransformRect(&layer2_rect_in_target);
+  gfx::RectF layer2_rect_in_target(layer2->content_bounds());
+  layer2->draw_transform().TransformRect(&layer2_rect_in_target);
 
   EXPECT_FLOAT_RECT_EQ(layer1_rect_in_target, layer2_rect_in_target);
 }
@@ -97,7 +101,7 @@ void CompareFixedBoundsLayerAndNormalLayer(
   scoped_ptr<WebLayerImplFixedBounds> root_layer(new WebLayerImplFixedBounds());
 
   WebLayerImplFixedBounds* fixed_bounds_layer =
-      new WebLayerImplFixedBounds(cc::PictureImageLayer::create());
+      new WebLayerImplFixedBounds(cc::PictureImageLayer::Create());
   WebLayerImpl* sublayer_under_fixed_bounds_layer = new WebLayerImpl();
   sublayer_under_fixed_bounds_layer->setBounds(sublayer_bounds);
   sublayer_under_fixed_bounds_layer->setPosition(sublayer_position);
@@ -110,7 +114,7 @@ void CompareFixedBoundsLayerAndNormalLayer(
   fixed_bounds_layer->setPosition(position);
   root_layer->addChild(fixed_bounds_layer);
 
-  WebLayerImpl* normal_layer(new WebLayerImpl(cc::PictureImageLayer::create()));
+  WebLayerImpl* normal_layer(new WebLayerImpl(cc::PictureImageLayer::Create()));
   WebLayerImpl* sublayer_under_normal_layer = new WebLayerImpl();
   sublayer_under_normal_layer->setBounds(sublayer_bounds);
   sublayer_under_normal_layer->setPosition(sublayer_position);
@@ -124,14 +128,15 @@ void CompareFixedBoundsLayerAndNormalLayer(
   root_layer->addChild(normal_layer);
 
   std::vector<scoped_refptr<cc::Layer> > render_surface_layer_list;
-  cc::LayerTreeHostCommon::calculateDrawProperties(
+  cc::LayerTreeHostCommon::CalculateDrawProperties(
       root_layer->layer(),
       kDeviceViewportSize,
       kDeviceScaleFactor,
       kPageScaleFactor,
+      root_layer->layer(),
       kMaxTextureSize,
       false,
-      render_surface_layer_list);
+      &render_surface_layer_list);
   ExpectEqualLayerRectsInTarget(normal_layer->layer(),
                                 fixed_bounds_layer->layer());
   ExpectEqualLayerRectsInTarget(sublayer_under_normal_layer->layer(),
@@ -140,19 +145,19 @@ void CompareFixedBoundsLayerAndNormalLayer(
   // Change of fixed bounds should not affect the target geometries.
   fixed_bounds_layer->SetFixedBounds(gfx::Size(fixed_bounds.width() / 2,
                                                fixed_bounds.height() * 2));
-  cc::LayerTreeHostCommon::calculateDrawProperties(
+  cc::LayerTreeHostCommon::CalculateDrawProperties(
       root_layer->layer(),
       kDeviceViewportSize,
       kDeviceScaleFactor,
       kPageScaleFactor,
+      root_layer->layer(),
       kMaxTextureSize,
       false,
-      render_surface_layer_list);
+      &render_surface_layer_list);
   ExpectEqualLayerRectsInTarget(normal_layer->layer(),
                                 fixed_bounds_layer->layer());
   ExpectEqualLayerRectsInTarget(sublayer_under_normal_layer->layer(),
                                 sublayer_under_fixed_bounds_layer->layer());
-
 }
 
 // A black box test that ensures WebLayerImplFixedBounds won't change target
@@ -188,3 +193,6 @@ TEST(WebLayerImplFixedBoundsTest, CompareToWebLayerImplComplex) {
                                         transform,
                                         sublayer_transform);
 }
+
+}  // namespace
+}  // namespace webkit

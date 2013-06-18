@@ -67,6 +67,7 @@ extern const base::FilePath::CharType kFirstRunSentinel[];
 extern const base::FilePath::CharType kHistoryFilename[];
 extern const base::FilePath::CharType kJumpListIconDirname[];
 extern const base::FilePath::CharType kLocalStateFilename[];
+extern const base::FilePath::CharType kLocalStorePoolName[];
 extern const base::FilePath::CharType kLoginDataFileName[];
 extern const base::FilePath::CharType kManagedModePolicyFilename[];
 extern const base::FilePath::CharType kMediaCacheDirname[];
@@ -85,7 +86,6 @@ extern const base::FilePath::CharType kThemePackFilename[];
 extern const base::FilePath::CharType kThumbnailsFilename[];
 extern const base::FilePath::CharType kTopSitesFilename[];
 extern const base::FilePath::CharType kWebAppDirname[];
-extern const base::FilePath::CharType kWebDataFilename[];
 
 // File name of the Pepper Flash plugin on different platforms.
 extern const base::FilePath::CharType kPepperFlashPluginFilename[];
@@ -95,6 +95,10 @@ extern const wchar_t kUserDataDirname[];
 
 #if defined(OS_CHROMEOS)
 extern const base::FilePath::CharType kDriveCacheDirname[];
+extern const char kOemDeviceRequisitionKey[];
+extern const char kOemIsEnterpriseManagedKey[];
+extern const char kOemCanExitEnterpriseEnrollmentKey[];
+extern const char kOemKeyboardDrivenOobeKey[];
 #endif  // defined(OS_CHROMEOS)
 
 extern const bool kRecordModeEnabled;

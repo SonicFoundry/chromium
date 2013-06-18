@@ -11,6 +11,7 @@
 
 #include <X11/extensions/Xrandr.h>
 
+#include "ash/display/display_controller.h"
 #include "ash/display/display_info.h"
 #include "ash/display/display_manager.h"
 #include "ash/shell.h"
@@ -46,10 +47,6 @@ XRRModeInfo* FindMode(XRRScreenResources* screen_resources, XID current_mode) {
       return mode;
   }
   return NULL;
-}
-
-bool CompareDisplayY(const DisplayInfo& lhs, const DisplayInfo& rhs) {
-  return lhs.bounds_in_pixel().y() < rhs.bounds_in_pixel().y();
 }
 
 // A list of bogus sizes in mm that X detects and should be ignored.
@@ -119,16 +116,31 @@ DisplayChangeObserverX11::DisplayChangeObserverX11()
         std::string(output_info->name));
     XRRFreeOutputInfo(output_info);
     if (is_internal) {
-      // No need to check the return value of |GetDisplayID()| as
-      // the default value is |gfx::Display::kInvalidDisplayID| anyway.
-      gfx::Display::SetInternalDisplayId(GetDisplayId(output, output_index));
+      int64 id = GetDisplayId(output, output_index);
+      // Fallback to output index. crbug.com/180100
+      gfx::Display::SetInternalDisplayId(
+          id == gfx::Display::kInvalidDisplayID ? output_index : id);
       break;
     }
   }
   XRRFreeScreenResources(screen_resources);
+  Shell::GetInstance()->AddShellObserver(this);
 }
 
 DisplayChangeObserverX11::~DisplayChangeObserverX11() {
+  Shell::GetInstance()->RemoveShellObserver(this);
+}
+
+chromeos::OutputState DisplayChangeObserverX11::GetStateForOutputs(
+    const std::vector<chromeos::OutputInfo>& outputs) const {
+  CHECK(outputs.size() == 2);
+  DisplayIdPair pair = std::make_pair(
+      GetDisplayId(outputs[0].output, outputs[0].output_index),
+      GetDisplayId(outputs[1].output, outputs[1].output_index));
+  DisplayLayout layout = Shell::GetInstance()->display_controller()->
+      GetRegisteredDisplayLayout(pair);
+  return layout.mirrored ?
+      chromeos::STATE_DUAL_MIRROR : chromeos::STATE_DUAL_EXTENDED;
 }
 
 void DisplayChangeObserverX11::OnDisplayModeChanged() {
@@ -144,7 +156,6 @@ void DisplayChangeObserverX11::OnDisplayModeChanged() {
   }
 
   std::vector<DisplayInfo> displays;
-  std::set<int> y_coords;
   std::set<int64> ids;
   for (int output_index = 0; output_index < screen_resources->noutput;
        output_index++) {
@@ -167,9 +178,6 @@ void DisplayChangeObserverX11::OnDisplayModeChanged() {
                    << output_index;
       continue;
     }
-    // Mirrored monitors have the same y coordinates.
-    if (y_coords.find(crtc_info->y) != y_coords.end())
-      continue;
 
     float device_scale_factor = 1.0f;
     if (!ShouldIgnoreSize(output_info) &&
@@ -203,8 +211,7 @@ void DisplayChangeObserverX11::OnDisplayModeChanged() {
     displays.push_back(DisplayInfo(id, name, has_overscan));
     displays.back().set_device_scale_factor(device_scale_factor);
     displays.back().SetBounds(display_bounds);
-
-    y_coords.insert(crtc_info->y);
+    displays.back().set_native(true);
   }
 
   // Free all allocated resources.
@@ -214,12 +221,16 @@ void DisplayChangeObserverX11::OnDisplayModeChanged() {
   }
   XRRFreeScreenResources(screen_resources);
 
-  // PowerManager lays out the outputs vertically. Sort them by Y
-  // coordinates.
-  std::sort(displays.begin(), displays.end(), CompareDisplayY);
-
   // DisplayManager can be null during the boot.
   Shell::GetInstance()->display_manager()->OnNativeDisplaysChanged(displays);
+}
+
+void DisplayChangeObserverX11::OnAppTerminating() {
+#if defined(USE_ASH)
+  // Stop handling display configuration events once the shutdown
+  // process starts. crbug.com/177014.
+  Shell::GetInstance()->output_configurator()->Stop();
+#endif
 }
 
 }  // namespace internal

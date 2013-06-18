@@ -24,16 +24,17 @@
 #include "base/strings/string_split.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/utf_string_conversions.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
 #include "chrome/browser/auto_launch_trial.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/custom_handlers/protocol_handler_registry.h"
+#include "chrome/browser/custom_handlers/protocol_handler_registry_factory.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/extensions/extension_creator.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/pack_extension_job.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/google/google_util.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/net/predictor.h"
 #include "chrome/browser/net/url_fixer_upper.h"
 #include "chrome/browser/notifications/desktop_notification_service.h"
@@ -60,7 +61,7 @@
 #include "chrome/browser/ui/startup/autolaunch_prompt.h"
 #include "chrome/browser/ui/startup/bad_flags_prompt.h"
 #include "chrome/browser/ui/startup/default_browser_prompt.h"
-#include "chrome/browser/ui/startup/obsolete_os_info_bar.h"
+#include "chrome/browser/ui/startup/obsolete_os_infobar_delegate.h"
 #include "chrome/browser/ui/startup/session_crashed_prompt.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/tabs/pinned_tab_codec.h"
@@ -101,7 +102,13 @@
 #endif
 
 #if defined(OS_WIN)
+#include "apps/app_launch_for_metro_restart_win.h"
 #include "base/win/windows_version.h"
+#endif
+
+#if defined(ENABLE_MANAGED_USERS)
+#include "chrome/browser/managed_mode/managed_user_service.h"
+#include "chrome/browser/managed_mode/managed_user_service_factory.h"
 #endif
 
 using content::ChildProcessSecurityPolicy;
@@ -227,9 +234,10 @@ bool ParseCommaSeparatedIntegers(const std::string& str,
   return true;
 }
 
-void RecordCmdLineAppHistogram() {
+void RecordCmdLineAppHistogram(extensions::Manifest::Type app_type) {
   AppLauncherHandler::RecordAppLaunchType(
-      extension_misc::APP_LAUNCH_CMD_LINE_APP);
+      extension_misc::APP_LAUNCH_CMD_LINE_APP,
+      app_type);
 }
 
 void RecordAppLaunches(Profile* profile,
@@ -238,17 +246,56 @@ void RecordAppLaunches(Profile* profile,
   ExtensionService* extension_service = profile->GetExtensionService();
   DCHECK(extension_service);
   for (size_t i = 0; i < cmd_line_urls.size(); ++i) {
-    if (extension_service->IsInstalledApp(cmd_line_urls.at(i))) {
+    const extensions::Extension* extension =
+        extension_service->GetInstalledApp(cmd_line_urls.at(i));
+    if (extension) {
       AppLauncherHandler::RecordAppLaunchType(
-          extension_misc::APP_LAUNCH_CMD_LINE_URL);
+          extension_misc::APP_LAUNCH_CMD_LINE_URL,
+          extension->GetType());
     }
   }
   for (size_t i = 0; i < autolaunch_tabs.size(); ++i) {
-    if (extension_service->IsInstalledApp(autolaunch_tabs.at(i).url)) {
+    const extensions::Extension* extension =
+        extension_service->GetInstalledApp(autolaunch_tabs.at(i).url);
+    if (extension) {
       AppLauncherHandler::RecordAppLaunchType(
-          extension_misc::APP_LAUNCH_AUTOLAUNCH);
+          extension_misc::APP_LAUNCH_AUTOLAUNCH,
+          extension->GetType());
     }
   }
+}
+
+bool IsNewTabURL(Profile* profile, const GURL& url) {
+  GURL ntp_url(chrome::kChromeUINewTabURL);
+  return url == ntp_url ||
+         (url.is_empty() && profile->GetHomePage() == ntp_url);
+}
+
+void AddSyncPromoTab(Profile* profile, StartupTabs* tabs) {
+  SyncPromoUI::DidShowSyncPromoAtStartup(profile);
+
+  StartupTab sync_promo_tab;
+  GURL continue_url;
+  if (!SyncPromoUI::UseWebBasedSigninFlow())
+    continue_url = GURL(chrome::kChromeUINewTabURL);
+  sync_promo_tab.url = SyncPromoUI::GetSyncPromoURL(
+      continue_url, SyncPromoUI::SOURCE_START_PAGE, false);
+  sync_promo_tab.is_pinned = false;
+
+  // No need to add if the sync promo is already in the startup list.
+  for (StartupTabs::const_iterator it = tabs->begin(); it != tabs->end();
+       ++it) {
+    if (it->url == sync_promo_tab.url)
+      return;
+  }
+
+  tabs->insert(tabs->begin(), sync_promo_tab);
+
+  // If the next URL is the NTP then remove it, effectively replacing the NTP
+  // with the sync promo. This behavior is desired because completing or
+  // skipping the sync promo causes a redirect to the NTP.
+  if (tabs->size() > 1 && IsNewTabURL(profile, tabs->at(1).url))
+    tabs->erase(tabs->begin() + 1);
 }
 
 class WebContentsCloseObserver : public content::NotificationObserver {
@@ -331,9 +378,6 @@ bool StartupBrowserCreatorImpl::Launch(Profile* profile,
       profile->GetNetworkPredictor()) {
     profile->GetNetworkPredictor()->EnablePredictor(false);
   }
-
-  if (command_line_.HasSwitch(switches::kDumpHistogramsOnExit))
-    base::StatisticsRecorder::set_dump_on_exit(true);
 
   AppListService::InitAll(profile);
   if (command_line_.HasSwitch(switches::kShowAppList)) {
@@ -433,7 +477,7 @@ bool StartupBrowserCreatorImpl::OpenApplicationTab(Profile* profile) {
   if (launch_container != extension_misc::LAUNCH_TAB)
     return false;
 
-  RecordCmdLineAppHistogram();
+  RecordCmdLineAppHistogram(extension->GetType());
 
   WebContents* app_tab = chrome::OpenApplication(chrome::AppLaunchParams(
       profile, extension, extension_misc::LAUNCH_TAB, NEW_FOREGROUND_TAB));
@@ -468,7 +512,7 @@ bool StartupBrowserCreatorImpl::OpenApplicationWindow(
     if (launch_container == extension_misc::LAUNCH_TAB)
       return false;
 
-    RecordCmdLineAppHistogram();
+    RecordCmdLineAppHistogram(extension->GetType());
 
     chrome::AppLaunchParams params(profile, extension,
                                    launch_container, NEW_WINDOW);
@@ -497,11 +541,14 @@ bool StartupBrowserCreatorImpl::OpenApplicationWindow(
         ChildProcessSecurityPolicy::GetInstance();
     if (policy->IsWebSafeScheme(url.scheme()) ||
         url.SchemeIs(chrome::kFileScheme)) {
-      if (profile->GetExtensionService()->IsInstalledApp(url)) {
-        RecordCmdLineAppHistogram();
+      const extensions::Extension* extension =
+          profile->GetExtensionService()->GetInstalledApp(url);
+      if (extension) {
+        RecordCmdLineAppHistogram(extension->GetType());
       } else {
         AppLauncherHandler::RecordAppLaunchType(
-            extension_misc::APP_LAUNCH_CMD_LINE_APP_LEGACY);
+            extension_misc::APP_LAUNCH_CMD_LINE_APP_LEGACY,
+            extensions::Manifest::TYPE_HOSTED_APP);
       }
 
       gfx::Rect override_bounds;
@@ -531,6 +578,15 @@ void StartupBrowserCreatorImpl::ProcessLaunchURLs(
       !command_line_.HasSwitch(switches::kAutoLaunchAtStartup)) {
     return;
   }
+
+// TODO(tapted): Move this to startup_browser_creator_win.cc after refactor.
+#if defined(OS_WIN)
+  if (base::win::GetVersion() >= base::win::VERSION_WIN8) {
+    // See if there are apps for this profile that should be launched on startup
+    // due to a switch from Metro mode.
+    apps::HandleAppLaunchForMetroRestart(profile_);
+  }
+#endif
 
   if (process_startup && ProcessStartupURLs(urls_to_open)) {
     // ProcessStartupURLs processed the urls, nothing else to do.
@@ -594,17 +650,14 @@ bool StartupBrowserCreatorImpl::ProcessStartupURLs(
   else if (pref.type == SessionStartupPref::DEFAULT)
     VLOG(1) << "Pref: default";
 
-  apps::AppRestoreService* service =
+  apps::AppRestoreService* restore_service =
       apps::AppRestoreServiceFactory::GetForProfile(profile_);
   // NULL in incognito mode.
-  if (service) {
-    bool should_restore_apps = StartupBrowserCreator::WasRestarted();
-#if defined(OS_CHROMEOS)
-    // Chromeos always restarts apps, even if it was a regular shutdown.
-    should_restore_apps = true;
-#endif
-    service->HandleStartup(should_restore_apps);
+  if (restore_service) {
+    restore_service->HandleStartup(apps::AppRestoreService::ShouldRestoreApps(
+        StartupBrowserCreator::WasRestarted()));
   }
+
   if (pref.type == SessionStartupPref::LAST) {
     if (profile_->GetLastSessionExitType() == Profile::EXIT_CRASHED &&
         !command_line_.HasSwitch(switches::kRestoreLastSession)) {
@@ -706,6 +759,11 @@ Browser* StartupBrowserCreatorImpl::ProcessSpecifiedURLs(
     NOTREACHED() << "SessionStartupPref has deprecated type HOMEPAGE";
   }
 
+  if (pref.type != SessionStartupPref::LAST &&
+      SyncPromoUI::ShouldShowSyncPromoAtStartup(profile_, is_first_run_)) {
+    AddSyncPromoTab(profile_, &tabs);
+  }
+
   if (tabs.empty())
     return NULL;
 
@@ -772,14 +830,15 @@ Browser* StartupBrowserCreatorImpl::OpenTabsInBrowser(Browser* browser,
     chrome::ToggleFullscreenMode(browser);
 
   bool first_tab = true;
+  ProtocolHandlerRegistry* registry = profile_ ?
+      ProtocolHandlerRegistryFactory::GetForProfile(profile_) : NULL;
   for (size_t i = 0; i < tabs.size(); ++i) {
     // We skip URLs that we'd have to launch an external protocol handler for.
     // This avoids us getting into an infinite loop asking ourselves to open
     // a URL, should the handler be (incorrectly) configured to be us. Anyone
     // asking us to open such a URL should really ask the handler directly.
     bool handled_by_chrome = ProfileIOData::IsHandledURL(tabs[i].url) ||
-        (profile_ && profile_->GetProtocolHandlerRegistry()->IsHandledProtocol(
-            tabs[i].url.scheme()));
+        (registry && registry->IsHandledProtocol(tabs[i].url.scheme()));
     if (!process_startup && !handled_by_chrome)
       continue;
 
@@ -843,7 +902,7 @@ void StartupBrowserCreatorImpl::AddInfoBarsIfNecessary(
     // TODO(phajdan.jr): Always enable after migrating bots:
     // http://crbug.com/170262 .
     if (!command_line_.HasSwitch(switches::kTestType)) {
-      chrome::ObsoleteOSInfoBar::Create(
+      chrome::ObsoleteOSInfoBarDelegate::Create(
           InfoBarService::FromWebContents(
               browser->tab_strip_model()->GetActiveWebContents()));
     }
@@ -867,6 +926,25 @@ void StartupBrowserCreatorImpl::AddInfoBarsIfNecessary(
 
 void StartupBrowserCreatorImpl::AddStartupURLs(
     std::vector<GURL>* startup_urls) const {
+#if defined(ENABLE_MANAGED_USERS)
+  PrefService* prefs = profile_->GetPrefs();
+  bool has_reset_local_passphrase_switch =
+      command_line_.HasSwitch(switches::kResetLocalPassphrase);
+  if ((is_first_run_ || has_reset_local_passphrase_switch) &&
+      prefs->GetBoolean(prefs::kProfileIsManaged)) {
+    startup_urls->insert(startup_urls->begin(),
+                         GURL(std::string(chrome::kChromeUISettingsURL) +
+                              chrome::kManagedUserSettingsSubPage));
+    ManagedUserService* service = ManagedUserServiceFactory::GetForProfile(
+        profile_);
+    service->set_startup_elevation(true);
+    if (has_reset_local_passphrase_switch) {
+      prefs->SetString(prefs::kManagedModeLocalPassphrase, std::string());
+      prefs->SetString(prefs::kManagedModeLocalSalt, std::string());
+    }
+  }
+#endif
+
   // If we have urls specified by the first run master preferences use them
   // and nothing else.
   if (browser_creator_ && startup_urls->empty()) {
@@ -896,48 +974,9 @@ void StartupBrowserCreatorImpl::AddStartupURLs(
     if (first_run::ShouldShowWelcomePage())
       startup_urls->push_back(internals::GetWelcomePageURL());
   }
-
-  PrefService* prefs = profile_->GetPrefs();
-  bool has_reset_local_passphrase_switch =
-      command_line_.HasSwitch(switches::kResetLocalPassphrase);
-  if ((is_first_run_ || has_reset_local_passphrase_switch) &&
-      prefs->GetBoolean(prefs::kProfileIsManaged)) {
-    startup_urls->insert(startup_urls->begin(),
-                         GURL(std::string(chrome::kChromeUISettingsURL) +
-                              chrome::kManagedUserSettingsSubPage));
-    if (has_reset_local_passphrase_switch) {
-      prefs->SetString(prefs::kManagedModeLocalPassphrase, "");
-      prefs->SetString(prefs::kManagedModeLocalSalt, "");
-    }
-  } else if (SyncPromoUI::ShouldShowSyncPromoAtStartup(profile_,
-                                                       is_first_run_)) {
-    // If the sync promo page is going to be displayed then insert it at the
-    // front of the list.
-    GURL continue_url;
-    if (!SyncPromoUI::UseWebBasedSigninFlow()) {
-      continue_url = GURL(chrome::kChromeUINewTabURL);
-    }
-
-    SyncPromoUI::DidShowSyncPromoAtStartup(profile_);
-    GURL old_url = (*startup_urls)[0];
-    (*startup_urls)[0] =
-        SyncPromoUI::GetSyncPromoURL(continue_url,
-                                     SyncPromoUI::SOURCE_START_PAGE,
-                                     false);
-
-    // An empty URL means to go to the home page.
-    if (old_url.is_empty() &&
-        profile_->GetHomePage() == GURL(chrome::kChromeUINewTabURL)) {
-      old_url = GURL(chrome::kChromeUINewTabURL);
-    }
-
-    // If the old URL is not the NTP then insert it right after the sync promo.
-    if (old_url != GURL(chrome::kChromeUINewTabURL))
-      startup_urls->insert(startup_urls->begin() + 1, old_url);
-  }
 }
 
-#if !defined(OS_WIN) || defined(USE_AURA)
+#if !defined(OS_WIN)
 // static
 bool StartupBrowserCreatorImpl::OpenStartupURLsInExistingBrowser(
     Profile* profile,

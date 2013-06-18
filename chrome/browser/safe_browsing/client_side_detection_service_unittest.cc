@@ -93,6 +93,18 @@ class ClientSideDetectionServiceTest : public testing::Test {
     return is_phishing_;
   }
 
+  bool SendClientReportMalwareRequest(const GURL& url) {
+    scoped_ptr<ClientMalwareRequest> request(new ClientMalwareRequest());
+    request->set_url(url.spec());
+    csd_service_->SendClientReportMalwareRequest(
+        request.release(),
+        base::Bind(&ClientSideDetectionServiceTest::SendMalwareRequestDone,
+                   base::Unretained(this)));
+    phishing_url_ = url;
+    msg_loop_.Run();  // Waits until callback is called.
+    return is_malware_;
+  }
+
   void SetModelFetchResponse(std::string response_data, bool success) {
     factory_->SetFakeResponse(ClientSideDetectionService::kClientModelUrl,
                               response_data, success);
@@ -101,7 +113,16 @@ class ClientSideDetectionServiceTest : public testing::Test {
   void SetClientReportPhishingResponse(std::string response_data,
                                        bool success) {
     factory_->SetFakeResponse(
-        ClientSideDetectionService::GetClientReportPhishingUrl(),
+        ClientSideDetectionService::GetClientReportUrl(
+            ClientSideDetectionService::kClientReportPhishingUrl),
+        response_data, success);
+  }
+
+  void SetClientReportMalwareResponse(std::string response_data,
+                                      bool success) {
+    factory_->SetFakeResponse(
+        ClientSideDetectionService::GetClientReportUrl(
+            ClientSideDetectionService::kClientReportMalwareUrl),
         response_data, success);
   }
 
@@ -200,11 +221,17 @@ class ClientSideDetectionServiceTest : public testing::Test {
     msg_loop_.Quit();
   }
 
+  void SendMalwareRequestDone(GURL url, bool is_malware) {
+    ASSERT_EQ(phishing_url_, url);
+    is_malware_ = is_malware;
+    msg_loop_.Quit();
+  }
   scoped_ptr<content::TestBrowserThread> browser_thread_;
   scoped_ptr<content::TestBrowserThread> file_thread_;
 
   GURL phishing_url_;
   bool is_phishing_;
+  bool is_malware_;
 };
 
 TEST_F(ClientSideDetectionServiceTest, FetchModelTest) {
@@ -225,9 +252,8 @@ TEST_F(ClientSideDetectionServiceTest, FetchModelTest) {
   Mock::VerifyAndClearExpectations(&service);
 
   // Empty model file.
-  SetModelFetchResponse("", true /* success */);
-  EXPECT_CALL(service, EndFetchModel(
-      ClientSideDetectionService::MODEL_EMPTY))
+  SetModelFetchResponse(std::string(), true /* success */);
+  EXPECT_CALL(service, EndFetchModel(ClientSideDetectionService::MODEL_EMPTY))
       .WillOnce(QuitCurrentMessageLoop());
   service.StartFetchModel();
   msg_loop_.Run();  // EndFetchModel will quit the message loop.
@@ -381,6 +407,34 @@ TEST_F(ClientSideDetectionServiceTest, SendClientReportPhishingRequest) {
   EXPECT_FALSE(csd_service_->IsInCache(second_url));
 }
 
+TEST_F(ClientSideDetectionServiceTest, SendClientReportMalwareRequest) {
+  SetModelFetchResponse("bogus model", true /* success */);
+  csd_service_.reset(ClientSideDetectionService::Create(NULL));
+  csd_service_->SetEnabledAndRefreshState(true);
+  GURL url("http://a.com/");
+
+  // Invalid response body from the server.
+  SetClientReportMalwareResponse("invalid proto response", true /* success */);
+  EXPECT_FALSE(SendClientReportMalwareRequest(url));
+
+  // Normal behavior.
+  ClientMalwareResponse response;
+  response.set_blacklist(true);
+  SetClientReportMalwareResponse(response.SerializeAsString(), true);
+  EXPECT_TRUE(SendClientReportMalwareRequest(url));
+
+  // This request will fail
+  response.set_blacklist(false);
+  SetClientReportMalwareResponse(response.SerializeAsString(),
+                                 false /* success */);
+  EXPECT_FALSE(SendClientReportMalwareRequest(url));
+
+  // server blacklist decision is false, and response is succesful
+  response.set_blacklist(false);
+  SetClientReportMalwareResponse(response.SerializeAsString(), true);
+  EXPECT_FALSE(SendClientReportMalwareRequest(url));
+}
+
 TEST_F(ClientSideDetectionServiceTest, GetNumReportTest) {
   SetModelFetchResponse("bogus model", true /* success */);
   csd_service_.reset(ClientSideDetectionService::Create(NULL));
@@ -521,7 +575,7 @@ TEST_F(ClientSideDetectionServiceTest, IsBadIpAddress) {
   ClientSideDetectionService::SetBadSubnets(
       model, &(csd_service_->bad_subnets_));
   EXPECT_FALSE(csd_service_->IsBadIpAddress("blabla"));
-  EXPECT_FALSE(csd_service_->IsBadIpAddress(""));
+  EXPECT_FALSE(csd_service_->IsBadIpAddress(std::string()));
 
   EXPECT_TRUE(csd_service_->IsBadIpAddress(
       "2620:0:1000:3103:21a:a0ff:fe10:786e"));

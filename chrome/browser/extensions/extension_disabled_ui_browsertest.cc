@@ -108,7 +108,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionDisabledGlobalErrorTest, AcceptPermissions) {
   ASSERT_TRUE(GetExtensionDisabledGlobalError());
   const size_t size_before = service_->extensions()->size();
 
-  service_->GrantPermissionsAndEnableExtension(extension, false);
+  service_->GrantPermissionsAndEnableExtension(extension);
   EXPECT_EQ(size_before + 1, service_->extensions()->size());
   EXPECT_EQ(0u, service_->disabled_extensions()->size());
   ASSERT_FALSE(GetExtensionDisabledGlobalError());
@@ -189,7 +189,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionDisabledGlobalErrorTest,
   InstallIncreasingPermissionExtensionV1();
 
   // Note: This interceptor gets requests on the IO thread.
-  content::URLRequestPrepackagedInterceptor interceptor;
+  content::URLLocalHostRequestPrepackagedInterceptor interceptor;
   net::URLFetcher::SetEnableInterceptionForTests(true);
   interceptor.SetResponseIgnoreQuery(
       GURL("http://localhost/autoupdate/updates.xml"),

@@ -5,7 +5,7 @@
 #ifndef CHROME_BROWSER_UI_COLLECTED_COOKIES_INFOBAR_DELEGATE_H_
 #define CHROME_BROWSER_UI_COLLECTED_COOKIES_INFOBAR_DELEGATE_H_
 
-#include "chrome/browser/api/infobars/confirm_infobar_delegate.h"
+#include "chrome/browser/infobars/confirm_infobar_delegate.h"
 
 class InfoBarService;
 
@@ -22,7 +22,7 @@ class CollectedCookiesInfoBarDelegate : public ConfirmInfoBarDelegate {
  private:
   explicit CollectedCookiesInfoBarDelegate(InfoBarService* infobar_service);
 
-  // ConfirmInfoBarDelegate overrides.
+  // ConfirmInfoBarDelegate:
   virtual gfx::Image* GetIcon() const OVERRIDE;
   virtual Type GetInfoBarType() const OVERRIDE;
   virtual string16 GetMessageText() const OVERRIDE;

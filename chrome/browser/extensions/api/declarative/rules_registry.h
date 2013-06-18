@@ -21,22 +21,17 @@ namespace extensions {
 
 class RulesRegistry;
 
-// Traits that describe how RulesRegistry should be deleted. This just deletes
-// the RulesRegistry on its owner thread.
-struct RulesRegistryDeleteTraits {
- public:
-  static void Destruct(const RulesRegistry* rules_registry);
-};
-
 // Interface for rule registries.
 //
-// All functions except GetOwnerThread() are only called on the thread
-// indicated by GetOwnerThread(). The object is destroyed on the owner thread.
-class RulesRegistry
-    : public base::RefCountedThreadSafe<RulesRegistry,
-                                        RulesRegistryDeleteTraits> {
+// All functions except GetOwnerThread() and the destructor are only called on
+// the thread indicated by GetOwnerThread().
+class RulesRegistry : public base::RefCountedThreadSafe<RulesRegistry> {
  public:
   typedef extensions::api::events::Rule Rule;
+
+  RulesRegistry(content::BrowserThread::ID owner_thread,
+                const std::string& event_name)
+      : owner_thread_(owner_thread), event_name_(event_name) {}
 
   // Registers |rules|, owned by |extension_id| to this RulesRegistry.
   // If a concrete RuleRegistry does not support some of the rules,
@@ -95,13 +90,25 @@ class RulesRegistry
   virtual void OnExtensionUnloaded(const std::string& extension_id) = 0;
 
   // Returns the ID of the thread on which the rules registry lives.
-  // It must be safe to call this function from any thread.
-  virtual content::BrowserThread::ID GetOwnerThread() const = 0;
+  // It is safe to call this function from any thread.
+  content::BrowserThread::ID owner_thread() const { return owner_thread_; }
+
+  // The name of the event with which rules are registered.
+  const std::string& event_name() const { return event_name_; }
 
  protected:
-  friend struct RulesRegistryDeleteTraits;
-  friend class base::DeleteHelper<RulesRegistry>;
   virtual ~RulesRegistry() {}
+
+ private:
+  friend class base::RefCountedThreadSafe<RulesRegistry>;
+
+  // The ID of the thread on which the rules registry lives.
+  const content::BrowserThread::ID owner_thread_;
+
+  // The name of the event with which rules are registered.
+  const std::string event_name_;
+
+  DISALLOW_COPY_AND_ASSIGN(RulesRegistry);
 };
 
 }  // namespace extensions

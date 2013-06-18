@@ -7,9 +7,9 @@
 #include "base/auto_reset.h"
 #include "googleurl/src/gurl.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebStorageArea.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebStorageNamespace.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebURL.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebStorageEventDispatcher.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebStorageNamespace.h"
 #include "webkit/database/database_util.h"
 #include "webkit/dom_storage/dom_storage_area.h"
 #include "webkit/dom_storage/dom_storage_host.h"
@@ -176,7 +176,7 @@ void SimpleDomStorageSystem::AreaImpl::removeItem(
     return;
 
   base::AutoReset<AreaImpl*> auto_reset(&parent_->area_being_processed_, this);
-  string16 notused;
+  base::string16 notused;
   Host()->RemoveAreaItem(connection_id_, key, pageUrl, &notused);
 }
 
@@ -222,8 +222,8 @@ WebStorageNamespace* SimpleDomStorageSystem::CreateSessionStorageNamespace() {
 
 void SimpleDomStorageSystem::OnDomStorageItemSet(
     const dom_storage::DomStorageArea* area,
-    const string16& key,
-    const string16& new_value,
+    const base::string16& key,
+    const base::string16& new_value,
     const NullableString16& old_value,
     const GURL& page_url) {
   DispatchDomStorageEvent(area, page_url,
@@ -234,8 +234,8 @@ void SimpleDomStorageSystem::OnDomStorageItemSet(
 
 void SimpleDomStorageSystem::OnDomStorageItemRemoved(
     const dom_storage::DomStorageArea* area,
-    const string16& key,
-    const string16& old_value,
+    const base::string16& key,
+    const base::string16& old_value,
     const GURL& page_url) {
   DispatchDomStorageEvent(area, page_url,
                           NullableString16(key, false),

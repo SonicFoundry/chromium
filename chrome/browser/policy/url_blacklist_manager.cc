@@ -11,13 +11,20 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/net/url_fixer_upper.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/pref_names.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
+#include "google_apis/gaia/gaia_urls.h"
 #include "googleurl/src/gurl.h"
+#include "net/base/load_flags.h"
+#include "net/url_request/url_request.h"
+
+#if !defined(OS_CHROMEOS)
+#include "chrome/browser/signin/signin_manager.h"
+#endif
 
 using content::BrowserThread;
 using extensions::URLMatcher;
@@ -44,6 +51,8 @@ const char* kStandardSchemes[] = {
   "wss"
 };
 
+const char kServiceLoginAuth[] = "/ServiceLoginAuth";
+
 bool IsStandardScheme(const std::string& scheme) {
   for (size_t i = 0; i < arraysize(kStandardSchemes); ++i) {
     if (scheme == kStandardSchemes[i])
@@ -51,6 +60,21 @@ bool IsStandardScheme(const std::string& scheme) {
   }
   return false;
 }
+
+#if !defined(OS_CHROMEOS)
+
+bool IsSigninFlowURL(const GURL& url) {
+  // Whitelist all the signin flow URLs flagged by the SigninManager.
+  if (SigninManager::IsWebBasedSigninFlowURL(url))
+    return true;
+
+  // Additionally whitelist /ServiceLoginAuth.
+  if (url.GetOrigin() != GURL(GaiaUrls::GetInstance()->gaia_origin_url()))
+    return false;
+  return url.path() == kServiceLoginAuth;
+}
+
+#endif  // !defined(OS_CHROMEOS)
 
 // A task that builds the blacklist on the FILE thread.
 scoped_ptr<URLBlacklist> BuildBlacklist(scoped_ptr<base::ListValue> block,
@@ -276,9 +300,9 @@ bool URLBlacklist::FilterTakesPrecedence(const FilterComponents& lhs,
 }
 
 URLBlacklistManager::URLBlacklistManager(PrefService* pref_service)
-    : ALLOW_THIS_IN_INITIALIZER_LIST(ui_weak_ptr_factory_(this)),
+    : ui_weak_ptr_factory_(this),
       pref_service_(pref_service),
-      ALLOW_THIS_IN_INITIALIZER_LIST(io_weak_ptr_factory_(this)),
+      io_weak_ptr_factory_(this),
       blacklist_(new URLBlacklist) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
@@ -359,12 +383,28 @@ bool URLBlacklistManager::IsURLBlocked(const GURL& url) const {
   return blacklist_->IsURLBlocked(url);
 }
 
+bool URLBlacklistManager::IsRequestBlocked(
+    const net::URLRequest& request) const {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+  int filter_flags = net::LOAD_MAIN_FRAME | net::LOAD_SUB_FRAME;
+  if ((request.load_flags() & filter_flags) == 0)
+    return false;
+
+#if !defined(OS_CHROMEOS)
+  if (IsSigninFlowURL(request.url()))
+    return false;
+#endif
+
+  return IsURLBlocked(request.url());
+}
+
 // static
-void URLBlacklistManager::RegisterUserPrefs(PrefRegistrySyncable* registry) {
+void URLBlacklistManager::RegisterUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterListPref(prefs::kUrlBlacklist,
-                             PrefRegistrySyncable::UNSYNCABLE_PREF);
+                             user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
   registry->RegisterListPref(prefs::kUrlWhitelist,
-                             PrefRegistrySyncable::UNSYNCABLE_PREF);
+                             user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 }  // namespace policy

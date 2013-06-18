@@ -171,6 +171,7 @@ const base::FilePath::CharType kFirstRunSentinel[] = FPL("First Run");
 const base::FilePath::CharType kHistoryFilename[] = FPL("History");
 const base::FilePath::CharType kJumpListIconDirname[] = FPL("JumpListIcons");
 const base::FilePath::CharType kLocalStateFilename[] = FPL("Local State");
+const base::FilePath::CharType kLocalStorePoolName[] = FPL("LocalStorePool");
 const base::FilePath::CharType kLoginDataFileName[] = FPL("Login Data");
 const base::FilePath::CharType kManagedModePolicyFilename[] =
     FPL("Managed Mode Settings");
@@ -195,7 +196,6 @@ const base::FilePath::CharType kThemePackFilename[] = FPL("Cached Theme.pak");
 const base::FilePath::CharType kThumbnailsFilename[] = FPL("Thumbnails");
 const base::FilePath::CharType kTopSitesFilename[] = FPL("Top Sites");
 const base::FilePath::CharType kWebAppDirname[] = FPL("Web Applications");
-const base::FilePath::CharType kWebDataFilename[] = FPL("Web Data");
 
 // File name of the Pepper Flash plugin on different platforms.
 const base::FilePath::CharType kPepperFlashPluginFilename[] =
@@ -212,6 +212,10 @@ const wchar_t kUserDataDirname[] = L"User Data";
 
 #if defined(OS_CHROMEOS)
 const base::FilePath::CharType kDriveCacheDirname[] = FPL("GCache");
+const char kOemDeviceRequisitionKey[] = "oem_device_requisition";
+const char kOemIsEnterpriseManagedKey[] = "oem_enterprise_managed";
+const char kOemCanExitEnterpriseEnrollmentKey[] = "oem_can_exit_enrollment";
+const char kOemKeyboardDrivenOobeKey[] = "oem_keyboard_driven_oobe";
 #endif  // defined(OS_CHROMEOS)
 
 // We don't enable record mode in the released product because users could

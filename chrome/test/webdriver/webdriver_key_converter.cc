@@ -162,11 +162,19 @@ bool KeyCodeFromShorthandKey(char16 key_utf16,
 namespace webdriver {
 
 WebKeyEvent CreateKeyDownEvent(ui::KeyboardCode key_code, int modifiers) {
-  return WebKeyEvent(automation::kRawKeyDownType, key_code, "", "", modifiers);
+  return WebKeyEvent(automation::kRawKeyDownType,
+                     key_code,
+                     std::string(),
+                     std::string(),
+                     modifiers);
 }
 
 WebKeyEvent CreateKeyUpEvent(ui::KeyboardCode key_code, int modifiers) {
-  return WebKeyEvent(automation::kKeyUpType, key_code, "", "", modifiers);
+  return WebKeyEvent(automation::kKeyUpType,
+                     key_code,
+                     std::string(),
+                     std::string(),
+                     modifiers);
 }
 
 WebKeyEvent CreateCharEvent(const std::string& unmodified_text,
@@ -251,7 +259,7 @@ bool ConvertKeysToWebKeyEvents(const string16& client_keys,
       if (should_skip)
         continue;
       if (key_code == ui::VKEY_UNKNOWN) {
-        *error_msg = StringPrintf(
+        *error_msg = base::StringPrintf(
             "Unknown WebDriver key(%d) at string index (%" PRIuS ")",
             static_cast<int>(key),
             i);

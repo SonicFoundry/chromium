@@ -9,7 +9,6 @@
 #include "ash/system/power/power_supply_status.h"
 #include "ash/system/tray/system_tray_bubble.h"
 #include "ash/system/tray/tray_background_view.h"
-#include "ash/system/tray/tray_views.h"
 #include "ash/system/user/login_status.h"
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
@@ -112,6 +111,9 @@ class ASH_EXPORT SystemTray : public internal::TrayBackgroundView,
   // of being created).
   bool HasSystemBubble() const;
 
+  // Returns true if there is a notification bubble.
+  bool HasNotificationBubble() const;
+
   // Returns true if the system_bubble_ exists and is of type |type|.
   bool HasSystemBubbleType(internal::SystemTrayBubble::BubbleType type);
 
@@ -127,12 +129,13 @@ class ASH_EXPORT SystemTray : public internal::TrayBackgroundView,
   // Accessors for testing.
 
   // Returns true if the bubble exists.
-  bool CloseBubbleForTest() const;
+  bool CloseSystemBubbleForTest() const;
+  bool CloseNotificationBubbleForTest() const;
 
   // Overridden from TrayBackgroundView.
   virtual void SetShelfAlignment(ShelfAlignment alignment) OVERRIDE;
   virtual void AnchorUpdated() OVERRIDE;
-  virtual string16 GetAccessibleNameForTray() OVERRIDE;
+  virtual base::string16 GetAccessibleNameForTray() OVERRIDE;
   virtual void HideBubbleWithView(
       const views::TrayBubbleView* bubble_view) OVERRIDE;
   virtual bool ClickedOutsideBubble() OVERRIDE;
@@ -141,7 +144,7 @@ class ASH_EXPORT SystemTray : public internal::TrayBackgroundView,
   virtual void BubbleViewDestroyed() OVERRIDE;
   virtual void OnMouseEnteredView() OVERRIDE;
   virtual void OnMouseExitedView() OVERRIDE;
-  virtual string16 GetAccessibleNameForBubble() OVERRIDE;
+  virtual base::string16 GetAccessibleNameForBubble() OVERRIDE;
   virtual gfx::Rect GetAnchorRect(views::Widget* anchor_widget,
                                   AnchorType anchor_type,
                                   AnchorAlignment anchor_alignment) OVERRIDE;
@@ -170,6 +173,8 @@ class ASH_EXPORT SystemTray : public internal::TrayBackgroundView,
                                  int x_offset);
 
   // Constructs or re-constructs |system_bubble_| and populates it with |items|.
+  // Specify |change_tray_status| to true if want to change the tray background
+  // status.
   void ShowItems(const std::vector<SystemTrayItem*>& items,
                  bool details,
                  bool activate,

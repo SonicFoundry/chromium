@@ -22,10 +22,12 @@
 #include "ipc/ipc_channel_proxy.h"
 #include "ui/gfx/native_widget_types.h"
 
+class GrContext;
 class SkBitmap;
 struct ViewMsg_New_Params;
 
 namespace WebKit {
+class WebGraphicsContext3D;
 class WebMediaStreamCenter;
 class WebMediaStreamCenterClient;
 }
@@ -41,6 +43,10 @@ class ScopedCOMInitializer;
 #endif
 }
 
+namespace cc {
+class ContextProvider;
+}
+
 namespace IPC {
 class ForwardingMessageFilter;
 }
@@ -53,18 +59,25 @@ namespace v8 {
 class Extension;
 }
 
+namespace webkit {
+namespace gpu {
+class GrContextForWebGraphicsContext3D;
+}
+}
+
 namespace content {
 
 class AppCacheDispatcher;
 class AudioInputMessageFilter;
 class AudioMessageFilter;
 class AudioRendererMixerManager;
-class CompositorThread;
+class ContextProviderCommandBuffer;
 class DBMessageFilter;
 class DevToolsAgentFilter;
 class DomStorageDispatcher;
 class GpuChannelHost;
 class IndexedDBDispatcher;
+class InputHandlerManager;
 class MediaStreamCenter;
 class MediaStreamDependencyFactory;
 class P2PSocketDispatcher;
@@ -94,6 +107,7 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
   // Constructor that's used when running in single process mode.
   explicit RenderThreadImpl(const std::string& channel_name);
   virtual ~RenderThreadImpl();
+  virtual void Shutdown() OVERRIDE;
 
   // When initializing WebKit, ensure that any schemes needed for the content
   // module are registered properly.  Static to allow sharing with tests.
@@ -101,7 +115,7 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
 
   // RenderThread implementation:
   virtual bool Send(IPC::Message* msg) OVERRIDE;
-  virtual MessageLoop* GetMessageLoop() OVERRIDE;
+  virtual base::MessageLoop* GetMessageLoop() OVERRIDE;
   virtual IPC::SyncChannel* GetChannel() OVERRIDE;
   virtual std::string GetLocale() OVERRIDE;
   virtual IPC::SyncMessageFilter* GetSyncMessageFilter() OVERRIDE;
@@ -144,7 +158,7 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
   // GpuChannelHostFactory implementation:
   virtual bool IsMainThread() OVERRIDE;
   virtual bool IsIOThread() OVERRIDE;
-  virtual MessageLoop* GetMainLoop() OVERRIDE;
+  virtual base::MessageLoop* GetMainLoop() OVERRIDE;
   virtual scoped_refptr<base::MessageLoopProxy> GetIOLoopProxy() OVERRIDE;
   virtual base::WaitableEvent* GetShutDownEvent() OVERRIDE;
   virtual scoped_ptr<base::SharedMemory> AllocateSharedMemory(
@@ -173,21 +187,42 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
   void DoNotSuspendWebKitSharedTimer();
   void DoNotNotifyWebKitOfModalLoop();
 
-  // True if changing the focus of a RenderView requires a active user gesture.
-  bool require_user_gesture_for_focus() const {
-    return require_user_gesture_for_focus_;
+  // True if focus changes should be send via IPC to the browser.
+  bool should_send_focus_ipcs() const {
+    return should_send_focus_ipcs_;
   }
-  void set_require_user_gesture_for_focus(bool require_gesture) {
-    require_user_gesture_for_focus_ = require_gesture;
+  void set_should_send_focus_ipcs(bool send) {
+    should_send_focus_ipcs_ = send;
+  }
+
+  // True if RenderWidgets should report the newly requested size back to
+  // WebKit without waiting for the browser to acknowledge the size.
+  bool short_circuit_size_updates() const {
+    return short_circuit_size_updates_;
+  }
+  void set_short_circuit_size_updates(bool short_circuit) {
+    short_circuit_size_updates_ = short_circuit;
+  }
+
+  // True if we should never display error pages in response to a failed load.
+  bool skip_error_pages() const {
+    return skip_error_pages_;
+  }
+  void set_skip_error_pages(bool skip) {
+    skip_error_pages_ = skip;
   }
 
   IPC::ForwardingMessageFilter* compositor_output_surface_filter() const {
     return compositor_output_surface_filter_.get();
   }
 
+  InputHandlerManager* input_handler_manager() const {
+    return input_handler_manager_.get();
+  }
+
   // Will be NULL if threaded compositing has not been enabled.
-  CompositorThread* compositor_thread() const {
-    return compositor_thread_.get();
+  scoped_refptr<base::MessageLoopProxy> compositor_message_loop_proxy() const {
+    return compositor_message_loop_proxy_;
   }
 
   AppCacheDispatcher* appcache_dispatcher() const {
@@ -205,7 +240,6 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
   AudioMessageFilter* audio_message_filter() {
     return audio_message_filter_.get();
   }
-
 
 
   // Creates the embedder implementation of WebMediaStreamCenter.
@@ -252,6 +286,11 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
 
   // Handle loss of the shared GpuVDAContext3D context above.
   static void OnGpuVDAContextLoss();
+
+  scoped_refptr<ContextProviderCommandBuffer>
+      OffscreenContextProviderForMainThread();
+  scoped_refptr<ContextProviderCommandBuffer>
+      OffscreenContextProviderForCompositorThread();
 
   // AudioRendererMixerManager instance which manages renderer side mixer
   // instances shared based on configured audio parameters.  Lazily created on
@@ -321,16 +360,21 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
 
   void Init();
 
-  void OnSetZoomLevelForCurrentURL(const std::string& host, double zoom_level);
+  void OnSetZoomLevelForCurrentURL(const std::string& scheme,
+                                   const std::string& host,
+                                   double zoom_level);
   void OnCreateNewView(const ViewMsg_New_Params& params);
   void OnTransferBitmap(const SkBitmap& bitmap, int resource_id);
   void OnPurgePluginListCache(bool reload_pages);
   void OnNetworkStateChanged(bool online);
   void OnGetAccessibilityTree();
   void OnTempCrashWithData(const GURL& data);
+  void OnSetWebKitSharedTimersSuspended(bool suspend);
   void OnWillQuit(int*);
 
   void IdleHandlerInForegroundTab();
+
+  scoped_ptr<WebGraphicsContext3DCommandBufferImpl> CreateOffscreenContext3d();
 
   // These objects live solely on the render thread.
   scoped_ptr<AppCacheDispatcher> appcache_dispatcher_;
@@ -382,7 +426,10 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
   bool suspend_webkit_shared_timer_;
   bool notify_webkit_of_modal_loop_;
 
-  bool require_user_gesture_for_focus_;
+  // The following flags are used to control layout test specific behavior.
+  bool should_send_focus_ipcs_;
+  bool short_circuit_size_updates_;
+  bool skip_error_pages_;
 
   // Timer that periodically calls IdleHandler.
   base::RepeatingTimer<RenderThreadImpl> idle_timer_;
@@ -393,9 +440,21 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
   // A lazily initiated thread on which file operations are run.
   scoped_ptr<base::Thread> file_thread_;
 
-  bool compositor_initialized_;
-  scoped_ptr<CompositorThread> compositor_thread_;
+  // May be null if overridden by ContentRendererClient.
+  scoped_ptr<base::Thread> compositor_thread_;
+
+  // Will point to appropriate MessageLoopProxy after initialization,
+  // regardless of whether |compositor_thread_| is overriden.
+  scoped_refptr<base::MessageLoopProxy> compositor_message_loop_proxy_;
+
+  scoped_ptr<InputHandlerManager> input_handler_manager_;
   scoped_refptr<IPC::ForwardingMessageFilter> compositor_output_surface_filter_;
+
+  class RendererContextProviderCommandBuffer;
+  scoped_refptr<RendererContextProviderCommandBuffer>
+      shared_contexts_main_thread_;
+  scoped_refptr<RendererContextProviderCommandBuffer>
+      shared_contexts_compositor_thread_;
 
   ObserverList<RenderProcessObserver> observers_;
 

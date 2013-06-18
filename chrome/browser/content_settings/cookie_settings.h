@@ -10,7 +10,7 @@
 #include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/singleton.h"
-#include "base/prefs/public/pref_change_registrar.h"
+#include "base/prefs/pref_change_registrar.h"
 #include "base/synchronization/lock.h"
 #include "chrome/browser/content_settings/host_content_settings_map.h"
 #include "chrome/browser/profiles/refcounted_profile_keyed_service.h"
@@ -21,15 +21,12 @@ class ContentSettingsPattern;
 class CookieSettingsWrapper;
 class GURL;
 class PrefService;
-class PrefRegistrySyncable;
 class Profile;
 
 // A frontend to the cookie settings of |HostContentSettingsMap|. Handles
 // cookie-specific logic such as blocking third-party cookies. Written on the UI
 // thread and read on any thread. One instance per profile.
-
-class CookieSettings
-    : public RefcountedProfileKeyedService {
+class CookieSettings : public RefcountedProfileKeyedService {
  public:
   CookieSettings(
       HostContentSettingsMap* host_content_settings_map,
@@ -102,7 +99,7 @@ class CookieSettings
       bool setting_cookie,
       content_settings::SettingSource* source) const;
 
-  static void RegisterUserPrefs(PrefRegistrySyncable* registry);
+  static void RegisterUserPrefs(user_prefs::PrefRegistrySyncable* registry);
 
   class Factory : public RefcountedProfileKeyedServiceFactory {
    public:
@@ -120,10 +117,13 @@ class CookieSettings
     virtual ~Factory();
 
     // |ProfileKeyedBaseFactory| methods:
-    virtual void RegisterUserPrefs(PrefRegistrySyncable* registry) OVERRIDE;
-    virtual bool ServiceRedirectedInIncognito() const OVERRIDE;
+    virtual void RegisterUserPrefs(
+        user_prefs::PrefRegistrySyncable* registry) OVERRIDE;
+    virtual content::BrowserContext* GetBrowserContextToUse(
+        content::BrowserContext* context) const OVERRIDE;
     virtual scoped_refptr<RefcountedProfileKeyedService>
-        BuildServiceInstanceFor(Profile* profile) const OVERRIDE;
+        BuildServiceInstanceFor(
+            content::BrowserContext* context) const OVERRIDE;
   };
 
  private:

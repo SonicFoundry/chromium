@@ -13,14 +13,17 @@
 #include "base/memory/scoped_ptr.h"
 #include "googleurl/src/gurl.h"
 
+class PrefRegistrySimple;
+class PrefService;
+
 namespace base {
 class DictionaryValue;
 class ListValue;
 }
 
-class PrefRegistrySimple;
-class PrefService;
+namespace user_prefs {
 class PrefRegistrySyncable;
+}
 
 // Helper class for PromoResourceService that parses promo notification info
 // from json or prefs.
@@ -67,7 +70,7 @@ class NotificationPromo {
 
   // Register preferences.
   static void RegisterPrefs(PrefRegistrySimple* registry);
-  static void RegisterUserPrefs(PrefRegistrySyncable* registry);
+  static void RegisterUserPrefs(user_prefs::PrefRegistrySyncable* registry);
   static void MigrateUserPrefs(PrefService* user_prefs);
 
  private:
@@ -92,12 +95,15 @@ class NotificationPromo {
   // When max_views_ is 0, we don't cap the number of views.
   bool ExceedsMaxViews() const;
 
+  // Returns false if this promo should not be displayed because it is a promo
+  // for the app launcher, and the user has already enabled the app launcher.
+  bool CheckAppLauncher() const;
+
   PrefService* prefs_;
 
   PromoType promo_type_;
   std::string promo_text_;
 
-  // Note that promo_payload_ isn't currently used for desktop promos.
   scoped_ptr<const base::DictionaryValue> promo_payload_;
 
   double start_;

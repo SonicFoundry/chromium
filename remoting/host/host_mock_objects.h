@@ -8,12 +8,12 @@
 #include "net/base/ip_endpoint.h"
 #include "remoting/host/chromoting_host_context.h"
 #include "remoting/host/client_session.h"
-#include "remoting/host/continue_window.h"
+#include "remoting/host/client_session_control.h"
 #include "remoting/host/desktop_environment.h"
-#include "remoting/host/disconnect_window.h"
-#include "remoting/host/event_executor.h"
 #include "remoting/host/host_status_observer.h"
-#include "remoting/host/local_input_monitor.h"
+#include "remoting/host/input_injector.h"
+#include "remoting/host/screen_controls.h"
+#include "remoting/host/screen_resolution.h"
 #include "remoting/proto/control.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
@@ -28,55 +28,32 @@ class MockDesktopEnvironment : public DesktopEnvironment {
   MockDesktopEnvironment();
   virtual ~MockDesktopEnvironment();
 
-  MOCK_METHOD1(CreateAudioCapturerPtr,
-               AudioCapturer*(scoped_refptr<base::SingleThreadTaskRunner>));
-  MOCK_METHOD2(CreateEventExecutorPtr,
-               EventExecutor*(scoped_refptr<base::SingleThreadTaskRunner>,
-                              scoped_refptr<base::SingleThreadTaskRunner>));
-  MOCK_METHOD2(
-      CreateVideoCapturerPtr,
-      media::ScreenCapturer*(scoped_refptr<base::SingleThreadTaskRunner>,
-                          scoped_refptr<base::SingleThreadTaskRunner>));
+  MOCK_METHOD0(CreateAudioCapturerPtr, AudioCapturer*());
+  MOCK_METHOD0(CreateInputInjectorPtr, InputInjector*());
+  MOCK_METHOD0(CreateScreenControlsPtr, ScreenControls*());
+  MOCK_METHOD0(CreateVideoCapturerPtr, media::ScreenCapturer*());
+  MOCK_CONST_METHOD0(GetCapabilities, std::string());
+  MOCK_METHOD1(SetCapabilities, void(const std::string&));
 
   // DesktopEnvironment implementation.
-  virtual scoped_ptr<AudioCapturer> CreateAudioCapturer(
-      scoped_refptr<base::SingleThreadTaskRunner> audio_task_runner) OVERRIDE;
-  virtual scoped_ptr<EventExecutor> CreateEventExecutor(
-      scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner) OVERRIDE;
-  virtual scoped_ptr<media::ScreenCapturer> CreateVideoCapturer(
-      scoped_refptr<base::SingleThreadTaskRunner> capture_task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> encode_task_runner) OVERRIDE;
+  virtual scoped_ptr<AudioCapturer> CreateAudioCapturer() OVERRIDE;
+  virtual scoped_ptr<InputInjector> CreateInputInjector() OVERRIDE;
+  virtual scoped_ptr<ScreenControls> CreateScreenControls() OVERRIDE;
+  virtual scoped_ptr<media::ScreenCapturer> CreateVideoCapturer() OVERRIDE;
 };
 
-class MockDisconnectWindow : public DisconnectWindow {
+class MockClientSessionControl : public ClientSessionControl {
  public:
-  MockDisconnectWindow();
-  virtual ~MockDisconnectWindow();
+  MockClientSessionControl();
+  virtual ~MockClientSessionControl();
 
-  MOCK_METHOD2(Show, bool(const base::Closure& disconnect_callback,
-                          const std::string& username));
-  MOCK_METHOD0(Hide, void());
-};
+  MOCK_CONST_METHOD0(client_jid, const std::string&());
+  MOCK_METHOD0(DisconnectSession, void());
+  MOCK_METHOD1(OnLocalMouseMoved, void(const SkIPoint&));
+  MOCK_METHOD1(SetDisableInputs, void(bool));
 
-class MockLocalInputMonitor : public LocalInputMonitor {
- public:
-  MockLocalInputMonitor();
-  virtual ~MockLocalInputMonitor();
-
-  MOCK_METHOD2(Start, void(MouseMoveObserver* mouse_move_observer,
-                           const base::Closure& disconnect_callback));
-  MOCK_METHOD0(Stop, void());
-};
-
-class MockContinueWindow : public ContinueWindow {
- public:
-  MockContinueWindow();
-  virtual ~MockContinueWindow();
-
-  MOCK_METHOD1(Show, void(
-      const remoting::ContinueWindow::ContinueSessionCallback& callback));
-  MOCK_METHOD0(Hide, void());
+ private:
+  DISALLOW_COPY_AND_ASSIGN(MockClientSessionControl);
 };
 
 class MockClientSessionEventHandler : public ClientSession::EventHandler {
@@ -84,7 +61,7 @@ class MockClientSessionEventHandler : public ClientSession::EventHandler {
   MockClientSessionEventHandler();
   virtual ~MockClientSessionEventHandler();
 
-  MOCK_METHOD1(OnSessionAuthenticated, void(ClientSession* client));
+  MOCK_METHOD1(OnSessionAuthenticated, bool(ClientSession* client));
   MOCK_METHOD1(OnSessionChannelsConnected, void(ClientSession* client));
   MOCK_METHOD1(OnSessionAuthenticationFailed, void(ClientSession* client));
   MOCK_METHOD1(OnSessionClosed, void(ClientSession* client));
@@ -94,9 +71,6 @@ class MockClientSessionEventHandler : public ClientSession::EventHandler {
       ClientSession* client,
       const std::string& channel_name,
       const protocol::TransportRoute& route));
-  MOCK_METHOD3(OnClientResolutionChanged, void(ClientSession* client,
-                                               const SkISize& size,
-                                               const SkIPoint& dpi));
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockClientSessionEventHandler);
@@ -111,17 +85,16 @@ class MockDesktopEnvironmentFactory : public DesktopEnvironmentFactory {
   MOCK_CONST_METHOD0(SupportsAudioCapture, bool());
 
   virtual scoped_ptr<DesktopEnvironment> Create(
-      const std::string& client_jid,
-      const base::Closure& disconnect_callback) OVERRIDE;
+      base::WeakPtr<ClientSessionControl> client_session_control) OVERRIDE;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockDesktopEnvironmentFactory);
 };
 
-class MockEventExecutor : public EventExecutor {
+class MockInputInjector : public InputInjector {
  public:
-  MockEventExecutor();
-  virtual ~MockEventExecutor();
+  MockInputInjector();
+  virtual ~MockInputInjector();
 
   MOCK_METHOD1(InjectClipboardEvent,
                void(const protocol::ClipboardEvent& event));
@@ -133,7 +106,7 @@ class MockEventExecutor : public EventExecutor {
   void Start(scoped_ptr<protocol::ClipboardStub> client_clipboard);
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(MockEventExecutor);
+  DISALLOW_COPY_AND_ASSIGN(MockInputInjector);
 };
 
 class MockHostStatusObserver : public HostStatusObserver {

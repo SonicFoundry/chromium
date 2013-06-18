@@ -39,7 +39,7 @@ cr.define('print_preview', function() {
     this.destinations_ = [];
 
     /**
-     * Cache used for constant lookup of destinations by ID.
+     * Cache used for constant lookup of destinations by origin and id.
      * @type {object.<string, !print_preview.Destination>}
      * @private
      */
@@ -62,11 +62,11 @@ cr.define('print_preview', function() {
     this.initialDestinationId_ = null;
 
     /**
-     * Whether the initial destination is a local one or not.
-     * @type {boolean}
+     * Initial origin used to auto-select destination.
+     * @type {print_preview.Destination.Origin}
      * @private
      */
-    this.isInitialDestinationLocal_ = true;
+    this.initialDestinationOrigin_ = print_preview.Destination.Origin.LOCAL;
 
     /**
      * Whether the destination store will auto select the destination that
@@ -115,13 +115,6 @@ cr.define('print_preview', function() {
      */
     this.isLocalDestinationSearchInProgress_ = false;
 
-    /**
-     * Number of outstanding cloud destination search requests.
-     * @type {number}
-     * @private
-     */
-    this.outstandingCloudSearchRequestCount_ = 0;
-
     this.addEventListeners_();
     this.reset_();
   };
@@ -161,20 +154,23 @@ cr.define('print_preview', function() {
     var dest = new print_preview.Destination(
         print_preview.Destination.GooglePromotedId.SAVE_AS_PDF,
         print_preview.Destination.Type.LOCAL,
+        print_preview.Destination.Origin.LOCAL,
         localStrings.getString('printToPDF'),
         false /*isRecent*/,
         print_preview.Destination.ConnectionStatus.ONLINE);
-    dest.capabilities = new print_preview.ChromiumCapabilities(
-        false /*hasCopiesCapability*/,
-        '1' /*defaultCopiesStr*/,
-        false /*hasCollateCapability*/,
-        false /*defaultIsCollateEnabled*/,
-        false /*hasDuplexCapability*/,
-        false /*defaultIsDuplexEnabled*/,
-        true /*hasOrientationCapability*/,
-        false /*defaultIsLandscapeEnabled*/,
-        true /*hasColorCapability*/,
-        true /*defaultIsColorEnabled*/);
+    dest.capabilities = {
+      version: '1.0',
+      printer: {
+        page_orientation: {
+          option: [
+            {type: 'AUTO', is_default: true},
+            {type: 'PORTRAIT'},
+            {type: 'LANDSCAPE'}
+          ]
+        },
+        color: { option: [{type: 'STANDARD_COLOR', is_default: true}] }
+      }
+    };
     return dest;
   };
 
@@ -208,7 +204,8 @@ cr.define('print_preview', function() {
      * @return {boolean} Whether a search for cloud destinations is in progress.
      */
     get isCloudDestinationSearchInProgress() {
-      return this.outstandingCloudSearchRequestCount_ > 0;
+      return this.cloudPrintInterface_ &&
+             this.cloudPrintInterface_.isCloudDestinationSearchInProgress;
     },
 
     /**
@@ -221,25 +218,30 @@ cr.define('print_preview', function() {
      * @private
      */
     init: function(systemDefaultDestinationId) {
-      if (this.appState_.selectedDestinationId) {
+      if (this.appState_.selectedDestinationId &&
+          this.appState_.selectedDestinationOrigin) {
         this.initialDestinationId_ = this.appState_.selectedDestinationId;
-        this.isInitialDestinationLocal_ =
-            this.appState_.isSelectedDestinationLocal;
+        this.initialDestinationOrigin_ =
+            this.appState_.selectedDestinationOrigin;
       } else {
         this.initialDestinationId_ = systemDefaultDestinationId;
-        this.isInitialDestinationLocal_ = true;
+        this.initialDestinationOrigin_ = print_preview.Destination.Origin.LOCAL;
       }
-
       this.isInAutoSelectMode_ = true;
-      if (this.initialDestinationId_ == null) {
+      if (this.initialDestinationId_ == null ||
+          this.initialDestinationOrigin_ == null) {
         assert(this.destinations_.length > 0,
                'No destinations available to select');
         this.selectDestination(this.destinations_[0]);
       } else {
-        var candidate = this.destinationMap_[this.initialDestinationId_];
+        var key = this.getDestinationKey_(this.initialDestinationOrigin_,
+                                          this.initialDestinationId_);
+        var candidate = this.destinationMap_[key];
         if (candidate != null) {
           this.selectDestination(candidate);
-        } else if (!cr.isChromeOS && this.isInitialDestinationLocal_) {
+        } else if (!cr.isChromeOS &&
+                   this.initialDestinationOrigin_ ==
+                   print_preview.Destination.Origin.LOCAL) {
           this.nativeLayer_.startGetLocalDestinationCapabilities(
               this.initialDestinationId_);
         }
@@ -270,8 +272,10 @@ cr.define('print_preview', function() {
           cloudprint.CloudPrintInterface.EventType.PRINTER_FAILED,
           this.onCloudPrintPrinterFailed_.bind(this));
       // Fetch initial destination if its a cloud destination.
-      if (this.isInAutoSelectMode_ && !this.isInitialDestinationLocal_) {
-        this.cloudPrintInterface_.printer(this.initialDestinationId_);
+      var origin = this.initialDestinationOrigin_;
+      if (this.isInAutoSelectMode_ &&
+          origin != print_preview.Destination.Origin.LOCAL) {
+        this.cloudPrintInterface_.printer(this.initialDestinationId_, origin);
       }
     },
 
@@ -303,6 +307,7 @@ cr.define('print_preview', function() {
                'not enabled');
         destination.isTosAccepted = true;
         this.cloudPrintInterface_.updatePrinterTosAcceptance(destination.id,
+                                                             destination.origin,
                                                              true);
       }
       this.appState_.persistSelectedDestination(this.selectedDestination_);
@@ -316,7 +321,8 @@ cr.define('print_preview', function() {
           assert(this.cloudPrintInterface_ != null,
                  'Selected destination is a cloud destination, but Google ' +
                  'Cloud Print is not enabled');
-          this.cloudPrintInterface_.printer(destination.id);
+          this.cloudPrintInterface_.printer(destination.id,
+                                            destination.origin);
         }
       } else {
         cr.dispatchSimpleEvent(
@@ -337,8 +343,7 @@ cr.define('print_preview', function() {
         cr.dispatchSimpleEvent(
             this, DestinationStore.EventType.DESTINATIONS_INSERTED);
         if (this.isInAutoSelectMode_ &&
-            (this.initialDestinationId_ == null ||
-                destination.id == this.initialDestinationId_)) {
+            this.matchInitialDestination_(destination.id, destination.origin)) {
           this.selectDestination(destination);
         }
       }
@@ -359,8 +364,7 @@ cr.define('print_preview', function() {
           insertedDestination = true;
           if (this.isInAutoSelectMode_ &&
               destinationToAutoSelect == null &&
-              (this.initialDestinationId_ == null ||
-                  dest.id == this.initialDestinationId_)) {
+              this.matchInitialDestination_(dest.id, dest.origin)) {
             destinationToAutoSelect = dest;
           }
         }
@@ -379,15 +383,17 @@ cr.define('print_preview', function() {
      * the destination doesn't already exist, it will be added.
      * @param {!print_preview.Destination} destination Destination to update.
      * @return {!print_preview.Destination} The existing destination that was
-     *     updated.
+     *     updated or {@code null} if it was the new destination.
      */
     updateDestination: function(destination) {
-      var existingDestination = this.destinationMap_[destination.id];
+      var key = this.getDestinationKey_(destination.origin, destination.id);
+      var existingDestination = this.destinationMap_[key];
       if (existingDestination != null) {
         existingDestination.capabilities = destination.capabilities;
         return existingDestination;
       } else {
         this.insertDestination(destination);
+        return null;
       }
     },
 
@@ -399,23 +405,16 @@ cr.define('print_preview', function() {
           this, DestinationStore.EventType.DESTINATION_SEARCH_STARTED);
     },
 
-    /** Initiates loading of recent cloud destinations. */
-    startLoadRecentCloudDestinations: function() {
-      if (this.cloudPrintInterface_ != null) {
-        this.cloudPrintInterface_.search(true /*isRecent*/);
-        this.outstandingCloudSearchRequestCount_++;
-        cr.dispatchSimpleEvent(
-            this, DestinationStore.EventType.DESTINATION_SEARCH_STARTED);
-      }
-    },
-
-    /** Initiates loading of all cloud destinations. */
-    startLoadAllCloudDestinations: function() {
+    /**
+     * Initiates loading of cloud destinations.
+     * @param {boolean} recentOnly Whether the load recet destinations only.
+     */
+    startLoadCloudDestinations: function(recentOnly) {
       if (this.cloudPrintInterface_ != null &&
-          !this.hasLoadedAllCloudDestinations_) {
-        this.cloudPrintInterface_.search(false /*isRecent*/);
-        this.outstandingCloudSearchRequestCount_++;
-        this.hasLoadedAllCloudDestinations_ = true;
+          !this.hasLoadedAllCloudDestinations_ &&
+          (!recentOnly || !this.isCloudDestinationSearchInProgress)) {
+        this.cloudPrintInterface_.search(recentOnly);
+        this.hasLoadedAllCloudDestinations_ = !recentOnly;
         cr.dispatchSimpleEvent(
             this, DestinationStore.EventType.DESTINATION_SEARCH_STARTED);
       }
@@ -428,10 +427,11 @@ cr.define('print_preview', function() {
      * @private
      */
     insertDestination_: function(destination) {
-      var existingDestination = this.destinationMap_[destination.id];
+      var key = this.getDestinationKey_(destination.origin, destination.id);
+      var existingDestination = this.destinationMap_[key];
       if (existingDestination == null) {
         this.destinations_.push(destination);
-        this.destinationMap_[destination.id] = destination;
+        this.destinationMap_[key] = destination;
         return true;
       } else if (existingDestination.connectionStatus ==
                      print_preview.Destination.ConnectionStatus.UNKNOWN &&
@@ -509,7 +509,10 @@ cr.define('print_preview', function() {
      */
     onLocalDestinationCapabilitiesSet_: function(event) {
       var destinationId = event.settingsInfo['printerId'];
-      var destination = this.destinationMap_[destinationId];
+      var key =
+          this.getDestinationKey_(print_preview.Destination.Origin.LOCAL,
+                                  destinationId);
+      var destination = this.destinationMap_[key];
       var capabilities = print_preview.LocalCapabilitiesParser.parse(
             event.settingsInfo);
       if (destination) {
@@ -547,7 +550,8 @@ cr.define('print_preview', function() {
       console.error('Failed to get print capabilities for printer ' +
                     event.destinationId);
       if (this.isInAutoSelectMode_ &&
-          this.initialDestinationId_ == event.destinationId) {
+          this.matchInitialDestinationStrict_(event.destinationId,
+                                              event.destinationOrigin)) {
         assert(this.destinations_.length > 0,
                'No destinations were loaded when failed to get initial ' +
                'destination');
@@ -562,7 +566,6 @@ cr.define('print_preview', function() {
      * @private
      */
     onCloudPrintSearchDone_: function(event) {
-      this.outstandingCloudSearchRequestCount_--;
       this.insertDestinations(event.printers);
       cr.dispatchSimpleEvent(
           this, DestinationStore.EventType.DESTINATION_SEARCH_DONE);
@@ -574,7 +577,6 @@ cr.define('print_preview', function() {
      * @private
      */
     onCloudPrintSearchFailed_: function() {
-      this.outstandingCloudSearchRequestCount_--;
       cr.dispatchSimpleEvent(
           this, DestinationStore.EventType.DESTINATION_SEARCH_DONE);
     },
@@ -605,7 +607,8 @@ cr.define('print_preview', function() {
      */
     onCloudPrintPrinterFailed_: function(event) {
       if (this.isInAutoSelectMode_ &&
-          this.initialDestinationId_ == event.destinationId) {
+          this.matchInitialDestinationStrict_(event.destinationId,
+                                              event.destinationOrigin)) {
         console.error('Could not find initial printer: ' + event.destinationId);
         assert(this.destinations_.length > 0,
                'No destinations were loaded when failed to get initial ' +
@@ -623,8 +626,8 @@ cr.define('print_preview', function() {
       this.reset_();
       this.isInAutoSelectMode_ = true;
       this.startLoadLocalDestinations();
-      this.startLoadRecentCloudDestinations();
-      this.startLoadAllCloudDestinations();
+      this.startLoadCloudDestinations(true);
+      this.startLoadCloudDestinations(false);
     },
 
     /**
@@ -637,6 +640,41 @@ cr.define('print_preview', function() {
       assert(this.destinations_.length > 0,
              'No destinations were loaded before auto-select timeout expired');
       this.selectDestination(this.destinations_[0]);
+    },
+
+    // TODO(vitalybuka): Remove three next functions replacing Destination.id
+    //    and Destination.origin by complex ID.
+    /**
+     * Returns key to be used with {@code destinationMap_}.
+     * @param {!print_preview.Destination.Origin} origin Destination origin.
+     * @return {!string} id Destination id.
+     * @private
+     */
+    getDestinationKey_: function(origin, id) {
+      return origin + '/' + id;
+    },
+
+    /**
+     * @param {?string} id Id of the destination.
+     * @param {?string} origin Oring of the destination.
+     * @return {boolean} Whether a initial destination matches provided.
+     * @private
+     */
+    matchInitialDestination_: function(id, origin) {
+      return this.initialDestinationId_ == null ||
+             this.initialDestinationOrigin_ == null ||
+             this.matchInitialDestinationStrict_(id, origin);
+    },
+
+    /**
+     * @param {?string} id Id of the destination.
+     * @param {?string} origin Oring of the destination.
+     * @return {boolean} Whether destination is the same as initial.
+     * @private
+     */
+    matchInitialDestinationStrict_: function(id, origin) {
+      return id == this.initialDestinationId_ &&
+             origin == this.initialDestinationOrigin_;
     }
   };
 

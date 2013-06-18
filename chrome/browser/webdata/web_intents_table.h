@@ -10,7 +10,7 @@
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/string16.h"
-#include "chrome/browser/webdata/web_database_table.h"
+#include "components/webdata/common/web_database_table.h"
 
 namespace sql {
 class Connection;
@@ -18,6 +18,7 @@ class MetaTable;
 }
 
 struct DefaultWebIntentService;
+class WebDatabase;
 
 // TODO(thakis): Delete this class once there's a migration that drops the
 // table backing it.
@@ -50,12 +51,18 @@ struct DefaultWebIntentService;
 //
 class WebIntentsTable : public WebDatabaseTable {
  public:
-  WebIntentsTable(sql::Connection* db, sql::MetaTable* meta_table);
+  WebIntentsTable();
   virtual ~WebIntentsTable();
 
+  // Retrieves the WebIntentsTable* owned by |database|.
+  static WebIntentsTable* FromWebDatabase(WebDatabase* database);
+
   // WebDatabaseTable implementation.
-  virtual bool Init() OVERRIDE;
+  virtual WebDatabaseTable::TypeKey GetTypeKey() const OVERRIDE;
+  virtual bool Init(sql::Connection* db, sql::MetaTable* meta_table) OVERRIDE;
   virtual bool IsSyncable() OVERRIDE;
+  virtual bool MigrateToVersion(int version,
+                                bool* update_compatible_version) OVERRIDE;
 
   // Adds "scheme" column to the web_intents and web_intents_defaults tables.
   bool MigrateToVersion46AddSchemeColumn();

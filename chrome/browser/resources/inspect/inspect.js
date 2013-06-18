@@ -2,6 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+function adbPages() {
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', 'adb-pages', false);
+  xhr.send(null);
+  if (xhr.status !== 200)
+    return null;
+
+  try {
+    return JSON.parse(xhr.responseText);
+  } catch (e) {
+  }
+  return null;
+}
+
 function requestData() {
   var xhr = new XMLHttpRequest();
   xhr.open('GET', 'targets-data.json', false);
@@ -12,18 +26,21 @@ function requestData() {
 }
 
 function inspect(data) {
-  chrome.send('inspect',
-              [String(data.processId), String(data.routeId)]);
+  chrome.send('inspect', [data]);
 }
 
 function terminate(data) {
-  chrome.send('terminate',
-              [String(data.processId), String(data.routeId)]);
+  chrome.send('terminate', [data]);
 }
 
 function removeChildren(element_id) {
   var element = document.getElementById(element_id);
   element.textContent = '';
+}
+
+function onload() {
+  populateLists();
+  populateDeviceLists();
 }
 
 function populateLists() {
@@ -46,8 +63,61 @@ function populateLists() {
   }
 }
 
+function populateDeviceLists() {
+  var pages = adbPages();
+  var pagesDigest = JSON.stringify(pages);
+  if (!pages || pagesDigest == window.pagesDigest) {
+    setTimeout(populateDeviceLists, 1000);
+    return;
+  }
+  window.pagesDigest = pagesDigest;
+
+  // Clear existing entries
+  var deviceElements = document.querySelectorAll('.device');
+  for (var i = 0; i < deviceElements.length; i++)
+    deviceElements[i].remove();
+  var containerElement = document.getElementById('devices');
+
+  // Populate with new entries
+  for (var i = 0; pages && i < pages.length; i++) {
+    var page = pages[i];
+
+    var listId = 'device-' + page.adbSerial;
+    var listElement = document.getElementById(listId);
+    if (!listElement) {
+      var sectionElement = document.createElement('div');
+      sectionElement.className = 'section device';
+      sectionElement.textContent = page.adbModel;
+
+      listElement = document.createElement('div');
+      listElement.className = 'list device';
+      listElement.id = listId;
+      containerElement.appendChild(sectionElement);
+      containerElement.appendChild(listElement);
+    }
+
+    var packageId = 'package-' + page.adbModel + '-' + page.adbPackage;
+    var packageElement = document.getElementById(packageId);
+    if (!packageElement) {
+      var sectionElement = document.createElement('div');
+      sectionElement.className = 'small-section package';
+      sectionElement.textContent = page.adbPackage;
+
+      packageElement = document.createElement('div');
+      packageElement.className = 'list package';
+      packageElement.id = packageId;
+      listElement.appendChild(sectionElement);
+      listElement.appendChild(packageElement);
+    }
+
+    addTargetToList(page, packageId, ['faviconUrl', 'name', 'url']);
+  }
+
+  setTimeout(populateDeviceLists, 1000);
+}
+
 function addToPagesList(data) {
-  addTargetToList(data, 'pages', ['favicon_url', 'name', 'url']);
+  addTargetToList(data, 'pages', ['faviconUrl', 'name', 'url']);
 }
 
 function addToExtensionsList(data) {
@@ -68,7 +138,7 @@ function addToOthersList(data) {
 function formatValue(data, property) {
   var value = data[property];
 
-  if (property == 'favicon_url') {
+  if (property == 'faviconUrl') {
     var faviconElement = document.createElement('img');
     if (value)
       faviconElement.src = value;
@@ -95,7 +165,9 @@ function addTargetToList(data, listId, properties, canTerminate) {
   for (var j = 0; j < properties.length; j++)
     row.appendChild(formatValue(data, properties[j]));
 
-  row.appendChild(createInspectElement(data));
+  if (!data['adbSerial'] || data['adbDebugUrl'])
+    row.appendChild(createInspectElement(data));
+
   if (canTerminate)
     row.appendChild(createTerminateElement(data));
 
@@ -130,4 +202,4 @@ function createTerminateElement(data) {
   return link;
 }
 
-document.addEventListener('DOMContentLoaded', populateLists);
+document.addEventListener('DOMContentLoaded', onload);

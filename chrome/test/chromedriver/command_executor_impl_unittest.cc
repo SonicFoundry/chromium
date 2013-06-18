@@ -8,8 +8,8 @@
 #include "base/callback.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/values.h"
+#include "chrome/test/chromedriver/chrome/status.h"
 #include "chrome/test/chromedriver/command_executor_impl.h"
-#include "chrome/test/chromedriver/status.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 TEST(CommandExecutorImplTest, UnknownCommand) {
@@ -118,8 +118,11 @@ TEST(CommandExecutorImplTest, CommandThatReturnsError) {
   StatusCode status_code;
   scoped_ptr<base::Value> value;
   std::string out_session_id;
-  executor.ExecuteCommand("simpleCommand", params, "",
-                          &status_code, &value,
+  executor.ExecuteCommand("simpleCommand",
+                          params,
+                          std::string(),
+                          &status_code,
+                          &value,
                           &out_session_id);
   ASSERT_EQ(kUnknownError, status_code);
   ASSERT_TRUE(value);

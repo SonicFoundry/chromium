@@ -22,7 +22,6 @@
 #include "chrome/browser/google/google_url_tracker.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
-#include "chrome/browser/password_manager/encryptor.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/search_engines/template_url_service.h"
@@ -38,6 +37,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/webdata/encryptor/encryptor.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/test_browser_thread.h"
 #include "google_apis/gaia/gaia_urls.h"
@@ -48,7 +48,7 @@
 #include "net/proxy/proxy_config.h"
 #include "net/proxy/proxy_config_service_fixed.h"
 #include "net/proxy/proxy_service.h"
-#include "net/test/test_server.h"
+#include "net/test/spawned_test_server.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_delegate.h"
@@ -211,6 +211,11 @@ void SyncTest::AddTestSwitches(CommandLine* cl) {
 
   if (!cl->HasSwitch(switches::kSyncShortInitialRetryOverride))
     cl->AppendSwitch(switches::kSyncShortInitialRetryOverride);
+
+  // TODO(sync): Fix enable_disable_test.cc to play nice with priority
+  // preferences.
+  if (!cl->HasSwitch(switches::kDisableSyncPriorityPreferences))
+    cl->AppendSwitch(switches::kDisableSyncPriorityPreferences);
 }
 
 void SyncTest::AddOptionalTypesToCommandLine(CommandLine* cl) {}
@@ -226,7 +231,9 @@ Profile* SyncTest::MakeProfile(const base::FilePath::StringType name) {
 
   Profile* profile =
       Profile::CreateProfile(path, NULL, Profile::CREATE_MODE_SYNCHRONOUS);
-  g_browser_process->profile_manager()->RegisterTestingProfile(profile, true);
+  g_browser_process->profile_manager()->RegisterTestingProfile(profile,
+                                                               true,
+                                                               true);
   return profile;
 }
 
@@ -455,17 +462,6 @@ void SyncTest::SetupMockGaiaResponses() {
       "}",
       true);
   fake_factory_->SetFakeResponse(
-      GaiaUrls::GetInstance()->client_oauth_url(),
-      "{"
-      "  \"oauth2\": {"
-      "    \"refresh_token\": \"rt1\","
-      "    \"access_token\": \"at1\","
-      "    \"expires_in\": 3600,"
-      "    \"token_type\": \"Bearer\""
-      "  }"
-      "}",
-      true);
-  fake_factory_->SetFakeResponse(
       GaiaUrls::GetInstance()->oauth1_login_url(),
       "SID=sid\nLSID=lsid\nAuth=auth_token",
       true);
@@ -473,7 +469,7 @@ void SyncTest::SetupMockGaiaResponses() {
 
 void SyncTest::ClearMockGaiaResponses() {
   // Clear any mock gaia responses that might have been set.
-  if (fake_factory_.get()) {
+  if (fake_factory_) {
     fake_factory_->ClearFakeResponses();
     fake_factory_.reset();
   }

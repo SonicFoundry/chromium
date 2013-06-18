@@ -21,7 +21,6 @@
 #include "base/values.h"
 #include "chrome/browser/history/page_usage_data.h"
 #include "chrome/browser/history/top_sites.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/favicon_source.h"
@@ -31,6 +30,7 @@
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_source.h"
@@ -47,7 +47,7 @@
 using content::UserMetricsAction;
 
 MostVisitedHandler::MostVisitedHandler()
-    : ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_(this)),
+    : weak_ptr_factory_(this),
       got_first_most_visited_request_(false),
       most_visited_viewed_(false),
       user_action_logged_(false) {
@@ -257,7 +257,9 @@ std::string MostVisitedHandler::GetDictionaryKeyForUrl(const std::string& url) {
 }
 
 // static
-void MostVisitedHandler::RegisterUserPrefs(PrefRegistrySyncable* registry) {
-  registry->RegisterDictionaryPref(prefs::kNtpMostVisitedURLsBlacklist,
-                                   PrefRegistrySyncable::UNSYNCABLE_PREF);
+void MostVisitedHandler::RegisterUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterDictionaryPref(
+      prefs::kNtpMostVisitedURLsBlacklist,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }

@@ -22,12 +22,13 @@
 #include "chrome/common/extensions/extension_manifest_constants.h"
 #include "chrome/common/extensions/manifest.h"
 #include "chrome/common/url_constants.h"
-#include "chrome/common/zip.h"
 #include "content/public/common/common_param_traits.h"
+#include "extensions/common/constants.h"
 #include "grit/generated_resources.h"
 #include "ipc/ipc_message_utils.h"
 #include "net/base/file_stream.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/zlib/google/zip.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "webkit/glue/image_decoder.h"
 
@@ -99,7 +100,7 @@ Unpacker::~Unpacker() {
 
 DictionaryValue* Unpacker::ReadManifest() {
   base::FilePath manifest_path =
-      temp_install_dir_.Append(Extension::kManifestFilename);
+      temp_install_dir_.Append(kManifestFilename);
   if (!file_util::PathExists(manifest_path)) {
     SetError(errors::kInvalidManifest);
     return NULL;
@@ -123,7 +124,7 @@ DictionaryValue* Unpacker::ReadManifest() {
 
 bool Unpacker::ReadAllMessageCatalogs(const std::string& default_locale) {
   base::FilePath locales_path =
-    temp_install_dir_.Append(Extension::kLocaleFolder);
+    temp_install_dir_.Append(kLocaleFolder);
 
   // Not all folders under _locales have to be valid locales.
   file_util::FileEnumerator locales(locales_path,
@@ -138,8 +139,7 @@ bool Unpacker::ReadAllMessageCatalogs(const std::string& default_locale) {
                                                   all_locales))
       continue;
 
-    base::FilePath messages_path =
-      locale_path.Append(Extension::kMessagesFilename);
+    base::FilePath messages_path = locale_path.Append(kMessagesFilename);
 
     if (!ReadMessageCatalog(messages_path))
       return false;
@@ -196,7 +196,8 @@ bool Unpacker::Run() {
   extension->AddInstallWarnings(warnings);
 
   // Decode any images that the browser needs to display.
-  std::set<base::FilePath> image_paths = extension->GetBrowserImages();
+  std::set<base::FilePath> image_paths =
+      extension_file_util::GetBrowserImagePaths(extension);
   for (std::set<base::FilePath>::iterator it = image_paths.begin();
        it != image_paths.end(); ++it) {
     if (!AddDecodedImage(*it))

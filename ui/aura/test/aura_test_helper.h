@@ -8,10 +8,13 @@
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
 
+namespace base {
 class MessageLoopForUI;
+}
 
 namespace ui {
 class InputMethod;
+class ScopedAnimationDurationScaleMode;
 }
 
 namespace aura {
@@ -30,7 +33,7 @@ class TestStackingClient;
 // that are necessary to run test on Aura.
 class AuraTestHelper {
  public:
-  explicit AuraTestHelper(MessageLoopForUI* message_loop);
+  explicit AuraTestHelper(base::MessageLoopForUI* message_loop);
   ~AuraTestHelper();
 
   // Creates and initializes (shows and sizes) the RootWindow for use in tests.
@@ -45,8 +48,10 @@ class AuraTestHelper {
 
   RootWindow* root_window() { return root_window_.get(); }
 
+  TestScreen* test_screen() { return test_screen_.get(); }
+
  private:
-  MessageLoopForUI* message_loop_;
+  base::MessageLoopForUI* message_loop_;
   bool setup_called_;
   bool teardown_called_;
   bool owns_root_window_;
@@ -57,6 +62,7 @@ class AuraTestHelper {
   scoped_ptr<ui::InputMethod> test_input_method_;
   scoped_ptr<client::FocusClient> focus_client_;
   scoped_ptr<TestScreen> test_screen_;
+  scoped_ptr<ui::ScopedAnimationDurationScaleMode> zero_duration_mode_;
 
   DISALLOW_COPY_AND_ASSIGN(AuraTestHelper);
 };

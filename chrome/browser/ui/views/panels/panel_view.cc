@@ -286,6 +286,8 @@ PanelView::PanelView(Panel* panel, const gfx::Rect& bounds)
                                                 panel->profile()->GetPath()),
       views::HWNDForWidget(window_));
 #endif
+
+  views::WidgetFocusManager::GetInstance()->AddFocusChangeListener(this);
 }
 
 PanelView::~PanelView() {
@@ -294,12 +296,6 @@ PanelView::~PanelView() {
 void PanelView::ShowPanel() {
   ShowPanelInactive();
   ActivatePanel();
-
-  // Give web contents view a chance to set focus to the appropriate element
-  // when it is created for the first time.
-  content::WebContents* web_contents = panel_->GetWebContents();
-  if (web_contents)
-    web_contents->GetView()->RestoreFocus();
 }
 
 void PanelView::ShowPanelInactive() {
@@ -435,6 +431,8 @@ void PanelView::ClosePanel() {
     return;
   }
 
+  views::WidgetFocusManager::GetInstance()->RemoveFocusChangeListener(this);
+
   panel_->OnNativePanelClosed();
   if (window_)
     window_->Close();
@@ -522,8 +520,29 @@ void PanelView::DrawAttention(bool draw_attention) {
   is_drawing_attention_ = draw_attention;
   GetFrameView()->SchedulePaint();
 
-  if ((panel_->attention_mode() & Panel::USE_SYSTEM_ATTENTION) != 0)
+  if ((panel_->attention_mode() & Panel::USE_SYSTEM_ATTENTION) != 0) {
+#if defined(OS_WIN)
+    // The default implementation of Widget::FlashFrame only flashes 5 times.
+    // We need more than that.
+    FLASHWINFO fwi;
+    fwi.cbSize = sizeof(fwi);
+    fwi.hwnd = views::HWNDForWidget(window_);
+    if (draw_attention) {
+      fwi.dwFlags = FLASHW_ALL;
+      fwi.uCount = panel::kNumberOfTimesToFlashPanelForAttention;
+      fwi.dwTimeout = 0;
+    } else {
+      // TODO(jianli): calling FlashWindowEx with FLASHW_STOP flag for the
+      // panel window has the same problem as the stack window. However,
+      // we cannot take the similar fix since there is no background window
+      // to replace for the regular panel window. More investigation is needed.
+      fwi.dwFlags = FLASHW_STOP;
+    }
+    ::FlashWindowEx(&fwi);
+#else
     window_->FlashFrame(draw_attention);
+#endif
+  }
 }
 
 bool PanelView::IsDrawingAttention() const {
@@ -640,6 +659,23 @@ int PanelView::TitleOnlyHeight() const {
 
 void PanelView::MinimizePanelBySystem() {
   window_->Minimize();
+}
+
+bool PanelView::IsPanelMinimizedBySystem() const {
+  return window_->IsMinimized();
+}
+
+void PanelView::ShowShadow(bool show) {
+#if defined(OS_WIN)
+  // The overlapped window has the shadow while the popup window does not have
+  // the shadow.
+  int overlap_style = WS_OVERLAPPED | WS_THICKFRAME | WS_SYSMENU;
+  int popup_style = WS_POPUP;
+  UpdateWindowAttribute(GWL_STYLE,
+                        show ? overlap_style : popup_style,
+                        show ? popup_style : overlap_style,
+                        true);
+#endif
 }
 
 void PanelView::AttachWebContents(content::WebContents* contents) {
@@ -830,10 +866,10 @@ void PanelView::Layout() {
 
 gfx::Size PanelView::GetMinimumSize() {
   // If the panel is minimized, it can be rendered to very small size, like
-  // 4-pixel lines when it is docked. Otherwise, its height should not be less
-  // than its titlebar height.
+  // 4-pixel lines when it is docked. Otherwise, its size should not be less
+  // than its minimum size.
   return panel_->IsMinimized() ? gfx::Size() :
-      gfx::Size(panel_->min_size().width(), panel::kTitlebarHeight);
+      gfx::Size(panel::kPanelMinWidth, panel::kPanelMinHeight);
 }
 
 gfx::Size PanelView::GetMaximumSize() {
@@ -913,6 +949,17 @@ void PanelView::OnWidgetBoundsChanged(views::Widget* widget,
                                       const gfx::Rect& new_bounds) {
   if (user_resizing_)
     panel()->collection()->OnPanelResizedByMouse(panel(), new_bounds);
+}
+
+void PanelView::OnNativeFocusChange(gfx::NativeView focused_before,
+                                    gfx::NativeView focused_now) {
+  if (focused_now != window_->GetNativeView())
+    return;
+
+  // Give web contents view a chance to set focus to the appropriate element.
+  content::WebContents* web_contents = panel_->GetWebContents();
+  if (web_contents)
+    web_contents->GetView()->RestoreFocus();
 }
 
 bool PanelView::OnTitlebarMousePressed(const gfx::Point& mouse_location) {
@@ -998,7 +1045,12 @@ PanelFrameView* PanelView::GetFrameView() const {
 }
 
 bool PanelView::IsAnimatingBounds() const {
-  return bounds_animator_.get() && bounds_animator_->is_animating();
+  if (bounds_animator_.get() && bounds_animator_->is_animating())
+    return true;
+  StackedPanelCollection* stack = panel_->stack();
+  if (!stack)
+    return false;
+  return stack->IsAnimatingPanelBounds(panel_.get());
 }
 
 bool PanelView::IsWithinResizingArea(const gfx::Point& mouse_location) const {

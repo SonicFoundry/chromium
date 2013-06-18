@@ -5,24 +5,33 @@
 #include "ui/aura/test/aura_test_base.h"
 
 #include "ui/aura/test/aura_test_helper.h"
+#include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/window.h"
 #include "ui/base/gestures/gesture_configuration.h"
 #include "ui/base/ime/text_input_test_support.h"
 
-#if defined(OS_LINUX)
-#include "ui/base/x/x11_util.h"
+#if defined(OS_WIN)
+#include "base/win/metro.h"
+#include "ui/base/ime/win/tsf_bridge.h"
 #endif
 
 namespace aura {
 namespace test {
 
-AuraTestBase::AuraTestBase() {
+AuraTestBase::AuraTestBase()
+    : setup_called_(false),
+      teardown_called_(false) {
 }
 
 AuraTestBase::~AuraTestBase() {
+  CHECK(setup_called_)
+      << "You have overridden SetUp but never called super class's SetUp";
+  CHECK(teardown_called_)
+      << "You have overridden TearDown but never called super class's TearDown";
 }
 
 void AuraTestBase::SetUp() {
+  setup_called_ = true;
   testing::Test::SetUp();
   ui::TextInputTestSupport::Initialize();
 
@@ -62,9 +71,15 @@ void AuraTestBase::SetUp() {
 
   helper_.reset(new AuraTestHelper(&message_loop_));
   helper_->SetUp();
+#if defined(OS_WIN)
+    if (base::win::IsTSFAwareRequired())
+      ui::TSFBridge::Initialize();
+#endif
 }
 
 void AuraTestBase::TearDown() {
+  teardown_called_ = true;
+
   // Flush the message loop because we have pending release tasks
   // and these tasks if un-executed would upset Valgrind.
   RunAllPendingInMessageLoop();
@@ -72,10 +87,19 @@ void AuraTestBase::TearDown() {
   helper_->TearDown();
   ui::TextInputTestSupport::Shutdown();
   testing::Test::TearDown();
+}
 
-#if defined(OS_LINUX)
-  ui::ResetXCursorCache();
-#endif
+Window* AuraTestBase::CreateNormalWindow(int id, Window* parent,
+                                         WindowDelegate* delegate) {
+  Window* window = new Window(
+      delegate ? delegate :
+      test::TestWindowDelegate::CreateSelfDestroyingDelegate());
+  window->set_id(id);
+  window->Init(ui::LAYER_TEXTURED);
+  parent->AddChild(window);
+  window->SetBounds(gfx::Rect(0, 0, 100, 100));
+  window->Show();
+  return window;
 }
 
 Window* AuraTestBase::CreateTransientChild(int id, Window* parent) {

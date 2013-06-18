@@ -6,17 +6,17 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/prefs/pref_member.h"
 #include "base/prefs/pref_service.h"
-#include "base/prefs/public/pref_member.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/profiles/profile_io_data.h"
 #include "chrome/browser/sync/profile_sync_service.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
@@ -45,24 +45,28 @@ SyncPrefs::~SyncPrefs() {
 }
 
 // static
-void SyncPrefs::RegisterUserPrefs(PrefRegistrySyncable* registry) {
+void SyncPrefs::RegisterUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
   // TODO(joi): Remove |prefs| parameter.
-  registry->RegisterBooleanPref(prefs::kSyncHasSetupCompleted,
-                                false,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterBooleanPref(prefs::kSyncSuppressStart,
-                                false,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterInt64Pref(prefs::kSyncLastSyncedTime,
-                              0,
-                              PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kSyncHasSetupCompleted,
+      false,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kSyncSuppressStart,
+      false,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterInt64Pref(
+      prefs::kSyncLastSyncedTime,
+      0,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 
   // All datatypes are on by default, but this gets set explicitly
   // when you configure sync (when turning it on), in
   // ProfileSyncService::OnUserChoseDatatypes.
-  registry->RegisterBooleanPref(prefs::kSyncKeepEverythingSynced,
-                                true,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kSyncKeepEverythingSynced,
+      true,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 
   syncer::ModelTypeSet user_types = syncer::UserTypes();
 
@@ -74,25 +78,38 @@ void SyncPrefs::RegisterUserPrefs(PrefRegistrySyncable* registry) {
   RegisterDataTypePreferredPref(registry, syncer::BOOKMARKS, true);
   user_types.Remove(syncer::BOOKMARKS);
 
+  // All types are set to off by default, which forces a configuration to
+  // explicitly enable them. GetPreferredTypes() will ensure that any new
+  // implicit types are enabled when their pref group is, or via
+  // KeepEverythingSynced.
   for (syncer::ModelTypeSet::Iterator it = user_types.First();
        it.Good(); it.Inc()) {
-    RegisterDataTypePreferredPref(registry, it.Get(), true);
+    RegisterDataTypePreferredPref(registry, it.Get(), false);
   }
 
-  registry->RegisterBooleanPref(prefs::kSyncManaged,
-                                false,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterStringPref(prefs::kSyncEncryptionBootstrapToken,
-                               "",
-                               PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterStringPref(prefs::kSyncKeystoreEncryptionBootstrapToken,
-                               "",
-                               PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kSyncManaged,
+      false,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterStringPref(
+      prefs::kSyncEncryptionBootstrapToken,
+      std::string(),
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterStringPref(
+      prefs::kSyncKeystoreEncryptionBootstrapToken,
+      std::string(),
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 #if defined(OS_CHROMEOS)
-  registry->RegisterStringPref(prefs::kSyncSpareBootstrapToken,
-                               "",
-                               PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterStringPref(
+      prefs::kSyncSpareBootstrapToken,
+      "",
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 #endif
+
+  registry->RegisterStringPref(
+      prefs::kSyncSessionsGUID,
+      std::string(),
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 
   // We will start prompting people about new data types after the launch of
   // SESSIONS - all previously launched data types are treated as if they are
@@ -112,7 +129,7 @@ void SyncPrefs::RegisterUserPrefs(PrefRegistrySyncable* registry) {
   model_set.Put(syncer::SESSIONS);
   registry->RegisterListPref(prefs::kSyncAcknowledgedSyncTypes,
                              syncer::ModelTypeSetToValue(model_set),
-                             PrefRegistrySyncable::UNSYNCABLE_PREF);
+                             user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 // static
@@ -173,9 +190,9 @@ void SyncPrefs::SetStartSuppressed(bool is_suppressed) {
 
 std::string SyncPrefs::GetGoogleServicesUsername() const {
   DCHECK(CalledOnValidThread());
-  return
-      pref_service_ ?
-      pref_service_->GetString(prefs::kGoogleServicesUsername) : "";
+  return pref_service_
+             ? pref_service_->GetString(prefs::kGoogleServicesUsername)
+             : std::string();
 }
 
 base::Time SyncPrefs::GetLastSyncedTime() const {
@@ -205,10 +222,6 @@ void SyncPrefs::SetKeepEverythingSynced(bool keep_everything_synced) {
   pref_service_->SetBoolean(prefs::kSyncKeepEverythingSynced,
                             keep_everything_synced);
 }
-
-// TODO(akalin): If encryption is turned on for all data types,
-// history delete directives are useless and so we shouldn't bother
-// enabling them.
 
 syncer::ModelTypeSet SyncPrefs::GetPreferredDataTypes(
     syncer::ModelTypeSet registered_types) const {
@@ -258,9 +271,9 @@ bool SyncPrefs::IsManaged() const {
 
 std::string SyncPrefs::GetEncryptionBootstrapToken() const {
   DCHECK(CalledOnValidThread());
-  return
-      pref_service_ ?
-      pref_service_->GetString(prefs::kSyncEncryptionBootstrapToken) : "";
+  return pref_service_
+             ? pref_service_->GetString(prefs::kSyncEncryptionBootstrapToken)
+             : std::string();
 }
 
 void SyncPrefs::SetEncryptionBootstrapToken(const std::string& token) {
@@ -270,15 +283,25 @@ void SyncPrefs::SetEncryptionBootstrapToken(const std::string& token) {
 
 std::string SyncPrefs::GetKeystoreEncryptionBootstrapToken() const {
   DCHECK(CalledOnValidThread());
-  return
-      pref_service_ ?
-      pref_service_->GetString(prefs::kSyncKeystoreEncryptionBootstrapToken) :
-      "";
+  return pref_service_ ? pref_service_->GetString(
+                             prefs::kSyncKeystoreEncryptionBootstrapToken)
+                       : std::string();
 }
 
 void SyncPrefs::SetKeystoreEncryptionBootstrapToken(const std::string& token) {
   DCHECK(CalledOnValidThread());
   pref_service_->SetString(prefs::kSyncKeystoreEncryptionBootstrapToken, token);
+}
+
+std::string SyncPrefs::GetSyncSessionsGUID() const {
+  DCHECK(CalledOnValidThread());
+  return pref_service_ ? pref_service_->GetString(prefs::kSyncSessionsGUID)
+                       : std::string();
+}
+
+void SyncPrefs::SetSyncSessionsGUID(const std::string& guid) {
+  DCHECK(CalledOnValidThread());
+  pref_service_->SetString(prefs::kSyncSessionsGUID, guid);
 }
 
 // static
@@ -322,8 +345,12 @@ const char* SyncPrefs::GetPrefNameForDataType(syncer::ModelType data_type) {
       return prefs::kSyncFaviconImages;
     case syncer::FAVICON_TRACKING:
       return prefs::kSyncFaviconTracking;
+    case syncer::MANAGED_USER_SETTINGS:
+      return prefs::kSyncManagedUserSettings;
     case syncer::PROXY_TABS:
       return prefs::kSyncTabs;
+    case syncer::PRIORITY_PREFERENCES:
+      return prefs::kSyncPriorityPreferences;
     default:
       break;
   }
@@ -389,11 +416,12 @@ void SyncPrefs::RegisterPrefGroups() {
   pref_groups_[syncer::EXTENSIONS].Put(syncer::EXTENSION_SETTINGS);
 
   pref_groups_[syncer::PREFERENCES].Put(syncer::DICTIONARY);
+  pref_groups_[syncer::PREFERENCES].Put(syncer::PRIORITY_PREFERENCES);
   pref_groups_[syncer::PREFERENCES].Put(syncer::SEARCH_ENGINES);
 
   pref_groups_[syncer::TYPED_URLS].Put(syncer::HISTORY_DELETE_DIRECTIVES);
-  const CommandLine& command_line = *CommandLine::ForCurrentProcess();
-  if (command_line.HasSwitch(switches::kHistoryEnableFullHistorySync)) {
+  if (!CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kHistoryDisableFullHistorySync)) {
     pref_groups_[syncer::TYPED_URLS].Put(syncer::SESSIONS);
     pref_groups_[syncer::TYPED_URLS].Put(syncer::FAVICON_IMAGES);
     pref_groups_[syncer::TYPED_URLS].Put(syncer::FAVICON_TRACKING);
@@ -408,16 +436,19 @@ void SyncPrefs::RegisterPrefGroups() {
 }
 
 // static
-void SyncPrefs::RegisterDataTypePreferredPref(PrefRegistrySyncable* registry,
-                                              syncer::ModelType type,
-                                              bool is_preferred) {
+void SyncPrefs::RegisterDataTypePreferredPref(
+    user_prefs::PrefRegistrySyncable* registry,
+    syncer::ModelType type,
+    bool is_preferred) {
   const char* pref_name = GetPrefNameForDataType(type);
   if (!pref_name) {
     NOTREACHED();
     return;
   }
-  registry->RegisterBooleanPref(pref_name, is_preferred,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      pref_name,
+      is_preferred,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 bool SyncPrefs::GetDataTypePreferred(syncer::ModelType type) const {

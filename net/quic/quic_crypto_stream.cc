@@ -3,15 +3,23 @@
 // found in the LICENSE file.
 
 #include "net/quic/quic_crypto_stream.h"
+
+#include <string>
+
+#include "base/strings/string_piece.h"
+#include "net/quic/crypto/crypto_handshake.h"
+#include "net/quic/quic_connection.h"
 #include "net/quic/quic_session.h"
 
+using std::string;
 using base::StringPiece;
 
 namespace net {
 
 QuicCryptoStream::QuicCryptoStream(QuicSession* session)
     : ReliableQuicStream(kCryptoStreamId, session),
-      handshake_complete_(false) {
+      encryption_established_(false),
+      handshake_confirmed_(false) {
   crypto_framer_.set_visitor(this);
 }
 
@@ -21,8 +29,8 @@ void QuicCryptoStream::OnError(CryptoFramer* framer) {
 
 uint32 QuicCryptoStream::ProcessData(const char* data,
                                      uint32 data_len) {
-  // Do not process handshake messages after the handshake is complete.
-  if (handshake_complete()) {
+  // Do not process handshake messages after the handshake is confirmed.
+  if (handshake_confirmed()) {
     CloseConnection(QUIC_CRYPTO_MESSAGE_AFTER_HANDSHAKE_COMPLETE);
     return 0;
   }
@@ -42,16 +50,11 @@ void QuicCryptoStream::CloseConnectionWithDetails(QuicErrorCode error,
   session()->connection()->SendConnectionCloseWithDetails(error, details);
 }
 
-void QuicCryptoStream::SetHandshakeComplete(QuicErrorCode error) {
-  handshake_complete_ = true;
-  session()->OnCryptoHandshakeComplete(error);
-}
-
 void QuicCryptoStream::SendHandshakeMessage(
     const CryptoHandshakeMessage& message) {
-  scoped_ptr<QuicData> data(crypto_framer_.ConstructHandshakeMessage(message));
+  const QuicData& data = message.GetSerialized();
   // TODO(wtc): check the return value.
-  WriteData(string(data->data(), data->length()), false);
+  WriteData(string(data.data(), data.length()), false);
 }
 
 }  // namespace net

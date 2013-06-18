@@ -4,13 +4,14 @@
 
 #include "chrome/browser/android/dev_tools_server.h"
 
-#include <cstring>
 #include <pwd.h>
+#include <cstring>
 
 #include "base/android/jni_string.h"
 #include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/stringprintf.h"
@@ -21,9 +22,10 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/devtools_http_handler.h"
 #include "content/public/browser/devtools_http_handler_delegate.h"
-#include "jni/DevToolsServer_jni.h"
+#include "content/public/common/content_switches.h"
 #include "grit/devtools_discovery_page_resources.h"
-#include "net/base/unix_domain_socket_posix.h"
+#include "jni/DevToolsServer_jni.h"
+#include "net/socket/unix_domain_socket_posix.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "ui/base/resource/resource_bundle.h"
 
@@ -31,17 +33,19 @@ namespace {
 
 const char kFrontEndURL[] =
     "http://chrome-devtools-frontend.appspot.com/static/%s/devtools.html";
-const char kSocketName[] = "chrome_devtools_remote";
+const char kDefaultSocketName[] = "chrome_devtools_remote";
+const char kTetheringSocketName[] = "chrome_devtools_tethering_%d";
 
 // Delegate implementation for the devtools http handler on android. A new
 // instance of this gets created each time devtools is enabled.
 class DevToolsServerDelegate : public content::DevToolsHttpHandlerDelegate {
  public:
   explicit DevToolsServerDelegate(bool use_bundled_frontend_resources)
-      : use_bundled_frontend_resources_(use_bundled_frontend_resources) {
+      : use_bundled_frontend_resources_(use_bundled_frontend_resources),
+        last_tethering_socket_(0) {
   }
 
-  virtual std::string GetDiscoveryPageHTML() {
+  virtual std::string GetDiscoveryPageHTML() OVERRIDE {
     // TopSites updates itself after a delay. Ask TopSites to update itself
     // when we're about to show the remote debugging landing page.
     content::BrowserThread::PostTask(
@@ -52,15 +56,15 @@ class DevToolsServerDelegate : public content::DevToolsHttpHandlerDelegate {
         IDR_DEVTOOLS_DISCOVERY_PAGE_HTML).as_string();
   }
 
-  virtual bool BundlesFrontendResources() {
+  virtual bool BundlesFrontendResources() OVERRIDE {
     return use_bundled_frontend_resources_;
   }
 
-  virtual base::FilePath GetDebugFrontendDir() {
+  virtual base::FilePath GetDebugFrontendDir() OVERRIDE {
     return base::FilePath();
   }
 
-  virtual std::string GetPageThumbnailData(const GURL& url) {
+  virtual std::string GetPageThumbnailData(const GURL& url) OVERRIDE {
     Profile* profile =
         ProfileManager::GetLastUsedProfile()->GetOriginalProfile();
     history::TopSites* top_sites = profile->GetTopSites();
@@ -73,12 +77,26 @@ class DevToolsServerDelegate : public content::DevToolsHttpHandlerDelegate {
     return "";
   }
 
-  content::RenderViewHost* CreateNewTarget() {
+  virtual content::RenderViewHost* CreateNewTarget() OVERRIDE {
     return NULL;
   }
 
-  TargetType GetTargetType(content::RenderViewHost*) {
+  virtual TargetType GetTargetType(content::RenderViewHost*) OVERRIDE {
     return kTargetTypeTab;
+  }
+
+  virtual std::string GetViewDescription(content::RenderViewHost*) OVERRIDE {
+    return "";
+  }
+
+  virtual scoped_refptr<net::StreamListenSocket> CreateSocketForTethering(
+      net::StreamListenSocket::Delegate* delegate,
+      std::string* name) OVERRIDE {
+    *name = base::StringPrintf(kTetheringSocketName, ++last_tethering_socket_);
+    return net::UnixDomainSocket::CreateAndListenWithAbstractNamespace(
+        *name,
+        delegate,
+        base::Bind(&content::CanUserConnectToDevTools));
   }
 
  private:
@@ -91,6 +109,7 @@ class DevToolsServerDelegate : public content::DevToolsHttpHandlerDelegate {
   }
 
   bool use_bundled_frontend_resources_;
+  int last_tethering_socket_;
 
   DISALLOW_COPY_AND_ASSIGN(DevToolsServerDelegate);
 };
@@ -99,8 +118,14 @@ class DevToolsServerDelegate : public content::DevToolsHttpHandlerDelegate {
 
 DevToolsServer::DevToolsServer()
     : use_bundled_frontend_resources_(false),
-      socket_name_(kSocketName),
+      socket_name_(kDefaultSocketName),
       protocol_handler_(NULL) {
+  // Override the default socket name if one is specified on the command line.
+  const CommandLine& command_line = *CommandLine::ForCurrentProcess();
+  if (command_line.HasSwitch(switches::kRemoteDebuggingSocketName)) {
+    socket_name_ = command_line.GetSwitchValueASCII(
+        switches::kRemoteDebuggingSocketName);
+  }
 }
 
 DevToolsServer::DevToolsServer(bool use_bundled_frontend_resources,
@@ -125,7 +150,8 @@ void DevToolsServer::Start() {
           socket_name_,
           base::Bind(&content::CanUserConnectToDevTools)),
       use_bundled_frontend_resources_ ?
-          "" : StringPrintf(kFrontEndURL, version_info.Version().c_str()),
+          "" :
+          base::StringPrintf(kFrontEndURL, version_info.Version().c_str()),
       new DevToolsServerDelegate(use_bundled_frontend_resources_));
 }
 

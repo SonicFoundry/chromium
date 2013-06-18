@@ -34,6 +34,8 @@ class BrowserPluginManagerImpl : public BrowserPluginManager {
 
   // RenderViewObserver override. Call on render thread.
   virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
+  virtual void DidCommitCompositorFrame() OVERRIDE;
+
  private:
   virtual ~BrowserPluginManagerImpl();
 
@@ -49,9 +51,6 @@ class BrowserPluginManagerImpl : public BrowserPluginManager {
                        std::string mailbox_name,
                        int gpu_route_id,
                        int gpu_host_id);
-
-  // Returns whether a message should be forwarded to BrowserPlugins.
-  static bool ShouldForwardToBrowserPlugin(const IPC::Message& message);
 
   int request_id_counter_;
   IDMap<BrowserPlugin> pending_allocate_instance_id_requests_;

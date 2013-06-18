@@ -30,8 +30,7 @@ void BookmarkPromptView::ShowPrompt(views::View* anchor_view,
   if (bookmark_bubble_)
     return;
   bookmark_bubble_ = new BookmarkPromptView(anchor_view, prefs);
-  views::BubbleDelegateView::CreateBubble(bookmark_bubble_);
-  bookmark_bubble_->Show();
+  views::BubbleDelegateView::CreateBubble(bookmark_bubble_)->Show();
 }
 
 BookmarkPromptView::BookmarkPromptView(views::View* anchor_view,
@@ -40,7 +39,7 @@ BookmarkPromptView::BookmarkPromptView(views::View* anchor_view,
       dismiss_link_(NULL),
       prefs_(prefs) {
   // Compensate for built-in vertical padding in the anchor view's image.
-  set_anchor_insets(gfx::Insets(5, 0, 5, 0));
+  set_anchor_view_insets(gfx::Insets(5, 0, 5, 0));
 }
 
 BookmarkPromptView::~BookmarkPromptView() {

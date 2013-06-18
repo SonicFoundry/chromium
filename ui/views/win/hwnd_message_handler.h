@@ -55,9 +55,10 @@ const int WM_NCUAHDRAWFRAME = 0xAF;
 // used by both a views::NativeWidget and an aura::RootWindowHost
 // implementation.
 // TODO(beng): This object should eventually *become* the WindowImpl.
-class VIEWS_EXPORT HWNDMessageHandler : public ui::WindowImpl,
-                                        public internal::InputMethodDelegate,
-                                        public MessageLoopForUI::Observer {
+class VIEWS_EXPORT HWNDMessageHandler :
+    public ui::WindowImpl,
+    public internal::InputMethodDelegate,
+    public base::MessageLoopForUI::Observer {
  public:
   explicit HWNDMessageHandler(HWNDMessageHandlerDelegate* delegate);
   ~HWNDMessageHandler();
@@ -123,12 +124,6 @@ class VIEWS_EXPORT HWNDMessageHandler : public ui::WindowImpl,
   void SetVisibilityChangedAnimationsEnabled(bool enabled);
 
   void SetTitle(const string16& title);
-
-  void SetAccessibleName(const string16& name);
-  void SetAccessibleRole(ui::AccessibilityTypes::Role role);
-  void SetAccessibleState(ui::AccessibilityTypes::State state);
-  void SendNativeAccessibilityEvent(int id,
-                                    ui::AccessibilityTypes::Event event_type);
 
   void SetCursor(HCURSOR cursor);
 

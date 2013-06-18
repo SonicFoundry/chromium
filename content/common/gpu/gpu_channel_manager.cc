@@ -33,13 +33,12 @@ GpuChannelManager::GpuChannelManager(ChildThread* gpu_child_thread,
                                      GpuWatchdog* watchdog,
                                      base::MessageLoopProxy* io_message_loop,
                                      base::WaitableEvent* shutdown_event)
-    : ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)),
+    : weak_factory_(this),
       io_message_loop_(io_message_loop),
       shutdown_event_(shutdown_event),
       gpu_child_thread_(gpu_child_thread),
-      ALLOW_THIS_IN_INITIALIZER_LIST(gpu_memory_manager_(
-          this,
-          GpuMemoryManager::kDefaultMaxSurfacesWithFrontbufferSoftLimit)),
+      gpu_memory_manager_(
+          this, GpuMemoryManager::kDefaultMaxSurfacesWithFrontbufferSoftLimit),
       watchdog_(watchdog),
       sync_point_manager_(new SyncPointManager),
       program_cache_(NULL) {
@@ -50,7 +49,7 @@ GpuChannelManager::GpuChannelManager(ChildThread* gpu_child_thread,
 
 GpuChannelManager::~GpuChannelManager() {
   gpu_channels_.clear();
-  if (default_offscreen_surface_.get()) {
+  if (default_offscreen_surface_) {
     default_offscreen_surface_->Destroy();
     default_offscreen_surface_ = NULL;
   }
@@ -69,6 +68,7 @@ gpu::gles2::ProgramCache* GpuChannelManager::program_cache() {
 }
 
 void GpuChannelManager::RemoveChannel(int client_id) {
+  Send(new GpuHostMsg_DestroyChannel(client_id));
   gpu_channels_.erase(client_id);
 }
 
@@ -103,6 +103,7 @@ bool GpuChannelManager::OnMessageReceived(const IPC::Message& msg) {
                         OnCreateViewCommandBuffer)
     IPC_MESSAGE_HANDLER(GpuMsg_CreateImage, OnCreateImage)
     IPC_MESSAGE_HANDLER(GpuMsg_DeleteImage, OnDeleteImage)
+    IPC_MESSAGE_HANDLER(GpuMsg_LoadedShader, OnLoadedShader)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP_EX()
   return handled;
@@ -252,8 +253,32 @@ void GpuChannelManager::OnDeleteImageSyncPointRetired(
   }
 }
 
+void GpuChannelManager::OnLoadedShader(std::string program_proto) {
+  if (program_cache())
+    program_cache()->LoadProgram(program_proto);
+}
+
+bool GpuChannelManager::HandleMessagesScheduled() {
+  for (GpuChannelMap::iterator iter = gpu_channels_.begin();
+       iter != gpu_channels_.end(); ++iter) {
+    if (iter->second->handle_messages_scheduled())
+      return true;
+  }
+  return false;
+}
+
+uint64 GpuChannelManager::MessagesProcessed() {
+  uint64 messages_processed = 0;
+
+  for (GpuChannelMap::iterator iter = gpu_channels_.begin();
+       iter != gpu_channels_.end(); ++iter) {
+    messages_processed += iter->second->messages_processed();
+  }
+  return messages_processed;
+}
+
 void GpuChannelManager::LoseAllContexts() {
-  MessageLoop::current()->PostTask(
+  base::MessageLoop::current()->PostTask(
       FROM_HERE,
       base::Bind(&GpuChannelManager::OnLoseAllContexts,
                  weak_factory_.GetWeakPtr()));
@@ -264,7 +289,7 @@ void GpuChannelManager::OnLoseAllContexts() {
 }
 
 gfx::GLSurface* GpuChannelManager::GetDefaultOffscreenSurface() {
-  if (!default_offscreen_surface_.get()) {
+  if (!default_offscreen_surface_) {
     default_offscreen_surface_ = gfx::GLSurface::CreateOffscreenGLSurface(
         false, gfx::Size(1, 1));
   }

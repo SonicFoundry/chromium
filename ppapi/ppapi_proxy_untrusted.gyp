@@ -22,11 +22,6 @@
             'nlib_target': 'libppapi_proxy_untrusted.a',
             'build_glibc': 0,
             'build_newlib': 1,
-            'defines': [
-              # Enable threading for the untrusted side of the proxy.
-              # TODO(bbudge) remove when this is the default.
-              'ENABLE_PEPPER_THREADING',
-            ],
           },
           'include_dirs': [
             '..',
@@ -44,7 +39,7 @@
             '../ppapi/ppapi_shared_untrusted.gyp:ppapi_shared_untrusted',
             '../ppapi/ppapi_ipc_untrusted.gyp:ppapi_ipc_untrusted',
             '../third_party/khronos/khronos.gyp:khronos_headers',
-            '../components/components_tracing_untrusted.gyp:tracing_untrusted',
+            '../components/tracing_untrusted.gyp:tracing_untrusted',
           ],
         },
       ],

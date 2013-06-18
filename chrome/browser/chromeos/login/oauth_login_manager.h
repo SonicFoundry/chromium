@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_CHROMEOS_LOGIN_OAUTH_LOGIN_MANAGER_H_
 #define CHROME_BROWSER_CHROMEOS_LOGIN_OAUTH_LOGIN_MANAGER_H_
 
+#include <string>
+
 #include "base/memory/ref_counted.h"
 #include "net/url_request/url_request_context_getter.h"
 
@@ -26,6 +28,19 @@ class OAuthLoginManager {
     SESSION_RESTORE_DONE,
   };
 
+  // Session restore strategy.
+  enum SessionRestoreStrategy {
+    // Generate OAuth2 refresh token from authentication profile's cookie jar.
+    // Restore session from generated OAuth2 refresh token.
+    RESTORE_FROM_COOKIE_JAR,
+    // Restore session from saved OAuth2 refresh token from TokenServices.
+    RESTORE_FROM_SAVED_OAUTH2_REFRESH_TOKEN,
+    // Restore session from OAuth2 refresh token passed via command line.
+    RESTORE_FROM_PASSED_OAUTH2_REFRESH_TOKEN,
+    // Restore session from authentication code passed via command line.
+    RESTORE_FROM_AUTH_CODE,
+  };
+
   class Delegate {
    public:
     virtual ~Delegate() {}
@@ -39,9 +54,6 @@ class OAuthLoginManager {
     // Raised when stored OAuth(1|2) tokens are found and authentication
     // profile is no longer needed.
     virtual void OnFoundStoredTokens() = 0;
-
-    // Raised when policy tokens are retrieved.
-    virtual void OnRestoredPolicyTokens() {}
   };
 
   // Factory method.
@@ -50,16 +62,18 @@ class OAuthLoginManager {
   explicit OAuthLoginManager(OAuthLoginManager::Delegate* delegate);
   virtual ~OAuthLoginManager();
 
-  // Starts the process of retrieving policy tokens.
-  virtual void RestorePolicyTokens(
-      net::URLRequestContextGetter* auth_request_context) = 0;
-
-  // Restores and verifies OAuth tokens either from TokenService or previously
-  // authenticated cookie jar.
+  // Restores and verifies OAuth tokens either following specified
+  // |restore_strategy|. For |restore_strategy| with values
+  // RESTORE_FROM_PASSED_OAUTH2_REFRESH_TOKEN or
+  // RESTORE_FROM_AUTH_CODE, respectively
+  // parameters |oauth2_refresh_token| or |auth_code| need to have non-empty
+  // value.
   virtual void RestoreSession(
       Profile* user_profile,
       net::URLRequestContextGetter* auth_request_context,
-      bool restore_from_auth_cookies) = 0;
+      SessionRestoreStrategy restore_strategy,
+      const std::string& oauth2_refresh_token,
+      const std::string& auth_code) = 0;
 
   // Continues session restore after transient network errors.
   virtual void ContinueSessionRestore() = 0;
@@ -78,7 +92,7 @@ class OAuthLoginManager {
   OAuthLoginManager::Delegate* delegate_;
   Profile* user_profile_;
   scoped_refptr<net::URLRequestContextGetter> auth_request_context_;
-  bool restore_from_auth_cookies_;
+  SessionRestoreStrategy restore_strategy_;
   SessionRestoreState state_;
 
   DISALLOW_COPY_AND_ASSIGN(OAuthLoginManager);

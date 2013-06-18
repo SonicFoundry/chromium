@@ -16,20 +16,21 @@
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/policy/browser_policy_connector.h"
-#include "chrome/browser/policy/cloud_policy_client.h"
-#include "chrome/browser/policy/cloud_policy_constants.h"
-#include "chrome/browser/policy/cloud_policy_core.h"
-#include "chrome/browser/policy/cloud_policy_refresh_scheduler.h"
-#include "chrome/browser/policy/cloud_policy_store.h"
-#include "chrome/browser/policy/cloud_policy_validator.h"
+#include "chrome/browser/policy/cloud/cloud_policy_client.h"
+#include "chrome/browser/policy/cloud/cloud_policy_constants.h"
+#include "chrome/browser/policy/cloud/cloud_policy_core.h"
+#include "chrome/browser/policy/cloud/cloud_policy_refresh_scheduler.h"
+#include "chrome/browser/policy/cloud/cloud_policy_store.h"
+#include "chrome/browser/policy/cloud/cloud_policy_validator.h"
+#include "chrome/browser/policy/cloud/message_util.h"
 #include "chrome/browser/policy/configuration_policy_handler_list.h"
-#include "chrome/browser/policy/device_local_account_policy_service.h"
-#include "chrome/browser/policy/message_util.h"
 #include "chrome/browser/policy/policy_error_map.h"
 #include "chrome/browser/policy/policy_map.h"
 #include "chrome/browser/policy/policy_service.h"
 #include "chrome/browser/policy/policy_types.h"
-#include "chrome/browser/policy/proto/device_management_backend.pb.h"
+#include "chrome/browser/policy/profile_policy_connector.h"
+#include "chrome/browser/policy/profile_policy_connector_factory.h"
+#include "chrome/browser/policy/proto/cloud/device_management_backend.pb.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/time_format.h"
 #include "chrome/common/url_constants.h"
@@ -44,12 +45,13 @@
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/login/user_manager.h"
-#include "chrome/browser/policy/device_cloud_policy_manager_chromeos.h"
-#include "chrome/browser/policy/device_local_account_policy_service.h"
-#include "chrome/browser/policy/user_cloud_policy_manager_chromeos.h"
+#include "chrome/browser/chromeos/policy/device_cloud_policy_manager_chromeos.h"
+#include "chrome/browser/chromeos/policy/device_local_account_policy_service.h"
+#include "chrome/browser/chromeos/policy/user_cloud_policy_manager_chromeos.h"
+#include "chrome/browser/chromeos/policy/user_cloud_policy_manager_factory_chromeos.h"
 #else
-#include "chrome/browser/policy/user_cloud_policy_manager.h"
-#include "chrome/browser/policy/user_cloud_policy_manager_factory.h"
+#include "chrome/browser/policy/cloud/user_cloud_policy_manager.h"
+#include "chrome/browser/policy/cloud/user_cloud_policy_manager_factory.h"
 #endif
 
 namespace em = enterprise_management;
@@ -418,7 +420,7 @@ void DeviceLocalAccountPolicyStatusProvider::OnDeviceLocalAccountsChanged() {
 #endif
 
 PolicyUIHandler::PolicyUIHandler()
-    : ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+    : weak_factory_(this) {
 }
 
 PolicyUIHandler::~PolicyUIHandler() {
@@ -442,15 +444,16 @@ void PolicyUIHandler::RegisterMessages() {
               user_manager->GetLoggedInUser()->email(), local_account_service));
     }
   } else {
-    policy::CloudPolicyManager* user_cloud_policy_manager =
-        connector->GetUserCloudPolicyManager();
+    policy::UserCloudPolicyManagerChromeOS* user_cloud_policy_manager =
+        policy::UserCloudPolicyManagerFactoryChromeOS::GetForProfile(
+            Profile::FromWebUI(web_ui()));
     if (user_cloud_policy_manager) {
       user_status_provider_.reset(
           new UserPolicyStatusProvider(user_cloud_policy_manager->core()));
     }
   }
 #else
-  policy::CloudPolicyManager* user_cloud_policy_manager =
+  policy::UserCloudPolicyManager* user_cloud_policy_manager =
       policy::UserCloudPolicyManagerFactory::GetForProfile(
           Profile::FromWebUI(web_ui()));
   if (user_cloud_policy_manager) {
@@ -574,7 +577,8 @@ void PolicyUIHandler::OnRefreshPoliciesDone() const {
 }
 
 policy::PolicyService* PolicyUIHandler::GetPolicyService() const {
-  return Profile::FromWebUI(web_ui())->GetPolicyService();
+  return policy::ProfilePolicyConnectorFactory::GetForProfile(
+      Profile::FromWebUI(web_ui()))->policy_service();
 }
 
 PolicyUI::PolicyUI(content::WebUI* web_ui) : WebUIController(web_ui) {

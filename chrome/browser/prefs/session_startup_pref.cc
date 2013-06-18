@@ -10,10 +10,10 @@
 #include "base/values.h"
 #include "base/version.h"
 #include "chrome/browser/net/url_fixer_upper.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 
 #if defined(OS_MACOSX)
 #include "chrome/browser/ui/cocoa/window_restore_utils.h"
@@ -45,7 +45,7 @@ void URLListToPref(const base::ListValue* url_list, SessionStartupPref* pref) {
   for (size_t i = 0; i < url_list->GetSize(); ++i) {
     std::string url_text;
     if (url_list->GetString(i, &url_text)) {
-      GURL fixed_url = URLFixerUpper::FixupURL(url_text, "");
+      GURL fixed_url = URLFixerUpper::FixupURL(url_text, std::string());
       pref->urls.push_back(fixed_url);
     }
   }
@@ -54,15 +54,18 @@ void URLListToPref(const base::ListValue* url_list, SessionStartupPref* pref) {
 }  // namespace
 
 // static
-void SessionStartupPref::RegisterUserPrefs(PrefRegistrySyncable* registry) {
-  registry->RegisterIntegerPref(prefs::kRestoreOnStartup,
-                                TypeToPrefValue(GetDefaultStartupType()),
-                                PrefRegistrySyncable::SYNCABLE_PREF);
+void SessionStartupPref::RegisterUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterIntegerPref(
+      prefs::kRestoreOnStartup,
+      TypeToPrefValue(GetDefaultStartupType()),
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterListPref(prefs::kURLsToRestoreOnStartup,
-                             PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterBooleanPref(prefs::kRestoreOnStartupMigrated,
-                                false,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
+                             user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kRestoreOnStartupMigrated,
+      false,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 // static
@@ -186,8 +189,11 @@ void SessionStartupPref::MigrateMacDefaultPrefIfNecessary(PrefService* prefs) {
   // The default startup pref used to be LAST, now it is DEFAULT. Don't change
   // the setting for existing profiles (even if the user has never changed it),
   // but make new profiles default to DEFAULT.
-  bool old_profile_version = Version(prefs->GetString(
-      prefs::kProfileCreatedByVersion)).IsOlderThan("21.0.1180.0");
+  bool old_profile_version =
+      !prefs->FindPreference(
+          prefs::kProfileCreatedByVersion)->IsDefaultValue() &&
+      Version(prefs->GetString(prefs::kProfileCreatedByVersion)).IsOlderThan(
+          "21.0.1180.0");
   if (old_profile_version && TypeIsDefault(prefs))
     prefs->SetInteger(prefs::kRestoreOnStartup, kPrefValueLast);
 #endif

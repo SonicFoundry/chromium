@@ -16,6 +16,11 @@
         "additionalProperties": { "type": "any" }
       },
       {
+        "id": "ManagedNetworkProperties",
+        "type": "object",
+        "additionalProperties": { "type": "any" }
+      },
+      {
         "id": "VerificationProperties",
         "type": "object",
         "properties": {
@@ -38,6 +43,14 @@
           "deviceSerial": {
             "type": "string",
             "description": "A string containing the serial number of the device."
+          },
+          "deviceSsid": {
+            "type": "string",
+            "description": "A string containing the SSID of the device.  Only set if the device has already been setup once."
+          },
+          "deviceBssid": {
+            "type": "string",
+            "description": "A string containing the BSSID of the device.  Only set if the device has already been setup."
           }
         }
       }
@@ -45,7 +58,7 @@
     "functions": [
       {
         "name": "getProperties",
-        "description": "Gets the properties of the network with id networkGuid.",
+        "description": "Gets all the properties of the network with id networkGuid.  Includes all properties of the network (read-only and read/write values).",
         "parameters": [
           {
             "name": "networkGuid",
@@ -66,8 +79,73 @@
         ]
       },
       {
+        "name": "getManagedProperties",
+        "description": "Gets the merged properties of the network with id networkGuid from the sources: User settings, shared settings, user policy, device policy and the currently active settings.",
+        "parameters": [
+          {
+            "name": "networkGuid",
+            "type": "string",
+            "description": "The unique identifier of the network to get properties from."
+          },
+          {
+            "name": "callback",
+            "type": "function",
+            "parameters": [
+              {
+                "name": "properties",
+                "$ref": "ManagedNetworkProperties",
+                "description": "Results of the query for managed network properties."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "getState",
+        "description": "Gets the cached read-only properties of the network with id networkGuid.  This is meant to be a higher performance function than getProperties, which requires a round trip to query the networking subsystem.  It only returns a subset of the properties returned by getProperties.",
+        "parameters": [
+          {
+            "name": "networkGuid",
+            "type": "string",
+            "description": "The unique identifier of the network to set properties on."
+          },
+          {
+            "name": "callback",
+            "type": "function",
+            "parameters": [
+              {
+                "name": "properties",
+                "$ref": "NetworkProperties",
+                "description": "Results of the query for network properties."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "setProperties",
+        "description": "Sets the properties of the network with id networkGuid.",
+        "parameters": [
+          {
+            "name": "networkGuid",
+            "type": "string",
+            "description": "The unique identifier of the network to set properties on."
+          },
+          {
+            "name": "properties",
+            "$ref": "NetworkProperties",
+            "description": "The properties to set on the network."
+          },
+          {
+            "name": "callback",
+            "type": "function",
+            "parameters": []
+          }
+        ]
+      },
+      {
         "name": "getVisibleNetworks",
-        "description": "Gets the list of visible networks.",
+        "description": "Gets the list of visible networks, and returns a list of cached, read-only network properties for each.",
         "parameters": [
           {
             "name": "type",
@@ -88,6 +166,11 @@
             ]
           }
         ]
+      },
+      {
+        "name": "requestNetworkScan",
+        "description": "Requests that the networking subsystem scan for new networks and update the list returned by getVisibleNetworks.  This is only a request: the network subsystem can choose to ignore it.  If the list is updated, then the onNetworkListChanged event will be fired.",
+        "parameters": []
       },
       {
         "name": "startConnect",

@@ -9,9 +9,10 @@
 #include <string>
 #include <vector>
 
-#include "base/id_map.h"
+#include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "cc/debug/latency_info.h"
 #include "content/common/content_export.h"
 #include "content/common/gpu/gpu_memory_allocation.h"
 #include "content/common/gpu/gpu_memory_manager.h"
@@ -52,11 +53,14 @@ class GpuCommandBufferStub
   class DestructionObserver {
    public:
     // Called in Destroy(), before the context/surface are released.
-    virtual void OnWillDestroyStub(GpuCommandBufferStub* stub) = 0;
+    virtual void OnWillDestroyStub() = 0;
 
    protected:
     virtual ~DestructionObserver() {}
   };
+
+  typedef base::Callback<void(const cc::LatencyInfo&)>
+      LatencyInfoCallback;
 
   GpuCommandBufferStub(
       GpuChannel* channel,
@@ -69,6 +73,7 @@ class GpuCommandBufferStub
       const std::string& allowed_extensions,
       const std::vector<int32>& attribs,
       gfx::GpuPreference gpu_preference,
+      bool use_virtualized_gl_context,
       int32 route_id,
       int32 surface_id,
       GpuWatchdog* watchdog,
@@ -106,9 +111,7 @@ class GpuCommandBufferStub
   GpuChannel* channel() const { return channel_; }
 
   // Identifies the target surface.
-  int32 surface_id() const {
-    return surface_id_;
-  }
+  int32 surface_id() const { return surface_id_; }
 
   // Identifies the various GpuCommandBufferStubs in the GPU process belonging
   // to the same renderer process.
@@ -118,6 +121,8 @@ class GpuCommandBufferStub
 
   // Sends a message to the console.
   void SendConsoleMessage(int32 id, const std::string& message);
+
+  void SendCachedShader(const std::string& key, const std::string& shader);
 
   gfx::GLSurface* surface() const { return surface_; }
 
@@ -129,6 +134,8 @@ class GpuCommandBufferStub
   void AddSyncPoint(uint32 sync_point);
 
   void SetPreemptByFlag(scoped_refptr<gpu::PreemptionFlag> flag);
+
+  void SetLatencyInfoCallback(const LatencyInfoCallback& callback);
 
  private:
   GpuMemoryManager* GetMemoryManager();
@@ -159,7 +166,6 @@ class GpuCommandBufferStub
   void OnCreateVideoDecoder(
       media::VideoCodecProfile profile,
       IPC::Message* reply_message);
-  void OnDestroyVideoDecoder(int32 decoder_route_id);
 
   void OnSetSurfaceVisible(bool visible);
 
@@ -177,6 +183,7 @@ class GpuCommandBufferStub
 
   void OnCommandProcessed();
   void OnParseError();
+  void OnSetLatencyInfo(const cc::LatencyInfo& latency_info);
 
   void ReportState();
 
@@ -205,6 +212,7 @@ class GpuCommandBufferStub
   std::string allowed_extensions_;
   std::vector<int32> requested_attribs_;
   gfx::GpuPreference gpu_preference_;
+  bool use_virtualized_gl_context_;
   int32 route_id_;
   int32 surface_id_;
   bool software_;
@@ -228,10 +236,6 @@ class GpuCommandBufferStub
 
   GpuWatchdog* watchdog_;
 
-  // Zero or more video decoders owned by this stub, keyed by their
-  // decoder_route_id.
-  IDMap<GpuVideoDecodeAccelerator, IDMapOwnPointer> video_decoders_;
-
   ObserverList<DestructionObserver> destruction_observers_;
 
   // A queue of sync points associated with this stub.
@@ -239,8 +243,12 @@ class GpuCommandBufferStub
   int sync_point_wait_count_;
 
   bool delayed_work_scheduled_;
+  uint64 previous_messages_processed_;
+  base::TimeTicks last_idle_time_;
 
   scoped_refptr<gpu::PreemptionFlag> preemption_flag_;
+
+  LatencyInfoCallback latency_info_callback_;
 
   GURL active_url_;
   size_t active_url_hash_;

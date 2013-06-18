@@ -4,6 +4,7 @@
 
 #include "net/url_request/url_fetcher_impl.h"
 
+#include <algorithm>
 #include <string>
 
 #include "base/bind.h"
@@ -15,10 +16,10 @@
 #include "base/threading/thread.h"
 #include "build/build_config.h"
 #include "crypto/nss_util.h"
-#include "net/base/mock_host_resolver.h"
 #include "net/base/network_change_notifier.h"
+#include "net/dns/mock_host_resolver.h"
 #include "net/http/http_response_headers.h"
-#include "net/test/test_server.h"
+#include "net/test/spawned_test_server.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_test_util.h"
@@ -155,7 +156,7 @@ class URLFetcherMockDnsTest : public URLFetcherTest {
 
  protected:
   GURL test_url_;
-  scoped_ptr<TestServer> test_server_;
+  scoped_ptr<SpawnedTestServer> test_server_;
   MockHostResolver resolver_;
   scoped_ptr<URLFetcher> completed_fetcher_;
 };
@@ -198,9 +199,9 @@ void URLFetcherMockDnsTest::SetUp() {
   context_->set_host_resolver(&resolver_);
   context_->Init();
 
-  test_server_.reset(new TestServer(TestServer::TYPE_HTTP,
-                                    TestServer::kLocalhost,
-                                    base::FilePath(kDocRoot)));
+  test_server_.reset(new SpawnedTestServer(SpawnedTestServer::TYPE_HTTP,
+                                           SpawnedTestServer::kLocalhost,
+                                           base::FilePath(kDocRoot)));
   ASSERT_TRUE(test_server_->Start());
 
   // test_server_.GetURL() returns a URL with 127.0.0.1 (kLocalhost), that is
@@ -243,6 +244,11 @@ class URLFetcherPostFileTest : public URLFetcherTest {
  public:
   URLFetcherPostFileTest();
 
+  void SetUploadRange(uint64 range_offset, uint64 range_length) {
+    range_offset_ = range_offset;
+    range_length_ = range_length;
+  }
+
   // URLFetcherTest:
   virtual void CreateFetcher(const GURL& url) OVERRIDE;
 
@@ -251,6 +257,8 @@ class URLFetcherPostFileTest : public URLFetcherTest {
 
  private:
   base::FilePath path_;
+  uint64 range_offset_;
+  uint64 range_length_;
 };
 
 // Version of URLFetcherTest that does a POST instead with empty upload body
@@ -441,11 +449,16 @@ class CancelTestURLRequestContextGetter
       // The initial backoff is 2 seconds and maximum backoff is 4 seconds.
       // Maximum retries allowed is set to 2.
       scoped_refptr<URLRequestThrottlerEntry> entry(
-          new URLRequestThrottlerEntry(
-              context_->throttler_manager(),
-              "", 200, 3, 2000, 2.0, 0.0, 4000));
-      context_->throttler_manager()->OverrideEntryForTests(
-          throttle_for_url_, entry);
+          new URLRequestThrottlerEntry(context_->throttler_manager(),
+                                       std::string(),
+                                       200,
+                                       3,
+                                       2000,
+                                       2.0,
+                                       0.0,
+                                       4000));
+      context_->throttler_manager()
+          ->OverrideEntryForTests(throttle_for_url_, entry);
 
       context_created_.Signal();
     }
@@ -482,7 +495,7 @@ class URLFetcherMultipleAttemptTest : public URLFetcherTest {
 class URLFetcherFileTest : public URLFetcherTest {
  public:
   URLFetcherFileTest() : take_ownership_of_file_(false),
-                         expected_file_error_(base::PLATFORM_FILE_OK) {}
+                         expected_file_error_(OK) {}
 
   void CreateFetcherForFile(const GURL& url, const base::FilePath& file_path);
   void CreateFetcherForTempFile(const GURL& url);
@@ -499,9 +512,8 @@ class URLFetcherFileTest : public URLFetcherTest {
   // disowning prevents the file from being deleted.
   bool take_ownership_of_file_;
 
-  // Expected file error code for the test.
-  // PLATFORM_FILE_OK when expecting success.
-  base::PlatformFileError expected_file_error_;
+  // Expected file error code for the test.  OK when expecting success.
+  int expected_file_error_;
 };
 
 void URLFetcherPostTest::CreateFetcher(const GURL& url) {
@@ -520,7 +532,9 @@ void URLFetcherPostTest::OnURLFetchComplete(const URLFetcher* source) {
   URLFetcherTest::OnURLFetchComplete(source);
 }
 
-URLFetcherPostFileTest::URLFetcherPostFileTest() {
+URLFetcherPostFileTest::URLFetcherPostFileTest()
+    : range_offset_(0),
+      range_length_(kuint64max) {
   PathService::Get(base::DIR_SOURCE_ROOT, &path_);
   path_ = path_.Append(FILE_PATH_LITERAL("net"));
   path_ = path_.Append(FILE_PATH_LITERAL("data"));
@@ -534,19 +548,22 @@ void URLFetcherPostFileTest::CreateFetcher(const GURL& url) {
       io_message_loop_proxy(), request_context()));
   fetcher_->SetUploadFilePath("application/x-www-form-urlencoded",
                               path_,
+                              range_offset_,
+                              range_length_,
                               base::MessageLoopProxy::current());
   fetcher_->Start();
 }
 
 void URLFetcherPostFileTest::OnURLFetchComplete(const URLFetcher* source) {
-  int64 size = 0;
-  ASSERT_EQ(true, file_util::GetFileSize(path_, &size));
-  scoped_array<char> expected(new char[size]);
-  ASSERT_EQ(size, file_util::ReadFile(path_, expected.get(), size));
+  std::string expected;
+  ASSERT_TRUE(file_util::ReadFileToString(path_, &expected));
+  ASSERT_LE(range_offset_, expected.size());
+  uint64 expected_size =
+      std::min(range_length_, expected.size() - range_offset_);
 
   std::string data;
   EXPECT_TRUE(source->GetResponseAsString(&data));
-  EXPECT_EQ(std::string(&expected[0], size), data);
+  EXPECT_EQ(expected.substr(range_offset_, expected_size), data);
   URLFetcherTest::OnURLFetchComplete(source);
 }
 
@@ -554,7 +571,7 @@ void URLFetcherEmptyPostTest::CreateFetcher(const GURL& url) {
   fetcher_ = new URLFetcherImpl(url, URLFetcher::POST, this);
   fetcher_->SetRequestContext(new TestURLRequestContextGetter(
       io_message_loop_proxy()));
-  fetcher_->SetUploadData("text/plain", "");
+  fetcher_->SetUploadData("text/plain", std::string());
   fetcher_->Start();
 }
 
@@ -852,11 +869,11 @@ void URLFetcherFileTest::CreateFetcherForTempFile(const GURL& url) {
 }
 
 void URLFetcherFileTest::OnURLFetchComplete(const URLFetcher* source) {
-  if (expected_file_error_ == base::PLATFORM_FILE_OK) {
+  if (expected_file_error_ == OK) {
     EXPECT_TRUE(source->GetStatus().is_success());
     EXPECT_EQ(source->GetResponseCode(), 200);
 
-    base::PlatformFileError error_code = base::PLATFORM_FILE_OK;
+    int error_code = OK;
     EXPECT_FALSE(fetcher_->FileErrorOccurred(&error_code));
 
     EXPECT_TRUE(source->GetResponseAsFilePath(
@@ -864,7 +881,7 @@ void URLFetcherFileTest::OnURLFetchComplete(const URLFetcher* source) {
 
     EXPECT_TRUE(file_util::ContentsEqual(expected_file_, file_path_));
   } else {
-    base::PlatformFileError error_code = base::PLATFORM_FILE_OK;
+    int error_code = OK;
     EXPECT_TRUE(fetcher_->FileErrorOccurred(&error_code));
     EXPECT_EQ(expected_file_error_, error_code);
   }
@@ -872,9 +889,9 @@ void URLFetcherFileTest::OnURLFetchComplete(const URLFetcher* source) {
 }
 
 TEST_F(URLFetcherTest, SameThreadsTest) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   // Create the fetcher on the main thread.  Since IO will happen on the main
@@ -886,9 +903,9 @@ TEST_F(URLFetcherTest, SameThreadsTest) {
 }
 
 TEST_F(URLFetcherTest, DifferentThreadsTest) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   // Create a separate thread that will create the URLFetcher.  The current
@@ -915,9 +932,9 @@ void CancelAllOnIO() {
 
 // Tests to make sure CancelAll() will successfully cancel existing URLFetchers.
 TEST_F(URLFetcherTest, CancelAll) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
   EXPECT_EQ(0, GetNumFetcherCores());
 
@@ -1040,9 +1057,9 @@ TEST_F(URLFetcherMockDnsTest, RetryOnNetworkChangedAndSucceed) {
 }
 
 TEST_F(URLFetcherPostTest, Basic) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   CreateFetcher(test_server.GetURL("echo"));
@@ -1050,19 +1067,31 @@ TEST_F(URLFetcherPostTest, Basic) {
 }
 
 TEST_F(URLFetcherPostFileTest, Basic) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   CreateFetcher(test_server.GetURL("echo"));
   MessageLoop::current()->Run();
 }
 
+TEST_F(URLFetcherPostFileTest, Range) {
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
+  ASSERT_TRUE(test_server.Start());
+
+  SetUploadRange(30, 100);
+
+  CreateFetcher(test_server.GetURL("echo"));
+  MessageLoop::current()->Run();
+}
+
 TEST_F(URLFetcherEmptyPostTest, Basic) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   CreateFetcher(test_server.GetURL("echo"));
@@ -1070,9 +1099,9 @@ TEST_F(URLFetcherEmptyPostTest, Basic) {
 }
 
 TEST_F(URLFetcherUploadProgressTest, Basic) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   CreateFetcher(test_server.GetURL("echo"));
@@ -1080,9 +1109,9 @@ TEST_F(URLFetcherUploadProgressTest, Basic) {
 }
 
 TEST_F(URLFetcherDownloadProgressTest, Basic) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   // Get a file large enough to require more than one read into
@@ -1101,9 +1130,9 @@ TEST_F(URLFetcherDownloadProgressTest, Basic) {
 }
 
 TEST_F(URLFetcherDownloadProgressCancelTest, CancelWhileProgressReport) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   // Get a file large enough to require more than one read into
@@ -1116,9 +1145,9 @@ TEST_F(URLFetcherDownloadProgressCancelTest, CancelWhileProgressReport) {
 }
 
 TEST_F(URLFetcherHeadersTest, Headers) {
-  TestServer test_server(
-      TestServer::TYPE_HTTP,
-      TestServer::kLocalhost,
+  SpawnedTestServer test_server(
+      SpawnedTestServer::TYPE_HTTP,
+      SpawnedTestServer::kLocalhost,
       base::FilePath(FILE_PATH_LITERAL("net/data/url_request_unittest")));
   ASSERT_TRUE(test_server.Start());
 
@@ -1128,9 +1157,9 @@ TEST_F(URLFetcherHeadersTest, Headers) {
 }
 
 TEST_F(URLFetcherSocketAddressTest, SocketAddress) {
-  TestServer test_server(
-      TestServer::TYPE_HTTP,
-      TestServer::kLocalhost,
+  SpawnedTestServer test_server(
+      SpawnedTestServer::TYPE_HTTP,
+      SpawnedTestServer::kLocalhost,
       base::FilePath(FILE_PATH_LITERAL("net/data/url_request_unittest")));
   ASSERT_TRUE(test_server.Start());
   expected_port_ = test_server.host_port_pair().port();
@@ -1142,9 +1171,9 @@ TEST_F(URLFetcherSocketAddressTest, SocketAddress) {
 }
 
 TEST_F(URLFetcherStopOnRedirectTest, StopOnRedirect) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   CreateFetcher(
@@ -1154,9 +1183,9 @@ TEST_F(URLFetcherStopOnRedirectTest, StopOnRedirect) {
 }
 
 TEST_F(URLFetcherProtectTest, Overload) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   GURL url(test_server.GetURL("defaultresponse"));
@@ -1164,9 +1193,14 @@ TEST_F(URLFetcherProtectTest, Overload) {
   // Registers an entry for test url. It only allows 3 requests to be sent
   // in 200 milliseconds.
   scoped_refptr<URLRequestThrottlerEntry> entry(
-      new URLRequestThrottlerEntry(
-          request_context()->throttler_manager(),
-          "", 200, 3, 1, 2.0, 0.0, 256));
+      new URLRequestThrottlerEntry(request_context()->throttler_manager(),
+                                   std::string(),
+                                   200,
+                                   3,
+                                   1,
+                                   2.0,
+                                   0.0,
+                                   256));
   request_context()->throttler_manager()->OverrideEntryForTests(url, entry);
 
   CreateFetcher(url);
@@ -1175,9 +1209,9 @@ TEST_F(URLFetcherProtectTest, Overload) {
 }
 
 TEST_F(URLFetcherProtectTest, ServerUnavailable) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   GURL url(test_server.GetURL("files/server-unavailable.html"));
@@ -1187,9 +1221,14 @@ TEST_F(URLFetcherProtectTest, ServerUnavailable) {
   // and maximum backoff time is 256 milliseconds.
   // Maximum retries allowed is set to 11.
   scoped_refptr<URLRequestThrottlerEntry> entry(
-      new URLRequestThrottlerEntry(
-          request_context()->throttler_manager(),
-          "", 200, 3, 1, 2.0, 0.0, 256));
+      new URLRequestThrottlerEntry(request_context()->throttler_manager(),
+                                   std::string(),
+                                   200,
+                                   3,
+                                   1,
+                                   2.0,
+                                   0.0,
+                                   256));
   request_context()->throttler_manager()->OverrideEntryForTests(url, entry);
 
   CreateFetcher(url);
@@ -1198,9 +1237,9 @@ TEST_F(URLFetcherProtectTest, ServerUnavailable) {
 }
 
 TEST_F(URLFetcherProtectTestPassedThrough, ServerUnavailablePropagateResponse) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   GURL url(test_server.GetURL("files/server-unavailable.html"));
@@ -1210,9 +1249,14 @@ TEST_F(URLFetcherProtectTestPassedThrough, ServerUnavailablePropagateResponse) {
   // and maximum backoff time is 150000 milliseconds.
   // Maximum retries allowed is set to 11.
   scoped_refptr<URLRequestThrottlerEntry> entry(
-      new URLRequestThrottlerEntry(
-          request_context()->throttler_manager(),
-          "", 200, 3, 100, 2.0, 0.0, 150000));
+      new URLRequestThrottlerEntry(request_context()->throttler_manager(),
+                                   std::string(),
+                                   200,
+                                   3,
+                                   100,
+                                   2.0,
+                                   0.0,
+                                   150000));
   // Total time if *not* for not doing automatic backoff would be 150s.
   // In reality it should be "as soon as server responds".
   request_context()->throttler_manager()->OverrideEntryForTests(url, entry);
@@ -1223,11 +1267,11 @@ TEST_F(URLFetcherProtectTestPassedThrough, ServerUnavailablePropagateResponse) {
 }
 
 TEST_F(URLFetcherBadHTTPSTest, BadHTTPSTest) {
-  TestServer::SSLOptions ssl_options(
-      TestServer::SSLOptions::CERT_EXPIRED);
-  TestServer test_server(TestServer::TYPE_HTTPS,
-                         ssl_options,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer::SSLOptions ssl_options(
+      SpawnedTestServer::SSLOptions::CERT_EXPIRED);
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTPS,
+                                ssl_options,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   CreateFetcher(test_server.GetURL("defaultresponse"));
@@ -1235,9 +1279,9 @@ TEST_F(URLFetcherBadHTTPSTest, BadHTTPSTest) {
 }
 
 TEST_F(URLFetcherCancelTest, ReleasesContext) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   GURL url(test_server.GetURL("files/server-unavailable.html"));
@@ -1258,9 +1302,9 @@ TEST_F(URLFetcherCancelTest, ReleasesContext) {
 }
 
 TEST_F(URLFetcherCancelTest, CancelWhileDelayedStartTaskPending) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   GURL url(test_server.GetURL("files/server-unavailable.html"));
@@ -1269,9 +1313,14 @@ TEST_F(URLFetcherCancelTest, CancelWhileDelayedStartTaskPending) {
   // Using a sliding window of 4 seconds, and max of 1 request, under a fast
   // run we expect to have a 4 second delay when posting the Start task.
   scoped_refptr<URLRequestThrottlerEntry> entry(
-      new URLRequestThrottlerEntry(
-          request_context()->throttler_manager(),
-          "", 4000, 1, 2000, 2.0, 0.0, 4000));
+      new URLRequestThrottlerEntry(request_context()->throttler_manager(),
+                                   std::string(),
+                                   4000,
+                                   1,
+                                   2000,
+                                   2.0,
+                                   0.0,
+                                   4000));
   request_context()->throttler_manager()->OverrideEntryForTests(url, entry);
   // Fake that a request has just started.
   entry->ReserveSendingTimeForNextRequest(base::TimeTicks());
@@ -1290,9 +1339,9 @@ TEST_F(URLFetcherCancelTest, CancelWhileDelayedStartTaskPending) {
 }
 
 TEST_F(URLFetcherMultipleAttemptTest, SameData) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   // Create the fetcher on the main thread.  Since IO will happen on the main
@@ -1304,9 +1353,9 @@ TEST_F(URLFetcherMultipleAttemptTest, SameData) {
 }
 
 TEST_F(URLFetcherFileTest, SmallGet) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   base::ScopedTempDir temp_dir;
@@ -1326,9 +1375,9 @@ TEST_F(URLFetcherFileTest, SmallGet) {
 }
 
 TEST_F(URLFetcherFileTest, LargeGet) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   base::ScopedTempDir temp_dir;
@@ -1346,9 +1395,9 @@ TEST_F(URLFetcherFileTest, LargeGet) {
 }
 
 TEST_F(URLFetcherFileTest, CanTakeOwnershipOfFile) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   base::ScopedTempDir temp_dir;
@@ -1370,9 +1419,9 @@ TEST_F(URLFetcherFileTest, CanTakeOwnershipOfFile) {
 
 
 TEST_F(URLFetcherFileTest, OverwriteExistingFile) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   base::ScopedTempDir temp_dir;
@@ -1380,10 +1429,10 @@ TEST_F(URLFetcherFileTest, OverwriteExistingFile) {
 
   // Create a file before trying to fetch.
   static const char kFileToFetch[] = "simple.html";
-  static const char kData[] = "abcdefghijklmnopqrstuvwxyz";
+  std::string data(10000, '?');  // Meant to be larger than simple.html.
   file_path_ = temp_dir.path().AppendASCII(kFileToFetch);
-  const int data_size = arraysize(kData);
-  ASSERT_EQ(file_util::WriteFile(file_path_, kData, data_size), data_size);
+  ASSERT_EQ(static_cast<int>(data.size()),
+            file_util::WriteFile(file_path_, data.data(), data.size()));
   ASSERT_TRUE(file_util::PathExists(file_path_));
   expected_file_ = test_server.GetDocumentRoot().AppendASCII(kFileToFetch);
   ASSERT_FALSE(file_util::ContentsEqual(file_path_, expected_file_));
@@ -1397,9 +1446,9 @@ TEST_F(URLFetcherFileTest, OverwriteExistingFile) {
 }
 
 TEST_F(URLFetcherFileTest, TryToOverwriteDirectory) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   base::ScopedTempDir temp_dir;
@@ -1412,7 +1461,7 @@ TEST_F(URLFetcherFileTest, TryToOverwriteDirectory) {
   ASSERT_TRUE(file_util::PathExists(file_path_));
 
   // Get a small file.
-  expected_file_error_ = base::PLATFORM_FILE_ERROR_ACCESS_DENIED;
+  expected_file_error_ = ERR_ACCESS_DENIED;
   expected_file_ = test_server.GetDocumentRoot().AppendASCII(kFileToFetch);
   CreateFetcherForFile(
       test_server.GetURL(std::string(kTestServerFilePrefix) + kFileToFetch),
@@ -1424,9 +1473,9 @@ TEST_F(URLFetcherFileTest, TryToOverwriteDirectory) {
 }
 
 TEST_F(URLFetcherFileTest, SmallGetToTempFile) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   // Get a small file.
@@ -1442,9 +1491,9 @@ TEST_F(URLFetcherFileTest, SmallGetToTempFile) {
 }
 
 TEST_F(URLFetcherFileTest, LargeGetToTempFile) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   // Get a file large enough to require more than one read into
@@ -1458,9 +1507,9 @@ TEST_F(URLFetcherFileTest, LargeGetToTempFile) {
 }
 
 TEST_F(URLFetcherFileTest, CanTakeOwnershipOfTempFile) {
-  TestServer test_server(TestServer::TYPE_HTTP,
-                         TestServer::kLocalhost,
-                         base::FilePath(kDocRoot));
+  SpawnedTestServer test_server(SpawnedTestServer::TYPE_HTTP,
+                                SpawnedTestServer::kLocalhost,
+                                base::FilePath(kDocRoot));
   ASSERT_TRUE(test_server.Start());
 
   // Get a small file.

@@ -27,7 +27,11 @@ class Forwarder(object):
   _DEVICE_ADB_CONTROL_PORT = 'chrome_device_forwarder'
   _TIMEOUT_SECS = 30
 
-  _DEVICE_FORWARDER_PATH = constants.TEST_EXECUTABLE_DIR + '/device_forwarder'
+  _DEVICE_FORWARDER_FOLDER = (constants.TEST_EXECUTABLE_DIR +
+                              '/forwarder/')
+  _DEVICE_FORWARDER_PATH = (constants.TEST_EXECUTABLE_DIR +
+                            '/forwarder/device_forwarder')
+  _LD_LIBRARY_PATH = 'LD_LIBRARY_PATH=%s' % _DEVICE_FORWARDER_FOLDER
 
   def __init__(self, adb, build_type):
     """Forwards TCP ports on the device back to the host.
@@ -43,8 +47,8 @@ class Forwarder(object):
     self._host_to_device_port_map = dict()
     self._device_process = None
     self._host_forwarder_path = _MakeBinaryPath(build_type, 'host_forwarder')
-    self._device_forwarder_path = _MakeBinaryPath(
-        build_type, 'device_forwarder')
+    self._device_forwarder_path_on_host = os.path.join(
+        cmd_helper.OutDirectory.get(), build_type, 'forwarder_dist')
 
   def Run(self, port_pairs, tool, host_name):
     """Runs the forwarder.
@@ -67,7 +71,7 @@ class Forwarder(object):
     if not host_adb_control_port:
       raise Exception('Failed to allocate a TCP port in the host machine.')
     self._adb.PushIfNeeded(
-        self._device_forwarder_path, Forwarder._DEVICE_FORWARDER_PATH)
+        self._device_forwarder_path_on_host, Forwarder._DEVICE_FORWARDER_FOLDER)
     redirection_commands = [
         '%d:%d:%d:%s' % (host_adb_control_port, device, host,
                          host_name) for device, host in port_pairs]
@@ -81,15 +85,22 @@ class Forwarder(object):
       raise Exception('Error while running adb forward.')
 
     (exit_code, output) = self._adb.GetShellCommandStatusAndOutput(
-        '%s %s %s' % (tool.GetUtilWrapper(), Forwarder._DEVICE_FORWARDER_PATH,
-                      Forwarder._DEVICE_ADB_CONTROL_PORT))
+        '%s %s %s %s' % (Forwarder._LD_LIBRARY_PATH, tool.GetUtilWrapper(),
+                         Forwarder._DEVICE_FORWARDER_PATH,
+                         Forwarder._DEVICE_ADB_CONTROL_PORT))
     if exit_code != 0:
       raise Exception(
           'Failed to start device forwarder:\n%s' % '\n'.join(output))
 
     for redirection_command in redirection_commands:
-      (exit_code, output) = cmd_helper.GetCmdStatusAndOutput(
-          [self._host_forwarder_path, redirection_command])
+      try:
+        (exit_code, output) = cmd_helper.GetCmdStatusAndOutput(
+            [self._host_forwarder_path, redirection_command])
+      except OSError as e:
+        if e.errno == 2:
+          raise Exception('Unable to start host forwarder. Make sure you have '
+                          'built host_forwarder.')
+        else: raise
       if exit_code != 0:
         raise Exception('%s exited with %d:\n%s' % (
             self._host_forwarder_path, exit_code, '\n'.join(output)))

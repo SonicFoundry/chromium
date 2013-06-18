@@ -25,15 +25,15 @@ const int64 kCheckPeriodMs = 2000;
 
 GpuWatchdogThread::GpuWatchdogThread(int timeout)
     : base::Thread("Watchdog"),
-      watched_message_loop_(MessageLoop::current()),
+      watched_message_loop_(base::MessageLoop::current()),
       timeout_(base::TimeDelta::FromMilliseconds(timeout)),
       armed_(false),
 #if defined(OS_WIN)
       watched_thread_handle_(0),
       arm_cpu_time_(),
 #endif
-      ALLOW_THIS_IN_INITIALIZER_LIST(task_observer_(this)),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+      task_observer_(this),
+      weak_factory_(this) {
   DCHECK(timeout >= 0);
 
 #if defined(OS_WIN)
@@ -209,20 +209,8 @@ void GpuWatchdogThread::DeliberatelyTerminateToRecoverFromHang() {
   LOG(ERROR) << "The GPU process hung. Terminating after "
              << timeout_.InMilliseconds() << " ms.";
 
-  bool should_crash =
-      CommandLine::ForCurrentProcess()->HasSwitch(switches::kCrashOnGpuHang);
-
-#if defined(OS_WIN)
-  should_crash = true;
-#endif
-
-  if (should_crash) {
-    // Deliberately crash the process to create a crash dump.
-    *((volatile int*)0) = 0x1337;
-  } else {
-    base::Process current_process(base::GetCurrentProcessHandle());
-    current_process.Terminate(RESULT_CODE_HUNG);
-  }
+  // Deliberately crash the process to create a crash dump.
+  *((volatile int*)0) = 0x1337;
 
   terminated = true;
 }

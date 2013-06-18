@@ -18,6 +18,7 @@
 #include "chrome/browser/net/url_fixer_upper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/bookmarks/bookmark_utils.h"
+#include "components/user_prefs/user_prefs.h"
 #include "googleurl/src/gurl.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
@@ -27,7 +28,6 @@
 #include "ui/views/background.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/label.h"
-#include "ui/views/controls/menu/menu_model_adapter.h"
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/controls/tree/tree_view.h"
@@ -192,7 +192,7 @@ bool BookmarkEditorView::GetAcceleratorForCommandId(
   return GetWidget()->GetAccelerator(command_id, accelerator);
 }
 
-void BookmarkEditorView::ExecuteCommand(int command_id) {
+void BookmarkEditorView::ExecuteCommand(int command_id, int event_flags) {
   DCHECK(tree_view_->GetSelectedNode());
   if (command_id == IDS_EDIT) {
     tree_view_->StartEditing(tree_view_->GetSelectedNode());
@@ -243,8 +243,7 @@ void BookmarkEditorView::ShowContextMenuForView(views::View* source,
       (tree_model_->GetParent(tree_view_->GetSelectedNode()) ==
        tree_model_->GetRoot());
 
-  views::MenuModelAdapter adapter(GetMenuModel());
-  context_menu_runner_.reset(new views::MenuRunner(adapter.CreateMenu()));
+  context_menu_runner_.reset(new views::MenuRunner(GetMenuModel()));
 
   if (context_menu_runner_->RunMenuAt(source->GetWidget()->GetTopLevelWidget(),
         NULL, gfx::Rect(point, gfx::Size()), views::MenuItemView::TOPRIGHT,
@@ -290,8 +289,6 @@ void BookmarkEditorView::Init() {
   }
 
   GridLayout* layout = GridLayout::CreatePanel(this);
-  if (views::DialogDelegate::UseNewStyle())
-    layout->SetInsets(gfx::Insets());
   SetLayoutManager(layout);
 
   const int labels_column_set_id = 0;
@@ -335,7 +332,7 @@ void BookmarkEditorView::Init() {
 
     url_tf_ = new views::Textfield;
     PrefService* prefs = profile_ ?
-        PrefServiceFromBrowserContext(profile_) :
+        components::UserPrefs::Get(profile_) :
         NULL;
     url_tf_->SetText(chrome::FormatBookmarkURLForDisplay(url, prefs));
     url_tf_->SetController(this);
@@ -386,6 +383,10 @@ void BookmarkEditorView::BookmarkNodeRemoved(BookmarkModel* model,
   } else {
     Reset();
   }
+}
+
+void BookmarkEditorView::BookmarkAllNodesRemoved(BookmarkModel* model) {
+  Reset();
 }
 
 void BookmarkEditorView::BookmarkNodeChildrenReordered(
@@ -519,6 +520,9 @@ BookmarkEditorView::EditorNode* BookmarkEditorView::FindNodeWithID(
 
 void BookmarkEditorView::ApplyEdits() {
   DCHECK(bb_model_->IsLoaded());
+
+  if (tree_view_)
+    tree_view_->CommitEdit();
 
   EditorNode* parent = show_tree_ ?
       tree_model_->AsNode(tree_view_->GetSelectedNode()) : NULL;

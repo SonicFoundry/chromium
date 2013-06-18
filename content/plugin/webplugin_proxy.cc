@@ -69,7 +69,7 @@ WebPluginProxy::WebPluginProxy(
       page_url_(page_url),
       windowless_buffer_index_(0),
       host_render_view_routing_id_(host_render_view_routing_id),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+      weak_factory_(this) {
 #if defined(USE_X11)
   windowless_shm_pixmaps_[0] = None;
   windowless_shm_pixmaps_[1] = None;
@@ -102,7 +102,7 @@ WebPluginProxy::~WebPluginProxy() {
 
 #if defined(OS_MACOSX)
   // Destroy the surface early, since it may send messages during cleanup.
-  if (accelerated_surface_.get())
+  if (accelerated_surface_)
     accelerated_surface_.reset();
 #endif
 
@@ -199,9 +199,11 @@ void WebPluginProxy::InvalidateRect(const gfx::Rect& rect) {
     waiting_for_paint_ = true;
     // Invalidates caused by calls to NPN_InvalidateRect/NPN_InvalidateRgn
     // need to be painted asynchronously as per the NPAPI spec.
-    MessageLoop::current()->PostTask(FROM_HERE,
-        base::Bind(&WebPluginProxy::OnPaint, weak_factory_.GetWeakPtr(),
-            damaged_rect_));
+    base::MessageLoop::current()->PostTask(
+        FROM_HERE,
+        base::Bind(&WebPluginProxy::OnPaint,
+                   weak_factory_.GetWeakPtr(),
+                   damaged_rect_));
     damaged_rect_ = gfx::Rect();
   }
 }
@@ -275,7 +277,7 @@ WebPluginResourceClient* WebPluginProxy::GetResourceClient(int id) {
 }
 
 int WebPluginProxy::GetRendererId() {
-  if (channel_.get())
+  if (channel_)
     return channel_->renderer_id();
   return -1;
 }
@@ -627,48 +629,12 @@ void WebPluginProxy::StartIme() {
   Send(msg);
 }
 
-void WebPluginProxy::BindFakePluginWindowHandle(bool opaque) {
-  Send(new PluginHostMsg_BindFakePluginWindowHandle(route_id_, opaque));
-}
-
 WebPluginAcceleratedSurface* WebPluginProxy::GetAcceleratedSurface(
     gfx::GpuPreference gpu_preference) {
-  if (!accelerated_surface_.get())
+  if (!accelerated_surface_)
     accelerated_surface_.reset(
         WebPluginAcceleratedSurfaceProxy::Create(this, gpu_preference));
   return accelerated_surface_.get();
-}
-
-void WebPluginProxy::AcceleratedFrameBuffersDidSwap(
-    gfx::PluginWindowHandle window, uint64 surface_handle) {
-  Send(new PluginHostMsg_AcceleratedSurfaceBuffersSwapped(
-        route_id_, window, surface_handle));
-}
-
-void WebPluginProxy::SetAcceleratedSurface(
-    gfx::PluginWindowHandle window,
-    const gfx::Size& size,
-    uint64 accelerated_surface_identifier) {
-  Send(new PluginHostMsg_AcceleratedSurfaceSetIOSurface(
-      route_id_, window, size.width(), size.height(),
-      accelerated_surface_identifier));
-}
-
-void WebPluginProxy::SetAcceleratedDIB(
-    gfx::PluginWindowHandle window,
-    const gfx::Size& size,
-    const TransportDIB::Handle& dib_handle) {
-  Send(new PluginHostMsg_AcceleratedSurfaceSetTransportDIB(
-      route_id_, window, size.width(), size.height(), dib_handle));
-}
-
-void WebPluginProxy::AllocSurfaceDIB(const size_t size,
-                                     TransportDIB::Handle* dib_handle) {
-  Send(new PluginHostMsg_AllocTransportDIB(route_id_, size, dib_handle));
-}
-
-void WebPluginProxy::FreeSurfaceDIB(TransportDIB::Id dib_id) {
-  Send(new PluginHostMsg_FreeTransportDIB(route_id_, dib_id));
 }
 
 void WebPluginProxy::AcceleratedPluginEnabledRendering() {

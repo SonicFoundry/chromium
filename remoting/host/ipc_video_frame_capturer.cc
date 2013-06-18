@@ -13,7 +13,8 @@ namespace remoting {
 IpcVideoFrameCapturer::IpcVideoFrameCapturer(
     scoped_refptr<DesktopSessionProxy> desktop_session_proxy)
     : delegate_(NULL),
-      desktop_session_proxy_(desktop_session_proxy) {
+      desktop_session_proxy_(desktop_session_proxy),
+      weak_factory_(this) {
 }
 
 IpcVideoFrameCapturer::~IpcVideoFrameCapturer() {
@@ -21,16 +22,7 @@ IpcVideoFrameCapturer::~IpcVideoFrameCapturer() {
 
 void IpcVideoFrameCapturer::Start(Delegate* delegate) {
   delegate_ = delegate;
-  desktop_session_proxy_->StartVideoCapturer(this);
-}
-
-void IpcVideoFrameCapturer::Stop() {
-  desktop_session_proxy_->StopVideoCapturer();
-  delegate_ = NULL;
-}
-
-void IpcVideoFrameCapturer::InvalidateRegion(const SkRegion& invalid_region) {
-  desktop_session_proxy_->InvalidateRegion(invalid_region);
+  desktop_session_proxy_->SetVideoCapturer(weak_factory_.GetWeakPtr());
 }
 
 void IpcVideoFrameCapturer::CaptureFrame() {

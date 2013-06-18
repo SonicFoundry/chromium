@@ -69,7 +69,7 @@ if [ "x$(id -u)" != x0 ]; then
 fi
 
 # Packages needed for chromeos only
-chromeos_dev_list="libbluetooth-dev libpulse-dev"
+chromeos_dev_list="libbluetooth-dev"
 
 # Packages need for development
 dev_list="apache2.2-bin bison curl elfutils fakeroot flex g++ gperf
@@ -77,12 +77,13 @@ dev_list="apache2.2-bin bison curl elfutils fakeroot flex g++ gperf
           libcairo2-dev libcups2-dev libcurl4-gnutls-dev libelf-dev
           libgconf2-dev libgl1-mesa-dev libglib2.0-dev libglu1-mesa-dev
           libgnome-keyring-dev libgtk2.0-dev libkrb5-dev libnspr4-dev
-          libnss3-dev libpam0g-dev libpci-dev libsctp-dev libspeechd-dev
-          libsqlite3-dev libssl-dev libudev-dev libwww-perl libxslt1-dev
-          libxss-dev libxt-dev libxtst-dev mesa-common-dev metacity patch perl
-          php5-cgi pkg-config python python-cherrypy3 python-dev python-psutil
-          rpm ruby subversion ttf-dejavu-core ttf-indic-fonts ttf-kochi-gothic
-          ttf-kochi-mincho ttf-thai-tlwg wdiff git-core
+          libnss3-dev libpam0g-dev libpci-dev libpulse-dev libsctp-dev
+          libspeechd-dev libsqlite3-dev libssl-dev libudev-dev libwww-perl
+          libxslt1-dev libxss-dev libxt-dev libxtst-dev mesa-common-dev
+          metacity patch perl php5-cgi pkg-config python python-cherrypy3
+          python-dev python-psutil rpm ruby subversion ttf-dejavu-core
+          ttf-indic-fonts ttf-kochi-gothic ttf-kochi-mincho ttf-thai-tlwg
+          wdiff git-core
           $chromeos_dev_list"
 
 # 64-bit systems need a minimum set of 32-bit compat packages for the pre-built
@@ -205,9 +206,21 @@ fi
 
 # Install the Chrome OS default fonts.
 if test "$do_inst_chromeos_fonts" != "0"; then
+  echo
   echo "Installing Chrome OS fonts."
   dir=`echo $0 | sed -r -e 's/\/[^/]+$//'`
-  sudo $dir/linux/install-chromeos-fonts.py
+  if ! sudo $dir/linux/install-chromeos-fonts.py; then
+    echo "ERROR: The installation of the Chrome OS default fonts failed."
+    if [ `stat -f -c %T $dir` == "nfs" ]; then
+      echo "The reason is that your repo is installed on a remote file system."
+    else
+      echo "This is expected if your repo is installed on a remote file system."
+    fi
+    echo "It is recommended to install your repo on a local file system."
+    echo "You can skip the installation of the Chrome OS default founts with"
+    echo "the command line option: --no-chromeos-fonts."
+    exit 1
+  fi
 else
   echo "Skipping installation of Chrome OS fonts."
 fi
@@ -284,6 +297,21 @@ if [ "$(uname -m)" = "x86_64" ]; then
     echo
     echo "Installation complete."
     exit 0
+  else
+    # This conditional statement has been added to deprecate and eventually
+    # remove support for 32bit libraries on 64bit systems. But for the time
+    # being, we still have to support a few legacy systems (e.g. bots), where
+    # this feature is needed.
+    # We only even give the user the option to install these libraries, if
+    # they explicitly requested doing so by setting the --lib32 command line
+    # flag.
+    # And even then, we interactively ask them one more time whether they are
+    # absolutely sure.
+    # In order for that to work, we must reset the ${do_inst_lib32} variable.
+    # There are other ways to achieve the same goal. But resetting the
+    # variable is the best way to document the intended behavior -- and to
+    # allow us to gradually deprecate and then remove the obsolete code.
+    do_inst_lib32=
   fi
 
   echo "WARNING"
@@ -354,7 +382,7 @@ EOF
       mkdir -p "'"${tmp}"'/staging/dpkg/DEBIAN"
       cd "'"${tmp}"'/staging"
       ar x "'${orig}'"
-      tar zCfx dpkg data.tar.gz
+      tar Cfx dpkg data.tar*
       tar zCfx dpkg/DEBIAN control.tar.gz
 
       # Create a posix extended regular expression fragment that will

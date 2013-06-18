@@ -6,8 +6,8 @@
 #define ASH_SYSTEM_TRAY_TRAY_BACKGROUND_VIEW_H_
 
 #include "ash/ash_export.h"
-#include "ash/launcher/background_animator.h"
-#include "ash/shelf_types.h"
+#include "ash/shelf/background_animator.h"
+#include "ash/shelf/shelf_types.h"
 #include "ash/system/tray/actionable_view.h"
 #include "ui/views/bubble/tray_bubble_view.h"
 
@@ -84,7 +84,7 @@ class ASH_EXPORT TrayBackgroundView : public ActionableView,
   virtual void AnchorUpdated() {}
 
   // Called from GetAccessibleState, must return a valid accessible name.
-  virtual string16 GetAccessibleNameForTray() = 0;
+  virtual base::string16 GetAccessibleNameForTray() = 0;
 
   // Hides the bubble associated with |bubble_view|. Called when the widget
   // is closed.
@@ -120,6 +120,9 @@ class ASH_EXPORT TrayBackgroundView : public ActionableView,
 
   // Returns the bubble anchor alignment based on |shelf_alignment_|.
   views::TrayBubbleView::AnchorAlignment GetAnchorAlignment() const;
+
+  // Updates the view visual based on the visibility of the bubble.
+  void SetBubbleVisible(bool visible);
 
   StatusAreaWidget* status_area_widget() {
     return status_area_widget_;
@@ -157,6 +160,8 @@ class ASH_EXPORT TrayBackgroundView : public ActionableView,
 
   internal::BackgroundAnimator hide_background_animator_;
   internal::BackgroundAnimator hover_background_animator_;
+  bool hovered_;
+  bool pressed_;
   scoped_ptr<TrayWidgetObserver> widget_observer_;
   scoped_ptr<TrayEventFilter> tray_event_filter_;
 

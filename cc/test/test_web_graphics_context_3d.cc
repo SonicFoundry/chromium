@@ -7,23 +7,29 @@
 #include <algorithm>
 #include <string>
 
+#include "base/bind.h"
 #include "base/logging.h"
+#include "base/message_loop.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/khronos/GLES2/gl2ext.h"
 
 using WebKit::WGC3Dboolean;
+using WebKit::WGC3Dchar;
 using WebKit::WGC3Denum;
+using WebKit::WGC3Dint;
+using WebKit::WGC3Dsizei;
+using WebKit::WGC3Dsizeiptr;
+using WebKit::WGC3Duint;
 using WebKit::WebGLId;
 using WebKit::WebGraphicsContext3D;
 
 namespace cc {
 
-static const WebGLId kBufferId = 1;
-static const WebGLId kFramebufferId = 2;
-static const WebGLId kProgramId = 3;
-static const WebGLId kRenderbufferId = 4;
-static const WebGLId kShaderId = 5;
+static const WebGLId kFramebufferId = 1;
+static const WebGLId kProgramId = 2;
+static const WebGLId kRenderbufferId = 3;
+static const WebGLId kShaderId = 4;
 
 static unsigned s_context_id = 1;
 
@@ -32,6 +38,7 @@ const WebGLId TestWebGraphicsContext3D::kExternalTextureId = 1337;
 TestWebGraphicsContext3D::TestWebGraphicsContext3D()
     : FakeWebGraphicsContext3D(),
       context_id_(s_context_id++),
+      next_buffer_id_(1),
       next_texture_id_(1),
       have_extension_io_surface_(false),
       have_extension_egl_image_(false),
@@ -40,14 +47,17 @@ TestWebGraphicsContext3D::TestWebGraphicsContext3D()
       times_end_query_succeeds_(-1),
       context_lost_(false),
       context_lost_callback_(NULL),
+      max_texture_size_(1024),
       width_(0),
-      height_(0) {
+      height_(0),
+      bound_buffer_(0) {
 }
 
 TestWebGraphicsContext3D::TestWebGraphicsContext3D(
     const WebGraphicsContext3D::Attributes& attributes)
     : FakeWebGraphicsContext3D(),
       context_id_(s_context_id++),
+      next_buffer_id_(1),
       next_texture_id_(1),
       attributes_(attributes),
       have_extension_io_surface_(false),
@@ -57,11 +67,17 @@ TestWebGraphicsContext3D::TestWebGraphicsContext3D(
       times_end_query_succeeds_(-1),
       context_lost_(false),
       context_lost_callback_(NULL),
+      max_texture_size_(1024),
       width_(0),
-      height_(0) {
+      height_(0),
+      bound_buffer_(0) {
 }
 
 TestWebGraphicsContext3D::~TestWebGraphicsContext3D() {
+  for (size_t i = 0; i < sync_point_callbacks_.size(); ++i) {
+    if (sync_point_callbacks_[i] != NULL)
+      delete sync_point_callbacks_[i];
+  }
 }
 
 bool TestWebGraphicsContext3D::makeContextCurrent() {
@@ -121,14 +137,14 @@ WebKit::WebString TestWebGraphicsContext3D::getString(WGC3Denum name) {
   return WebKit::WebString::fromUTF8(string.c_str());
 }
 
-WebKit::WGC3Dint TestWebGraphicsContext3D::getUniformLocation(
+WGC3Dint TestWebGraphicsContext3D::getUniformLocation(
     WebGLId program,
-    const WebKit::WGC3Dchar* name) {
+    const WGC3Dchar* name) {
   return 0;
 }
 
-WebKit::WGC3Dsizeiptr TestWebGraphicsContext3D::getVertexAttribOffset(
-    WebKit::WGC3Duint index,
+WGC3Dsizeiptr TestWebGraphicsContext3D::getVertexAttribOffset(
+    WGC3Duint index,
     WGC3Denum pname) {
   return 0;
 }
@@ -169,18 +185,21 @@ WGC3Dboolean TestWebGraphicsContext3D::isTexture(
 }
 
 WebGLId TestWebGraphicsContext3D::createBuffer() {
-  return kBufferId | context_id_ << 16;
+  return NextBufferId();
 }
 
-void TestWebGraphicsContext3D::deleteBuffer(WebKit::WebGLId id) {
-  EXPECT_EQ(kBufferId | context_id_ << 16, id);
+void TestWebGraphicsContext3D::deleteBuffer(WebGLId id) {
+  unsigned context_id = id >> 17;
+  unsigned buffer_id = id & 0x1ffff;
+  DCHECK(buffer_id && buffer_id < next_buffer_id_);
+  DCHECK_EQ(context_id, context_id_);
 }
 
 WebGLId TestWebGraphicsContext3D::createFramebuffer() {
   return kFramebufferId | context_id_ << 16;
 }
 
-void TestWebGraphicsContext3D::deleteFramebuffer(WebKit::WebGLId id) {
+void TestWebGraphicsContext3D::deleteFramebuffer(WebGLId id) {
   EXPECT_EQ(kFramebufferId | context_id_ << 16, id);
 }
 
@@ -188,7 +207,7 @@ WebGLId TestWebGraphicsContext3D::createProgram() {
   return kProgramId | context_id_ << 16;
 }
 
-void TestWebGraphicsContext3D::deleteProgram(WebKit::WebGLId id) {
+void TestWebGraphicsContext3D::deleteProgram(WebGLId id) {
   EXPECT_EQ(kProgramId | context_id_ << 16, id);
 }
 
@@ -196,7 +215,7 @@ WebGLId TestWebGraphicsContext3D::createRenderbuffer() {
   return kRenderbufferId | context_id_ << 16;
 }
 
-void TestWebGraphicsContext3D::deleteRenderbuffer(WebKit::WebGLId id) {
+void TestWebGraphicsContext3D::deleteRenderbuffer(WebGLId id) {
   EXPECT_EQ(kRenderbufferId | context_id_ << 16, id);
 }
 
@@ -204,7 +223,7 @@ WebGLId TestWebGraphicsContext3D::createShader(WGC3Denum) {
   return kShaderId | context_id_ << 16;
 }
 
-void TestWebGraphicsContext3D::deleteShader(WebKit::WebGLId id) {
+void TestWebGraphicsContext3D::deleteShader(WebGLId id) {
   EXPECT_EQ(kShaderId | context_id_ << 16, id);
 }
 
@@ -232,12 +251,6 @@ void TestWebGraphicsContext3D::useProgram(WebGLId program) {
   EXPECT_EQ(kProgramId | context_id_ << 16, program);
 }
 
-void TestWebGraphicsContext3D::bindBuffer(WGC3Denum target, WebGLId buffer) {
-  if (!buffer)
-    return;
-  EXPECT_EQ(kBufferId | context_id_ << 16, buffer);
-}
-
 void TestWebGraphicsContext3D::bindFramebuffer(
     WGC3Denum target, WebGLId framebuffer) {
   if (!framebuffer)
@@ -249,7 +262,7 @@ void TestWebGraphicsContext3D::bindRenderbuffer(
       WGC3Denum target, WebGLId renderbuffer) {
   if (!renderbuffer)
     return;
- EXPECT_EQ(kRenderbufferId | context_id_ << 16, renderbuffer);
+  EXPECT_EQ(kRenderbufferId | context_id_ << 16, renderbuffer);
 }
 
 void TestWebGraphicsContext3D::bindTexture(
@@ -271,7 +284,7 @@ void TestWebGraphicsContext3D::bindTexture(
   used_textures_.insert(texture_id);
 }
 
-void TestWebGraphicsContext3D::endQueryEXT(WebKit::WGC3Denum target) {
+void TestWebGraphicsContext3D::endQueryEXT(WGC3Denum target) {
   if (times_end_query_succeeds_ >= 0) {
     if (!times_end_query_succeeds_) {
       loseContextCHROMIUM(GL_GUILTY_CONTEXT_RESET_ARB,
@@ -282,12 +295,31 @@ void TestWebGraphicsContext3D::endQueryEXT(WebKit::WGC3Denum target) {
 }
 
 void TestWebGraphicsContext3D::getQueryObjectuivEXT(
-    WebKit::WebGLId query,
-    WebKit::WGC3Denum pname,
-    WebKit::WGC3Duint* params) {
+    WebGLId query,
+    WGC3Denum pname,
+    WGC3Duint* params) {
   // If the context is lost, behave as if result is available.
   if (pname == GL_QUERY_RESULT_AVAILABLE_EXT)
     *params = 1;
+}
+
+void TestWebGraphicsContext3D::getIntegerv(
+    WGC3Denum pname,
+    WebKit::WGC3Dint* value) {
+  if (pname == GL_MAX_TEXTURE_SIZE)
+    *value = max_texture_size_;
+}
+
+void TestWebGraphicsContext3D::genMailboxCHROMIUM(WebKit::WGC3Dbyte* mailbox) {
+  static char mailbox_name1 = '1';
+  static char mailbox_name2 = '1';
+  mailbox[0] = mailbox_name1;
+  mailbox[1] = mailbox_name2;
+  mailbox[2] = '\0';
+  if (++mailbox_name1 == 0) {
+    mailbox_name1 = '1';
+    ++mailbox_name2;
+  }
 }
 
 void TestWebGraphicsContext3D::setContextLostCallback(
@@ -308,11 +340,104 @@ void TestWebGraphicsContext3D::loseContextCHROMIUM(WGC3Denum current,
   shared_contexts_.clear();
 }
 
-WebKit::WebGLId TestWebGraphicsContext3D::NextTextureId() {
+void TestWebGraphicsContext3D::signalSyncPoint(
+    unsigned sync_point,
+    WebGraphicsSyncPointCallback* callback) {
+  sync_point_callbacks_.push_back(callback);
+}
+
+void TestWebGraphicsContext3D::prepareTexture() {
+  CallAllSyncPointCallbacks();
+}
+
+void TestWebGraphicsContext3D::finish() {
+  CallAllSyncPointCallbacks();
+}
+
+void TestWebGraphicsContext3D::flush() {
+  CallAllSyncPointCallbacks();
+}
+
+static void CallAndDestroy(
+    WebKit::WebGraphicsContext3D::WebGraphicsSyncPointCallback* callback) {
+  if (!callback)
+    return;
+  callback->onSyncPointReached();
+  delete callback;
+}
+
+void TestWebGraphicsContext3D::CallAllSyncPointCallbacks() {
+  for (size_t i = 0; i < sync_point_callbacks_.size(); ++i) {
+    base::MessageLoop::current()->PostTask(
+        FROM_HERE,
+        base::Bind(&CallAndDestroy,
+                   sync_point_callbacks_[i]));
+  }
+  sync_point_callbacks_.clear();
+}
+
+void TestWebGraphicsContext3D::bindBuffer(WebKit::WGC3Denum target,
+                                          WebKit::WebGLId buffer) {
+  bound_buffer_ = buffer;
+  if (!bound_buffer_)
+    return;
+  unsigned context_id = buffer >> 17;
+  unsigned buffer_id = buffer & 0x1ffff;
+  DCHECK(buffer_id && buffer_id < next_buffer_id_);
+  DCHECK_EQ(context_id, context_id_);
+
+  if (buffers_.count(bound_buffer_) == 0)
+    buffers_.set(bound_buffer_, make_scoped_ptr(new Buffer).Pass());
+
+  buffers_.get(bound_buffer_)->target = target;
+}
+
+void TestWebGraphicsContext3D::bufferData(WebKit::WGC3Denum target,
+                                          WebKit::WGC3Dsizeiptr size,
+                                          const void* data,
+                                          WebKit::WGC3Denum usage) {
+  DCHECK_GT(buffers_.count(bound_buffer_), 0u);
+  DCHECK_EQ(target, buffers_.get(bound_buffer_)->target);
+  if (context_lost_) {
+    buffers_.get(bound_buffer_)->pixels.reset();
+    return;
+  }
+  buffers_.get(bound_buffer_)->pixels.reset(new uint8[size]);
+  if (data != NULL)
+    memcpy(buffers_.get(bound_buffer_)->pixels.get(), data, size);
+}
+
+void* TestWebGraphicsContext3D::mapBufferCHROMIUM(WebKit::WGC3Denum target,
+                                                  WebKit::WGC3Denum access) {
+  DCHECK_GT(buffers_.count(bound_buffer_), 0u);
+  DCHECK_EQ(target, buffers_.get(bound_buffer_)->target);
+  return buffers_.get(bound_buffer_)->pixels.get();
+}
+
+WebKit::WGC3Dboolean TestWebGraphicsContext3D::unmapBufferCHROMIUM(
+    WebKit::WGC3Denum target) {
+  DCHECK_GT(buffers_.count(bound_buffer_), 0u);
+  DCHECK_EQ(target, buffers_.get(bound_buffer_)->target);
+  buffers_.get(bound_buffer_)->pixels.reset();
+  return true;
+}
+
+WebGLId TestWebGraphicsContext3D::NextTextureId() {
   WebGLId texture_id = next_texture_id_++;
   DCHECK(texture_id < (1 << 16));
   texture_id |= context_id_ << 16;
   return texture_id;
 }
+
+WebGLId TestWebGraphicsContext3D::NextBufferId() {
+  WebGLId buffer_id = next_buffer_id_++;
+  DCHECK(buffer_id < (1 << 17));
+  buffer_id |= context_id_ << 17;
+  return buffer_id;
+}
+
+TestWebGraphicsContext3D::Buffer::Buffer() : target(0) {}
+
+TestWebGraphicsContext3D::Buffer::~Buffer() {}
 
 }  // namespace cc

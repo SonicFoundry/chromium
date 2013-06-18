@@ -75,7 +75,7 @@ void ChromeV8ContextSet::Add(ChromeV8Context* context) {
 
 void ChromeV8ContextSet::Remove(ChromeV8Context* context) {
   if (contexts_.erase(context)) {
-    context->clear_web_frame();
+    context->Invalidate();
     MessageLoop::current()->DeleteSoon(FROM_HERE, context);
   }
 }
@@ -150,8 +150,10 @@ void ChromeV8ContextSet::DispatchChromeHiddenMethod(
   }
 }
 
-void ChromeV8ContextSet::OnExtensionUnloaded(const std::string& extension_id) {
+ChromeV8ContextSet::ContextSet ChromeV8ContextSet::OnExtensionUnloaded(
+    const std::string& extension_id) {
   ContextSet contexts = GetAll();
+  ContextSet removed;
 
   // Clean up contexts belonging to the unloaded extension. This is done so
   // that content scripts (which remain injected into the page) don't continue
@@ -160,9 +162,12 @@ void ChromeV8ContextSet::OnExtensionUnloaded(const std::string& extension_id) {
        ++it) {
     if ((*it)->extension() && (*it)->extension()->id() == extension_id) {
       (*it)->DispatchOnUnloadEvent();
+      removed.insert(*it);
       Remove(*it);
     }
   }
+
+  return removed;
 }
 
 }  // namespace extensions

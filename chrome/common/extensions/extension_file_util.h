@@ -12,6 +12,7 @@
 #include "chrome/common/extensions/manifest.h"
 #include "chrome/common/extensions/message_bundle.h"
 
+class ExtensionIconSet;
 class GURL;
 
 namespace base {
@@ -64,6 +65,13 @@ base::DictionaryValue* LoadManifest(const base::FilePath& extension_root,
 // Returns true if the given file path exists and is not zero-length.
 bool ValidateFilePath(const base::FilePath& path);
 
+// Returns true if the icons in the icon set exist. Oherwise, populates
+// |error| with the |error_message_id| for an invalid file.
+bool ValidateExtensionIconSet(const ExtensionIconSet& icon_set,
+                              const extensions::Extension* extension,
+                              int error_message_id,
+                              std::string* error);
+
 // Returns true if the given extension object is valid and consistent.
 // May also append a series of warning messages to |warnings|, but they
 // should not prevent the extension from running.
@@ -74,8 +82,16 @@ bool ValidateExtension(const extensions::Extension* extension,
                        std::string* error,
                        std::vector<extensions::InstallWarning>* warnings);
 
+// Returns a list of paths (relative to the extension dir) for images that
+// the browser might load (like themes and page action icons) for the given
+// extension.
+std::set<base::FilePath> GetBrowserImagePaths(
+    const extensions::Extension* extension);
+
+
 // Returns a list of files that contain private keys inside |extension_dir|.
-std::vector<base::FilePath> FindPrivateKeyFiles(const base::FilePath& extension_dir);
+std::vector<base::FilePath> FindPrivateKeyFiles(
+    const base::FilePath& extension_dir);
 
 // Cleans up the extension install directory. It can end up with garbage in it
 // if extensions can't initially be removed when they are uninstalled (eg if a

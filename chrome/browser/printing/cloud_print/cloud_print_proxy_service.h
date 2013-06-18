@@ -12,7 +12,7 @@
 #include "base/callback_forward.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/prefs/public/pref_change_registrar.h"
+#include "base/prefs/pref_change_registrar.h"
 #include "chrome/browser/printing/cloud_print/cloud_print_setup_handler.h"
 #include "chrome/browser/profiles/profile_keyed_service.h"
 
@@ -42,8 +42,7 @@ class CloudPrintProxyService
       const std::string& robot_auth_code,
       const std::string& robot_email,
       const std::string& user_email,
-      bool connect_new_printers,
-      const std::vector<std::string>& printer_blacklist);
+      const base::DictionaryValue& user_settings);
   virtual void DisableForUser();
 
   // Query the service process for the status of the cloud print proxy and
@@ -60,13 +59,14 @@ class CloudPrintProxyService
   // CloudPrintSetupHandler::Delegate implementation.
   virtual void OnCloudPrintSetupClosed() OVERRIDE;
 
+  // Returns list of printer names available for registration.
+  static void GetPrintersAvalibleForRegistration(
+      std::vector<std::string>* printers);
+
  private:
   // NotificationDelegate implementation for the token expired notification.
   class TokenExpiredNotificationDelegate;
   friend class TokenExpiredNotificationDelegate;
-
-  Profile* profile_;
-  std::string proxy_id_;
 
   // Methods that send an IPC to the service.
   void RefreshCloudPrintProxyStatus();
@@ -75,8 +75,7 @@ class CloudPrintProxyService
       const std::string& robot_auth_code,
       const std::string& robot_email,
       const std::string& user_email,
-      bool connect_new_printers,
-      const std::vector<std::string>& printer_blacklist);
+      const base::DictionaryValue* user_preferences);
   void DisableCloudPrintProxy();
 
   // Callback that gets the cloud print proxy info.
@@ -92,12 +91,15 @@ class CloudPrintProxyService
   // not set or the connector is not enabled).
   bool ApplyCloudPrintConnectorPolicy();
 
+  Profile* profile_;
+  std::string proxy_id_;
+
   // Virtual for testing.
   virtual ServiceProcessControl* GetServiceProcessControl();
 
   base::WeakPtrFactory<CloudPrintProxyService> weak_factory_;
 
-  // For watching for connector enablement policy changes.
+  // For watching for connector policy changes.
   PrefChangeRegistrar pref_change_registrar_;
 
   // If set, continue trying to disable the connector, and quit the process

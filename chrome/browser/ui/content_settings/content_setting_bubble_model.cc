@@ -6,13 +6,13 @@
 
 #include "base/prefs/pref_service.h"
 #include "base/utf_string_conversions.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
 #include "chrome/browser/content_settings/content_settings_utils.h"
 #include "chrome/browser/content_settings/cookie_settings.h"
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/custom_handlers/protocol_handler_registry.h"
 #include "chrome/browser/custom_handlers/protocol_handler_registry_factory.h"
 #include "chrome/browser/favicon/favicon_tab_helper.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/media/media_capture_devices_dispatcher.h"
 #include "chrome/browser/plugins/chrome_plugin_service_filter.h"
 #include "chrome/browser/profiles/profile.h"
@@ -294,14 +294,19 @@ void ContentSettingSingleRadioGroup::SetRadioGroup() {
     {CONTENT_SETTINGS_TYPE_PLUGINS, IDS_BLOCKED_PLUGINS_UNBLOCK},
   };
   static const ContentSettingsTypeIdEntry kAllowedAllowIDs[] = {
+    // TODO(bauerb): The string shouldn't be "unblock" (they weren't blocked).
+    {CONTENT_SETTINGS_TYPE_COOKIES, IDS_BLOCKED_COOKIES_UNBLOCK},
     {CONTENT_SETTINGS_TYPE_PPAPI_BROKER, IDS_ALLOWED_PPAPI_BROKER_NO_ACTION},
   };
 
   std::string radio_allow_label;
   if (allowed) {
-    radio_allow_label = l10n_util::GetStringUTF8(
-        GetIdForContentType(kAllowedAllowIDs, arraysize(kAllowedAllowIDs),
-                            content_type()));
+    int resource_id = GetIdForContentType(kAllowedAllowIDs,
+                                          arraysize(kAllowedAllowIDs),
+                                          content_type());
+    radio_allow_label = (content_type() == CONTENT_SETTINGS_TYPE_COOKIES) ?
+        l10n_util::GetStringFUTF8(resource_id, display_host) :
+        l10n_util::GetStringUTF8(resource_id);
   } else if (resources.empty()) {
     radio_allow_label = l10n_util::GetStringFUTF8(
         GetIdForContentType(kBlockedAllowIDs, arraysize(kBlockedAllowIDs),
@@ -324,15 +329,19 @@ void ContentSettingSingleRadioGroup::SetRadioGroup() {
     {CONTENT_SETTINGS_TYPE_PPAPI_BROKER, IDS_BLOCKED_PPAPI_BROKER_NO_ACTION},
   };
   static const ContentSettingsTypeIdEntry kAllowedBlockIDs[] = {
+    // TODO(bauerb): The string should say "block".
+    {CONTENT_SETTINGS_TYPE_COOKIES, IDS_BLOCKED_COOKIES_NO_ACTION},
     {CONTENT_SETTINGS_TYPE_PPAPI_BROKER, IDS_ALLOWED_PPAPI_BROKER_BLOCK},
   };
 
   std::string radio_block_label;
   if (allowed) {
-    radio_block_label = l10n_util::GetStringFUTF8(
-        GetIdForContentType(kAllowedBlockIDs, arraysize(kAllowedBlockIDs),
-                            content_type()),
-        display_host);
+    int resource_id = GetIdForContentType(kAllowedBlockIDs,
+                                          arraysize(kAllowedBlockIDs),
+                                          content_type());
+    radio_block_label = (content_type() == CONTENT_SETTINGS_TYPE_COOKIES) ?
+        l10n_util::GetStringUTF8(resource_id) :
+        l10n_util::GetStringFUTF8(resource_id, display_host);
   } else {
     radio_block_label = l10n_util::GetStringUTF8(
         GetIdForContentType(kBlockedBlockIDs, arraysize(kBlockedBlockIDs),
@@ -437,7 +446,9 @@ ContentSettingCookiesBubbleModel::ContentSettingCookiesBubbleModel(
 }
 
 ContentSettingCookiesBubbleModel::~ContentSettingCookiesBubbleModel() {
-  if (settings_changed()) {
+  // On some plattforms e.g. MacOS X it is possible to close a tab while the
+  // cookies settubgs bubble is open. This resets the web contents to NULL.
+  if (settings_changed() && web_contents()) {
     CollectedCookiesInfoBarDelegate::Create(
         InfoBarService::FromWebContents(web_contents()));
   }
@@ -601,6 +612,10 @@ ContentSettingMediaStreamBubbleModel::ContentSettingMediaStreamBubbleModel(
 }
 
 ContentSettingMediaStreamBubbleModel::~ContentSettingMediaStreamBubbleModel() {
+  // On some plattforms e.g. MacOS X it is possible to close a tab while the
+  // media stream bubble is open. This resets the web contents to NULL.
+  if (!web_contents())
+    return;
   bool media_setting_changed = false;
   for (MediaMenuMap::const_iterator it = bubble_content().media_menus.begin();
       it != bubble_content().media_menus.end(); ++it) {

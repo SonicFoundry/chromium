@@ -57,10 +57,10 @@ class SequencedTaskRunner;
 // These will be executed in an unspecified order. The order of execution
 // between tasks with different sequence tokens is also unspecified.
 //
-// This class is designed to be leaked on shutdown to allow the
-// CONTINUE_ON_SHUTDOWN behavior to be implemented. To enforce the
-// BLOCK_SHUTDOWN behavior, you must call Shutdown() which will wait until
-// the necessary tasks have completed.
+// This class may be leaked on shutdown to facilitate fast shutdown. The
+// expected usage, however, is to call Shutdown(), which correctly accounts
+// for CONTINUE_ON_SHUTDOWN behavior and is required for BLOCK_SHUTDOWN
+// behavior.
 //
 // Implementation note: This does not use a base::WorkerPool since that does
 // not enforce shutdown semantics or allow us to specify how many worker
@@ -288,6 +288,7 @@ class BASE_EXPORT SequencedWorkerPool : public TaskRunner {
 
   // Blocks until all pending tasks are complete. This should only be called in
   // unit tests when you want to validate something that should have happened.
+  // This will not flush delayed tasks; delayed tasks get deleted.
   //
   // Note that calling this will not prevent other threads from posting work to
   // the queue while the calling thread is waiting on Flush(). In this case,

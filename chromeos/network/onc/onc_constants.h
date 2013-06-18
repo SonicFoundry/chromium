@@ -21,7 +21,15 @@ enum ONCSource {
 
 // These keys are used to augment the dictionary resulting from merging the
 // different settings and policies.
+
+// The setting that Shill declared to be using. For example, if no policy and no
+// user setting exists, Shill might still report a property like network
+// security options or a SSID.
+CHROMEOS_EXPORT extern const char kAugmentationActiveSetting[];
+// The one of different setting sources (user/device policy, user/shared
+// settings) that has highest priority over the others.
 CHROMEOS_EXPORT extern const char kAugmentationEffectiveSetting[];
+CHROMEOS_EXPORT extern const char kAugmentationUnmanaged[];
 CHROMEOS_EXPORT extern const char kAugmentationUserPolicy[];
 CHROMEOS_EXPORT extern const char kAugmentationDevicePolicy[];
 CHROMEOS_EXPORT extern const char kAugmentationUserSetting[];
@@ -135,8 +143,9 @@ CHROMEOS_EXPORT extern const char kHiddenSSID[];
 CHROMEOS_EXPORT extern const char kNone[];
 CHROMEOS_EXPORT extern const char kPassphrase[];
 CHROMEOS_EXPORT extern const char kProxyURL[];
-CHROMEOS_EXPORT extern const char kSecurity[];
 CHROMEOS_EXPORT extern const char kSSID[];
+CHROMEOS_EXPORT extern const char kSecurity[];
+CHROMEOS_EXPORT extern const char kSignalStrength[];
 CHROMEOS_EXPORT extern const char kWEP_PSK[];
 CHROMEOS_EXPORT extern const char kWEP_8021X[];
 CHROMEOS_EXPORT extern const char kWPA_PSK[];
@@ -161,7 +170,7 @@ CHROMEOS_EXPORT extern const char kPattern[];
 CHROMEOS_EXPORT extern const char kRef[];
 CHROMEOS_EXPORT extern const char kServer[];
 CHROMEOS_EXPORT extern const char kSubject[];
-CHROMEOS_EXPORT extern const char kTrust[];
+CHROMEOS_EXPORT extern const char kTrustBits[];
 CHROMEOS_EXPORT extern const char kType[];
 CHROMEOS_EXPORT extern const char kWeb[];
 CHROMEOS_EXPORT extern const char kX509[];

@@ -8,7 +8,7 @@
 
 namespace {
 
-size_t size_of_item(const string16& key, const string16& value) {
+size_t size_of_item(const base::string16& key, const base::string16& value) {
   return (key.length() + value.length()) * sizeof(char16);
 }
 
@@ -27,10 +27,14 @@ size_t CountBytes(const dom_storage::ValuesMap& values) {
 
 namespace dom_storage {
 
+size_t DomStorageMap::quota_override_ = 0;
+
 DomStorageMap::DomStorageMap(size_t quota)
     : bytes_used_(0),
       quota_(quota) {
   ResetKeyIterator();
+  if (quota_override_)
+    quota_ = quota_override_;
 }
 
 DomStorageMap::~DomStorageMap() {}
@@ -54,7 +58,7 @@ NullableString16 DomStorageMap::Key(unsigned index) {
   return NullableString16(key_iterator_->first, false);
 }
 
-NullableString16 DomStorageMap::GetItem(const string16& key) const {
+NullableString16 DomStorageMap::GetItem(const base::string16& key) const {
   ValuesMap::const_iterator found = values_.find(key);
   if (found == values_.end())
     return NullableString16(true);
@@ -62,7 +66,7 @@ NullableString16 DomStorageMap::GetItem(const string16& key) const {
 }
 
 bool DomStorageMap::SetItem(
-    const string16& key, const string16& value,
+    const base::string16& key, const base::string16& value,
     NullableString16* old_value) {
   ValuesMap::const_iterator found = values_.find(key);
   if (found == values_.end())
@@ -87,8 +91,8 @@ bool DomStorageMap::SetItem(
 }
 
 bool DomStorageMap::RemoveItem(
-    const string16& key,
-    string16* old_value) {
+    const base::string16& key,
+    base::string16* old_value) {
   ValuesMap::iterator found = values_.find(key);
   if (found == values_.end())
     return false;

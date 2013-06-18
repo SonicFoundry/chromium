@@ -20,6 +20,7 @@
 #include "base/string16.h"
 #include "build/build_config.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebFileSystem.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebFileSystemType.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebGraphicsContext3D.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebRect.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebContextMenuData.h"
@@ -107,8 +108,6 @@ class TestWebViewDelegate : public WebKit::WebViewClient,
   virtual bool shouldDeleteRange(const WebKit::WebRange& range);
   virtual bool shouldApplyStyle(
       const WebKit::WebString& style, const WebKit::WebRange& range);
-  virtual bool isSmartInsertDeleteEnabled();
-  virtual bool isSelectTrailingWhitespaceEnabled();
   virtual void didBeginEditing();
   virtual void didChangeSelection(bool is_selection_empty);
   virtual void didChangeContents();
@@ -175,9 +174,14 @@ class TestWebViewDelegate : public WebKit::WebViewClient,
       WebKit::WebFrame*, const WebKit::WebURLRequest&,
       WebKit::WebNavigationPolicy);
   virtual WebKit::WebNavigationPolicy decidePolicyForNavigation(
-      WebKit::WebFrame*, const WebKit::WebURLRequest&,
-      WebKit::WebNavigationType, const WebKit::WebNode&,
+      WebKit::WebFrame*, WebKit::WebDataSource::ExtraData*,
+      const WebKit::WebURLRequest&, WebKit::WebNavigationType,
       WebKit::WebNavigationPolicy default_policy, bool isRedirect);
+  // DEPRECATED
+  virtual WebKit::WebNavigationPolicy decidePolicyForNavigation(
+      WebKit::WebFrame*, const WebKit::WebURLRequest&,
+      WebKit::WebNavigationType, WebKit::WebNavigationPolicy default_policy,
+      bool isRedirect);
   virtual bool canHandleRequest(
       WebKit::WebFrame*, const WebKit::WebURLRequest&);
   virtual WebKit::WebURLError cannotHandleRequestError(
@@ -203,8 +207,6 @@ class TestWebViewDelegate : public WebKit::WebViewClient,
       WebKit::WebTextDirection direction);
   virtual void didFinishDocumentLoad(WebKit::WebFrame*);
   virtual void didHandleOnloadEvents(WebKit::WebFrame*);
-  virtual void didFailLoad(
-      WebKit::WebFrame*, const WebKit::WebURLError&);
   virtual void didFinishLoad(WebKit::WebFrame*);
   virtual void didNavigateWithinPage(
       WebKit::WebFrame*, bool is_new_navigation);
@@ -229,7 +231,7 @@ class TestWebViewDelegate : public WebKit::WebViewClient,
   virtual bool allowScript(WebKit::WebFrame* frame, bool enabled_per_settings);
   virtual void openFileSystem(
       WebKit::WebFrame* frame,
-      WebKit::WebFileSystem::Type type,
+      WebKit::WebFileSystemType type,
       long long size,
       bool create,
       WebKit::WebFileSystemCallbacks* callbacks);
@@ -254,11 +256,7 @@ class TestWebViewDelegate : public WebKit::WebViewClient,
   virtual ~TestWebViewDelegate();
   void Reset();
 
-  void SetSmartInsertDeleteEnabled(bool enabled);
-  void SetSelectTrailingWhitespaceEnabled(bool enabled);
-
   // Additional accessors
-  WebKit::WebFrame* top_loading_frame() { return top_loading_frame_; }
 #if defined(OS_WIN)
   IDropTarget* drop_delegate() { return drop_delegate_.get(); }
 #endif
@@ -325,7 +323,7 @@ class TestWebViewDelegate : public WebKit::WebViewClient,
  private:
   // Called the title of the page changes.
   // Can be used to update the title of the window.
-  void SetPageTitle(const string16& title);
+  void SetPageTitle(const base::string16& title);
 
   // Called when the URL of the page changes.
   // Extracts the URL and forwards on to SetAddressBarURL().
@@ -338,12 +336,7 @@ class TestWebViewDelegate : public WebKit::WebViewClient,
   // Show a JavaScript alert as a popup message.
   // The caller should test whether we're in layout test mode and only
   // call this function when we really want a message to pop up.
-  void ShowJavaScriptAlert(const string16& message);
-
-  // In the Mac code, this is called to trigger the end of a test after the
-  // page has finished loading.  From here, we can generate the dump for the
-  // test.
-  void LocationChangeDone(WebKit::WebFrame*);
+  void ShowJavaScriptAlert(const base::string16& message);
 
   // Tests that require moving or resizing the main window (via resizeTo() or
   // moveTo()) pass in Chrome even though Chrome disregards move requests for
@@ -363,7 +356,7 @@ class TestWebViewDelegate : public WebKit::WebViewClient,
   void UpdateSelectionClipboard(bool is_empty_selection);
 
   // Get a string suitable for dumping a frame to the console.
-  string16 GetFrameDescription(WebKit::WebFrame* webframe);
+  base::string16 GetFrameDescription(WebKit::WebFrame* webframe);
 
   // Causes navigation actions just printout the intended navigation instead
   // of taking you to the page. This is used for cases like mailto, where you
@@ -379,9 +372,6 @@ class TestWebViewDelegate : public WebKit::WebViewClient,
 
   // Non-owning pointer.  The delegate is owned by the host.
   TestShell* shell_;
-
-  // This is non-NULL IFF a load is in progress.
-  WebKit::WebFrame* top_loading_frame_;
 
   // For tracking session history.  See RenderView.
   int page_id_;
@@ -417,12 +407,6 @@ class TestWebViewDelegate : public WebKit::WebViewClient,
   scoped_ptr<WebKit::WebPopupMenuInfo> popup_menu_info_;
   WebKit::WebRect popup_bounds_;
 #endif
-
-  // true if we want to enable smart insert/delete.
-  bool smart_insert_delete_enabled_;
-
-  // true if we want to enable selection of trailing whitespaces
-  bool select_trailing_whitespace_enabled_;
 
   // Set of headers to clear in willSendRequest.
   std::set<std::string> clear_headers_;

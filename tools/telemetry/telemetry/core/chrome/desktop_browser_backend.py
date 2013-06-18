@@ -1,9 +1,11 @@
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
+import logging
 import os
 import subprocess as subprocess
 import shutil
+import sys
 import tempfile
 
 from telemetry.core import util
@@ -14,7 +16,7 @@ class DesktopBrowserBackend(browser_backend.BrowserBackend):
   """The backend for controlling a locally-executed browser instance, on Linux,
   Mac or Windows.
   """
-  def __init__(self, options, executable, is_content_shell):
+  def __init__(self, options, executable, is_content_shell, use_login):
     super(DesktopBrowserBackend, self).__init__(
         is_content_shell=is_content_shell,
         supports_extensions=not is_content_shell, options=options)
@@ -23,6 +25,8 @@ class DesktopBrowserBackend(browser_backend.BrowserBackend):
     self._proc = None
     self._tmpdir = None
     self._tmp_output_file = None
+
+    self._use_login = use_login
 
     self._executable = executable
     if not self._executable:
@@ -37,13 +41,13 @@ class DesktopBrowserBackend(browser_backend.BrowserBackend):
     self._LaunchBrowser(options)
 
     # For old chrome versions, might have to relaunch to have the
-    # correct benchmarking switch.
+    # correct net_benchmarking switch.
     if self._chrome_branch_number < 1418:
       self.Close()
       self._supports_net_benchmarking = False
       self._LaunchBrowser(options)
 
-    if self.options.cros_desktop:
+    if self._use_login:
       cros_util.NavigateLogin(self)
 
   def _LaunchBrowser(self, options):
@@ -74,13 +78,25 @@ class DesktopBrowserBackend(browser_backend.BrowserBackend):
         args.append('--enable-benchmarking')
       if not self.options.dont_override_profile:
         self._tmpdir = tempfile.mkdtemp()
+        if self.options.profile_dir:
+          if self.is_content_shell:
+            logging.critical('Profiles cannot be used with content shell')
+            sys.exit(1)
+          shutil.rmtree(self._tmpdir)
+          shutil.copytree(self.options.profile_dir, self._tmpdir)
         args.append('--user-data-dir=%s' % self._tmpdir)
-      if self.options.cros_desktop:
+      if self._use_login:
         ext_path = os.path.join(os.path.dirname(__file__), 'chromeos_login_ext')
         args.extend(['--login-manager', '--login-profile=user',
                      '--stub-cros', '--login-screen=login',
                      '--auth-ext-path=%s' % ext_path])
     return args
+
+  @property
+  def pid(self):
+    if self._proc:
+      return self._proc.pid
+    return None
 
   def IsBrowserRunning(self):
     return self._proc.poll() == None
@@ -134,17 +150,4 @@ class DesktopBrowserBackend(browser_backend.BrowserBackend):
       self._tmp_output_file = None
 
   def CreateForwarder(self, *port_pairs):
-    return DoNothingForwarder(*port_pairs)
-
-
-class DoNothingForwarder(object):
-  def __init__(self, *port_pairs):
-    self._host_port = port_pairs[0].local_port
-
-  @property
-  def url(self):
-    assert self._host_port
-    return 'http://localhost:%i' % self._host_port
-
-  def Close(self):
-    self._host_port = None
+    return browser_backend.DoNothingForwarder(*port_pairs)

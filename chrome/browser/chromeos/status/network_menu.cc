@@ -907,7 +907,7 @@ int MoreMenuModel::GetCommandIdAt(int index) const {
 NetworkMenu::NetworkMenu(Delegate* delegate)
     : delegate_(delegate),
       refreshing_menu_(false),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_pointer_factory_(this)) {
+      weak_pointer_factory_(this) {
   main_menu_model_.reset(new MainMenuModel(weak_pointer_factory_.GetWeakPtr()));
 }
 
@@ -938,7 +938,7 @@ void NetworkMenu::ShowTabbedNetworkSettings(const Network* network) const {
     network_name = l10n_util::GetStringUTF8(
         IDS_STATUSBAR_NETWORK_DEVICE_ETHERNET);
   }
-  std::string page = StringPrintf(
+  std::string page = base::StringPrintf(
       "%s?servicePath=%s&networkType=%d&networkName=%s",
       chrome::kInternetOptionsSubPage,
       net::EscapeUrlEncodedData(network->service_path(), true).c_str(),
@@ -981,7 +981,8 @@ void NetworkMenu::DoConnect(Network* network) {
     }
   } else if (network->type() == TYPE_CELLULAR) {
     CellularNetwork* cellular = static_cast<CellularNetwork*>(network);
-    if (cellular->activation_state() != ACTIVATION_STATE_ACTIVATED) {
+    if (cellular->activation_state() != ACTIVATION_STATE_ACTIVATED ||
+        cellular->out_of_credits()) {
       ActivateCellular(cellular);
     } else {
       cros->ConnectToCellularNetwork(cellular);
@@ -1026,7 +1027,7 @@ void NetworkMenu::ConnectToNetwork(Network* network) {
 
     case TYPE_CELLULAR: {
       CellularNetwork* cell = static_cast<CellularNetwork*>(network);
-      if (cell->NeedsActivation()) {
+      if (cell->NeedsActivation() || cell->out_of_credits()) {
         ActivateCellular(cell);
       } else if (cell->connecting_or_connected() ||
                  cell->activation_state() == ACTIVATION_STATE_ACTIVATING) {

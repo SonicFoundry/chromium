@@ -110,25 +110,20 @@ cr.define('ntp', function() {
     }
   };
 
-  function gotShouldShowApps(shouldShowApps) {
-    if (shouldShowApps != loadTimeData.getBoolean('showApps')) {
-      // TODO(jeremya): update the UI in-place instead of reloading.
-      window.location.reload();
-      return;
-    }
-  }
-
   /**
    * Invoked at startup once the DOM is available to initialize the app.
    */
   function onLoad() {
-    // This will end up calling ntp.gotShouldShowApps.
-    chrome.send('getShouldShowApps');
     sectionsToWaitFor = 0;
     if (loadTimeData.getBoolean('showMostvisited'))
       sectionsToWaitFor++;
-    if (loadTimeData.getBoolean('showApps'))
+    if (loadTimeData.getBoolean('showApps')) {
       sectionsToWaitFor++;
+      if (loadTimeData.getBoolean('showAppLauncherPromo')) {
+        $('app-launcher-promo-close-button').addEventListener('click',
+            function() { chrome.send('stopShowingAppLauncherPromo'); });
+      }
+    }
     if (loadTimeData.getBoolean('isDiscoveryInNTPEnabled'))
       sectionsToWaitFor++;
     measureNavDots();
@@ -170,9 +165,9 @@ cr.define('ntp', function() {
     }
 
     if (loadTimeData.getBoolean('isDiscoveryInNTPEnabled')) {
-      var suggestions_script = document.createElement('script');
-      suggestions_script.src = 'suggestions_page.js';
-      suggestions_script.onload = function() {
+      var suggestionsScript = document.createElement('script');
+      suggestionsScript.src = 'suggestions_page.js';
+      suggestionsScript.onload = function() {
          newTabView.appendTilePage(new ntp.SuggestionsPage(),
                                    loadTimeData.getString('suggestions'),
                                    false,
@@ -181,14 +176,14 @@ cr.define('ntp', function() {
          chrome.send('getSuggestions');
          cr.dispatchSimpleEvent(document, 'sectionready', true, true);
       };
-      document.querySelector('head').appendChild(suggestions_script);
+      document.querySelector('head').appendChild(suggestionsScript);
     }
 
     if (!loadTimeData.getBoolean('showWebStoreIcon')) {
       var webStoreIcon = $('chrome-web-store-link');
       // Not all versions of the NTP have a footer, so this may not exist.
       if (webStoreIcon)
-        webStoreIcon.classList.add('invisible');
+        webStoreIcon.hidden = true;
     } else {
       var webStoreLink = loadTimeData.getString('webStoreLink');
       var url = appendParam(webStoreLink, 'utm_source', 'chrome-ntp-launcher');
@@ -368,9 +363,9 @@ cr.define('ntp', function() {
     var menu = $('footer-menu-container');
     var logo = $('logo-img');
     if (menu.clientWidth > logo.clientWidth)
-      logo.style.width = menu.clientWidth + 'px';
+      logo.style.WebkitFlex = '0 1 ' + menu.clientWidth + 'px';
     else
-      menu.style.width = logo.clientWidth + 'px';
+      menu.style.WebkitFlex = '0 1 ' + logo.clientWidth + 'px';
   }
 
   function themeChanged(opt_hasAttribution) {
@@ -525,6 +520,7 @@ cr.define('ntp', function() {
 
   function setRecentlyClosedTabs(dataItems) {
     $('recently-closed-menu-button').dataItems = dataItems;
+    layoutFooter();
   }
 
   function setMostVisitedPages(data, hasBlacklistedUrls) {
@@ -584,8 +580,10 @@ cr.define('ntp', function() {
     } else if (loginBubble) {
       loginBubble.reposition();
     }
-    if (otherSessionsButton)
+    if (otherSessionsButton) {
       otherSessionsButton.updateSignInState(isUserSignedIn);
+      layoutFooter();
+    }
   }
 
   /**
@@ -627,6 +625,11 @@ cr.define('ntp', function() {
     return newTabView.appsPrefChangedCallback.apply(newTabView, arguments);
   }
 
+  function appLauncherPromoPrefChangeCallback() {
+    return newTabView.appLauncherPromoPrefChangeCallback.apply(newTabView,
+                                                               arguments);
+  }
+
   function appsReordered() {
     return newTabView.appsReordered.apply(newTabView, arguments);
   }
@@ -636,8 +639,10 @@ cr.define('ntp', function() {
   }
 
   function setForeignSessions(sessionList, isTabSyncEnabled) {
-    if (otherSessionsButton)
+    if (otherSessionsButton) {
       otherSessionsButton.setForeignSessions(sessionList, isTabSyncEnabled);
+      layoutFooter();
+    }
   }
 
   function getAppsCallback() {
@@ -670,12 +675,12 @@ cr.define('ntp', function() {
     appMoved: appMoved,
     appRemoved: appRemoved,
     appsPrefChangeCallback: appsPrefChangeCallback,
+    appLauncherPromoPrefChangeCallback: appLauncherPromoPrefChangeCallback,
     enterRearrangeMode: enterRearrangeMode,
     getAppsCallback: getAppsCallback,
     getAppsPageIndex: getAppsPageIndex,
     getCardSlider: getCardSlider,
     onLoad: onLoad,
-    gotShouldShowApps: gotShouldShowApps,
     leaveRearrangeMode: leaveRearrangeMode,
     logTimeToClick: logTimeToClick,
     NtpFollowAction: NtpFollowAction,

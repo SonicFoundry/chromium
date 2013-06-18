@@ -19,12 +19,13 @@
 #include "content/public/browser/site_instance.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/process_type.h"
 #include "content/public/common/resource_response.h"
 #include "content/public/common/url_constants.h"
-#include "net/base/client_cert_store.h"
-#include "net/base/client_cert_store_impl.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_response_headers.h"
+#include "net/ssl/client_cert_store.h"
+#include "net/ssl/client_cert_store_impl.h"
 #include "webkit/appcache/appcache_interceptor.h"
 
 using base::TimeDelta;
@@ -436,14 +437,14 @@ void ResourceLoader::Resume() {
       request_->FollowDeferredRedirect();
       break;
     case DEFERRED_READ:
-      MessageLoop::current()->PostTask(
+      base::MessageLoop::current()->PostTask(
           FROM_HERE,
           base::Bind(&ResourceLoader::ResumeReading,
                      weak_ptr_factory_.GetWeakPtr()));
       break;
     case DEFERRED_FINISH:
       // Delay self-destruction since we don't know how we were reached.
-      MessageLoop::current()->PostTask(
+      base::MessageLoop::current()->PostTask(
           FROM_HERE,
           base::Bind(&ResourceLoader::CallDidFinishLoading,
                      weak_ptr_factory_.GetWeakPtr()));
@@ -470,7 +471,7 @@ void ResourceLoader::CancelRequestInternal(int error, bool from_renderer) {
   // WebKit will send us a cancel for downloads since it no longer handles
   // them.  In this case, ignore the cancel since we handle downloads in the
   // browser.
-  if (from_renderer && info->is_download())
+  if (from_renderer && (info->is_download() || info->is_stream()))
     return;
 
   // TODO(darin): Perhaps we should really be looking to see if the status is
@@ -492,9 +493,10 @@ void ResourceLoader::CancelRequestInternal(int error, bool from_renderer) {
     // If the request isn't in flight, then we won't get an asynchronous
     // notification from the request, so we have to signal ourselves to finish
     // this request.
-    MessageLoop::current()->PostTask(
-        FROM_HERE, base::Bind(&ResourceLoader::ResponseCompleted,
-                              weak_ptr_factory_.GetWeakPtr()));
+    base::MessageLoop::current()->PostTask(
+        FROM_HERE,
+        base::Bind(&ResourceLoader::ResponseCompleted,
+                   weak_ptr_factory_.GetWeakPtr()));
   }
 }
 
@@ -528,7 +530,7 @@ void ResourceLoader::CompleteResponseStarted() {
       response->head.mime_type == "text/html" &&
       !request_->url().SchemeIs(chrome::kChromeUIScheme) &&
       !SiteInstance::IsSameWebSite(NULL, request_->url(),
-          request_->GetSanitizedReferrer())) {
+                                   GURL(request_->referrer()))) {
     response->head.mime_type = "application/browser-plugin";
   }
 
@@ -571,11 +573,12 @@ void ResourceLoader::StartReading(bool is_continuation) {
   } else {
     // Else, trigger OnReadCompleted asynchronously to avoid starving the IO
     // thread in case the URLRequest can provide data synchronously.
-    MessageLoop::current()->PostTask(
+    base::MessageLoop::current()->PostTask(
         FROM_HERE,
         base::Bind(&ResourceLoader::OnReadCompleted,
                    weak_ptr_factory_.GetWeakPtr(),
-                   request_.get(), bytes_read));
+                   request_.get(),
+                   bytes_read));
   }
 }
 

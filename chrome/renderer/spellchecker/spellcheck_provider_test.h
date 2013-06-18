@@ -7,6 +7,7 @@
 
 #include <vector>
 
+#include "base/memory/scoped_vector.h"
 #include "base/string16.h"
 #include "chrome/renderer/spellchecker/spellcheck_provider.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -31,7 +32,6 @@ class FakeTextCheckingCompletion : public WebKit::WebTextCheckingCompletion {
 
   size_t completion_count_;
   size_t cancellation_count_;
-  WebKit::WebVector<WebKit::WebTextCheckingResult> last_results_;
 };
 
 // Faked test target, which stores sent message for verification.
@@ -43,13 +43,12 @@ class TestingSpellCheckProvider : public SpellCheckProvider {
   virtual bool Send(IPC::Message* message) OVERRIDE;
   void OnCallSpellingService(int route_id,
                              int identifier,
-                             int offset,
                              const string16& text);
   void ResetResult();
 
-  int offset_;
   string16 text_;
-  std::vector<IPC::Message*> messages_;
+  ScopedVector<IPC::Message> messages_;
+  size_t spelling_service_call_count_;
 };
 
 // SpellCheckProvider test fixture.

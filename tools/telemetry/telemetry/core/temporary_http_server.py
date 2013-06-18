@@ -10,22 +10,24 @@ import urlparse
 from telemetry.core import util
 
 class TemporaryHTTPServer(object):
-  def __init__(self, browser_backend, path):
+  def __init__(self, browser_backend, paths):
     self._server = None
     self._devnull = None
-    self._path = path
+    self._paths = paths
     self._forwarder = None
-
     self._host_port = util.GetAvailableLocalPort()
 
-    assert os.path.exists(path), path
-    assert os.path.isdir(path), path
+    for path in self._paths:
+      assert os.path.exists(path), path
 
     self._devnull = open(os.devnull, 'w')
-    self._server = subprocess.Popen(
-        [sys.executable, '-m', 'SimpleHTTPServer', str(self._host_port)],
-        cwd=self._path,
-        stdout=self._devnull, stderr=self._devnull)
+    cmd = [sys.executable, '-m', 'memory_cache_http_server',
+           str(self._host_port)]
+    cmd.extend(self._paths)
+    env = os.environ.copy()
+    env['PYTHONPATH'] = os.path.abspath(os.path.dirname(__file__))
+    self._server = subprocess.Popen(cmd, cwd=os.path.commonprefix(self._paths),
+        env=env, stdout=self._devnull, stderr=self._devnull)
 
     self._forwarder = browser_backend.CreateForwarder(
         util.PortPair(self._host_port,
@@ -33,11 +35,11 @@ class TemporaryHTTPServer(object):
 
     def IsServerUp():
       return not socket.socket().connect_ex(('localhost', self._host_port))
-    util.WaitFor(IsServerUp, 5)
+    util.WaitFor(IsServerUp, 10)
 
   @property
-  def path(self):
-    return self._path
+  def paths(self):
+    return self._paths
 
   def __enter__(self):
     return self

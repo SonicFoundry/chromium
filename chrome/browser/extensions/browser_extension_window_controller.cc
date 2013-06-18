@@ -10,7 +10,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_id.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/extensions/extension.h"
@@ -35,8 +34,6 @@ namespace keys = extensions::tabs_constants;
 std::string BrowserExtensionWindowController::GetWindowTypeText() const {
   if (browser_->is_type_popup())
     return keys::kWindowTypeValuePopup;
-  if (browser_->is_type_panel())
-    return keys::kWindowTypeValuePanel;
   if (browser_->is_app())
     return keys::kWindowTypeValueApp;
   return keys::kWindowTypeValueNormal;

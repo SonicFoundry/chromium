@@ -12,11 +12,11 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/browser/api/infobars/confirm_infobar_delegate.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
 #include "chrome/browser/certificate_viewer.h"
 #include "chrome/browser/content_settings/host_content_settings_map.h"
+#include "chrome/browser/infobars/confirm_infobar_delegate.h"
 #include "chrome/browser/infobars/infobar.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ssl/ssl_add_cert_handler.h"
 #include "chrome/browser/ssl/ssl_client_certificate_selector.h"
@@ -32,7 +32,7 @@
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
 #include "net/base/net_errors.h"
-#include "net/base/x509_certificate.h"
+#include "net/cert/x509_certificate.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
@@ -68,6 +68,8 @@ class SSLCertResultInfoBarDelegate : public ConfirmInfoBarDelegate {
 
   string16 message_;
   scoped_refptr<net::X509Certificate> cert_;  // The cert we added, if any.
+
+  DISALLOW_COPY_AND_ASSIGN(SSLCertResultInfoBarDelegate);
 };
 
 // static
@@ -121,8 +123,8 @@ string16 SSLCertResultInfoBarDelegate::GetButtonLabel(
 
 bool SSLCertResultInfoBarDelegate::Accept() {
   ShowCertificateViewer(
-      owner()->GetWebContents(),
-      owner()->GetWebContents()->GetView()->GetTopLevelNativeWindow(),
+      web_contents(),
+      web_contents()->GetView()->GetTopLevelNativeWindow(),
       cert_);
   return false;  // Hiding the infobar just as the dialog opens looks weird.
 }

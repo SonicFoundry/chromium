@@ -42,6 +42,8 @@
 //<include src="../../../../../ui/webui/resources/js/cr/ui/list_single_selection_model.js"/>
 //<include src="../../../../../ui/webui/resources/js/cr/ui/list_selection_controller.js"/>
 //<include src="../../../../../ui/webui/resources/js/cr/ui/list.js"/>
+//<include src="../../../../../ui/webui/resources/js/cr/ui/tree.js"/>
+//<include src="../../../../../ui/webui/resources/css/tree.css.js"/>
 //<include src="../../../../../ui/webui/resources/js/cr/ui/autocomplete_list.js"/>
 //
 //<include src="../../../../../ui/webui/resources/js/cr/ui/splitter.js"/>
@@ -61,11 +63,16 @@
 //<include src="../../../../../ui/webui/resources/js/cr/ui/menu.js"/>
 //<include src="../../../../../ui/webui/resources/js/cr/ui/menu_button.js"/>
 //<include src="../../../../../ui/webui/resources/js/cr/ui/context_menu_handler.js"/>
+
+(function() {
+// 'strict mode' is invoked for this scope.
+
 //<include src="combobutton.js"/>
 //<include src="commandbutton.js"/>
 //
 //<include src="path_util.js"/>
 //<include src="util.js"/>
+//<include src="action_choice_util.js"/>
 //<include src="breadcrumbs_controller.js"/>
 //<include src="butter_bar.js"/>
 //<include src="directory_contents.js">
@@ -80,11 +87,21 @@
 //<include src="file_tasks.js"/>
 //<include src="file_transfer_controller.js"/>
 //<include src="file_type.js"/>
+//<include src="scrollbar.js"/>
+//<include src="sidebar.js"/>
+//<include src="volume_list.js"/>
 //<include src="volume_manager.js"/>
 //<include src="media/media_util.js"/>
 //<include src="metadata/metadata_cache.js"/>
 //<include src="default_action_dialog.js"/>
 //<include src="file_manager_commands.js"/>
+
 // // For accurate load performance tracking place main.js should be
 // // the last include to include.
 //<include src="main.js"/>
+
+// Exports
+window.util = util;
+window.FileCopyManagerWrapper = FileCopyManagerWrapper;
+
+})();

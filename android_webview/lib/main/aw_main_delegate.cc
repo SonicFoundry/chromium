@@ -5,6 +5,8 @@
 #include "android_webview/lib/main/aw_main_delegate.h"
 
 #include "android_webview/browser/aw_content_browser_client.h"
+#include "android_webview/browser/in_process_renderer/in_process_renderer_client.h"
+#include "android_webview/common/aw_switches.h"
 #include "android_webview/lib/aw_browser_dependency_factory_impl.h"
 #include "android_webview/native/aw_geolocation_permission_context.h"
 #include "android_webview/native/aw_quota_manager_bridge_impl.h"
@@ -13,9 +15,10 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
-#include "cc/switches.h"
 #include "content/public/browser/browser_main_runner.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_switches.h"
+#include "webkit/gpu/webgraphicscontext3d_in_process_command_buffer_impl.h"
 
 namespace android_webview {
 
@@ -28,9 +31,16 @@ AwMainDelegate::~AwMainDelegate() {
 bool AwMainDelegate::BasicStartupComplete(int* exit_code) {
   content::SetContentClient(&content_client_);
 
-  CommandLine* command_line = CommandLine::ForCurrentProcess();
+  webkit::gpu::WebGraphicsContext3DInProcessCommandBufferImpl
+      ::EnableVirtualizedContext();
+
+  CommandLine* cl = CommandLine::ForCurrentProcess();
   // Set the command line to enable synchronous API compatibility.
-  command_line->AppendSwitch(switches::kEnableWebViewSynchronousAPIs);
+  if (cl->HasSwitch(switches::kMergeUIAndRendererCompositorThreads)) {
+    cl->AppendSwitch(switches::kEnableSynchronousRendererCompositor);
+  } else {
+    cl->AppendSwitch(switches::kEnableWebViewSynchronousAPIs);
+  }
 
   return false;
 }
@@ -76,7 +86,16 @@ content::ContentBrowserClient*
 
 content::ContentRendererClient*
     AwMainDelegate::CreateContentRendererClient() {
-  content_renderer_client_.reset(new AwContentRendererClient());
+  // None of this makes sense for multiprocess.
+  DCHECK(CommandLine::ForCurrentProcess()->HasSwitch(switches::kSingleProcess));
+  // During transition period allow running in either threading mode; eventually
+  // only the compositor/UI thread merge mode will be supported.
+  const bool merge_threads =
+      CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kMergeUIAndRendererCompositorThreads);
+  content_renderer_client_.reset(
+      merge_threads ? new InProcessRendererClient() :
+                      new AwContentRendererClient());
   return content_renderer_client_.get();
 }
 

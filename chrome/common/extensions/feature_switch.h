@@ -19,10 +19,8 @@ class FeatureSwitch {
  public:
   static FeatureSwitch* action_box();
   static FeatureSwitch* easy_off_store_install();
-  static FeatureSwitch* extensions_in_action_box();
   static FeatureSwitch* script_badges();
   static FeatureSwitch* script_bubble();
-  static FeatureSwitch* sideload_wipeout();
   static FeatureSwitch* prompt_for_external_extensions();
   static FeatureSwitch* tab_capture();
 

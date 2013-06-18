@@ -5,14 +5,9 @@
 #include "base/callback.h"
 #include "base/logging.h"
 #include "chrome/browser/external_protocol/external_protocol_handler.h"
-#include "chrome/browser/importer/importer_progress_dialog.h"
 #include "ui/gfx/native_widget_types.h"
 
-#if defined(OS_WIN)
-#include "chrome/browser/first_run/first_run.h"
-#include "chrome/browser/first_run/first_run_import_observer.h"
-#include "chrome/browser/ui/views/first_run_bubble.h"
-#else
+#if !defined(OS_WIN)
 #include "chrome/browser/ui/certificate_dialogs.h"
 #endif
 
@@ -44,28 +39,6 @@ void ShowAboutIPCDialog() {
 }
 
 }  // namespace chrome
-
-#if defined(OS_WIN)
-void ShowCertificateViewer(content::WebContents* web_contents,
-                           gfx::NativeWindow parent,
-                           net::X509Certificate* cert) {
-  // No certificate viewer on Windows.
-}
-#endif // OS_WIN
-
-namespace importer {
-
-void ShowImportProgressDialog(uint16 items,
-                              ImporterHost* importer_host,
-                              ImporterObserver* importer_observer,
-                              const SourceProfile& source_profile,
-                              Profile* target_profile,
-                              bool first_run) {
-  // TODO(beng);
-  NOTIMPLEMENTED();
-}
-
-}  // namespace importer
 
 #if !defined(OS_CHROMEOS)
 // static

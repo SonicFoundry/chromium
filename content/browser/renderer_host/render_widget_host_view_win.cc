@@ -4,6 +4,7 @@
 
 #include "content/browser/renderer_host/render_widget_host_view_win.h"
 
+#include <dwmapi.h>
 #include <InputScope.h>
 
 #include <algorithm>
@@ -26,6 +27,7 @@
 #include "base/win/win_util.h"
 #include "base/win/windows_version.h"
 #include "base/win/wrapped_window_proc.h"
+#include "content/browser/accessibility/browser_accessibility_manager_win.h"
 #include "content/browser/accessibility/browser_accessibility_state_impl.h"
 #include "content/browser/accessibility/browser_accessibility_win.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
@@ -67,6 +69,7 @@
 #include "ui/base/win/dpi.h"
 #include "ui/base/win/hwnd_util.h"
 #include "ui/base/win/mouse_wheel_util.h"
+#include "ui/base/win/touch_input.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/rect_conversions.h"
@@ -260,7 +263,6 @@ WebKit::WebGestureEvent CreateWebGestureEvent(HWND hwnd,
 
   POINT client_point = gesture.location().ToPOINT();
   POINT screen_point = gesture.location().ToPOINT();
-  MapWindowPoints(::GetParent(hwnd), hwnd, &client_point, 1);
   MapWindowPoints(hwnd, HWND_DESKTOP, &screen_point, 1);
 
   gesture_event.x = client_point.x;
@@ -310,6 +312,22 @@ void GetScreenInfoForWindow(WebKit::WebScreenInfo* results,
   *results = WebKit::WebScreenInfoFactory::screenInfo(
       gfx::NativeViewFromId(id));
   results->deviceScaleFactor = ui::win::GetDeviceScaleFactor();
+}
+
+void SetDwmPresentParameters(HWND window) {
+  if (base::win::GetVersion() >= base::win::VERSION_VISTA) {
+    BOOL is_composited;
+    HRESULT result = DwmIsCompositionEnabled(&is_composited);
+    if (SUCCEEDED(result) && is_composited) {
+      DWM_PRESENT_PARAMETERS present_parameters = {0};
+      present_parameters.cbSize = sizeof(present_parameters);
+      present_parameters.cBuffer = 2;
+
+      result = DwmSetPresentParameters(window, &present_parameters);
+      if (FAILED(result))
+        DLOG(ERROR) << "Unable to set present parameters: 0x%08X", result;
+    }
+  }
 }
 
 }  // namespace
@@ -388,13 +406,13 @@ RenderWidgetHostViewWin::RenderWidgetHostViewWin(RenderWidgetHost* widget)
       is_fullscreen_(false),
       ignore_mouse_movement_(true),
       composition_range_(ui::Range::InvalidRange()),
-      ALLOW_THIS_IN_INITIALIZER_LIST(
-          touch_state_(new WebTouchState(this))),
+      touch_state_(new WebTouchState(this)),
       pointer_down_context_(false),
       last_touch_location_(-1, -1),
       touch_events_enabled_(false),
-      ALLOW_THIS_IN_INITIALIZER_LIST(
-          gesture_recognizer_(ui::GestureRecognizer::Create(this))) {
+      update_layered_window_(false),
+      is_layered_window_(false),
+      gesture_recognizer_(ui::GestureRecognizer::Create(this)) {
   render_widget_host_->SetView(this);
   registrar_.Add(this,
                  NOTIFICATION_RENDERER_PROCESS_TERMINATED,
@@ -468,7 +486,7 @@ void RenderWidgetHostViewWin::WasHidden() {
   if (render_widget_host_)
     render_widget_host_->WasHidden();
 
-  if (accelerated_surface_.get())
+  if (accelerated_surface_)
     accelerated_surface_->WasHidden();
 
   if (GetBrowserAccessibilityManager())
@@ -514,18 +532,27 @@ RenderWidgetHostViewWin::GetNativeViewAccessible() {
     NotifyWinEvent(EVENT_SYSTEM_ALERT, m_hWnd, kIdCustom, CHILDID_SELF);
   }
 
-  if (!GetBrowserAccessibilityManager()) {
-    // Return busy document tree while renderer accessibility tree loads.
-    AccessibilityNodeData::State busy_state =
-        static_cast<AccessibilityNodeData::State>(
-            1 << AccessibilityNodeData::STATE_BUSY);
-    SetBrowserAccessibilityManager(
-        BrowserAccessibilityManager::CreateEmptyDocument(
-            m_hWnd, busy_state, this));
-  }
+  CreateBrowserAccessibilityManagerIfNeeded();
 
   return GetBrowserAccessibilityManager()->GetRoot()->
       ToBrowserAccessibilityWin();
+}
+
+void RenderWidgetHostViewWin::CreateBrowserAccessibilityManagerIfNeeded() {
+  if (GetBrowserAccessibilityManager())
+    return;
+
+  HRESULT hr = ::CreateStdAccessibleObject(
+      m_hWnd, OBJID_WINDOW, IID_IAccessible,
+      reinterpret_cast<void **>(&window_iaccessible_));
+  DCHECK(SUCCEEDED(hr));
+
+  SetBrowserAccessibilityManager(
+      new BrowserAccessibilityManagerWin(
+          m_hWnd,
+          window_iaccessible_.get(),
+          BrowserAccessibilityManagerWin::GetEmptyDocument(),
+          this));
 }
 
 void RenderWidgetHostViewWin::MovePluginWindows(
@@ -543,6 +570,8 @@ static BOOL CALLBACK AddChildWindowToVector(HWND hwnd, LPARAM lparam) {
 void RenderWidgetHostViewWin::CleanupCompositorWindow() {
   if (!compositor_host_window_)
     return;
+
+  ui::SetWindowUserData(compositor_host_window_, NULL);
 
   // Hide the compositor and parent it to the desktop rather than destroying
   // it immediately. The GPU process has a grace period to stop accessing the
@@ -736,6 +765,7 @@ void RenderWidgetHostViewWin::DidUpdateBackingStore(
     pixel_rect.Inset(-1, -1);
     RECT bounds = pixel_rect.ToRECT();
     InvalidateRect(&bounds, false);
+    update_layered_window_ = true;
   }
 
   if (!scroll_rect.IsEmpty()) {
@@ -757,6 +787,10 @@ void RenderWidgetHostViewWin::RenderViewGone(base::TerminationStatus status,
                                              int error_code) {
   UpdateCursorIfOverSelf();
   Destroy();
+}
+
+bool RenderWidgetHostViewWin::CanSubscribeFrame() const {
+  return render_widget_host_ != NULL;
 }
 
 void RenderWidgetHostViewWin::WillWmDestroy() {
@@ -830,7 +864,7 @@ void RenderWidgetHostViewWin::CopyFromCompositingSurface(
     const base::Callback<void(bool, const SkBitmap&)>& callback) {
   base::ScopedClosureRunner scoped_callback_runner(
       base::Bind(callback, false, SkBitmap()));
-  if (!accelerated_surface_.get())
+  if (!accelerated_surface_)
     return;
 
   if (dst_size.IsEmpty() || src_subrect.IsEmpty())
@@ -845,7 +879,7 @@ void RenderWidgetHostViewWin::CopyFromCompositingSurfaceToVideoFrame(
     const scoped_refptr<media::VideoFrame>& target,
     const base::Callback<void(bool)>& callback) {
   base::ScopedClosureRunner scoped_callback_runner(base::Bind(callback, false));
-  if (!accelerated_surface_.get())
+  if (!accelerated_surface_)
     return;
 
   if (!target || target->format() != media::VideoFrame::YV12)
@@ -873,7 +907,7 @@ void RenderWidgetHostViewWin::ProcessAckedTouchEvent(
   DCHECK(touch_events_enabled_);
 
   ScopedVector<ui::TouchEvent> events;
-  if (!MakeUITouchEventsFromWebTouchEvents(touch, &events))
+  if (!MakeUITouchEventsFromWebTouchEvents(touch, &events, LOCAL_COORDINATES))
     return;
 
   ui::EventResult result = (ack_result ==
@@ -1162,6 +1196,11 @@ void RenderWidgetHostViewWin::ExtendSelectionAndDelete(
   render_widget_host_->ExtendSelectionAndDelete(before, after);
 }
 
+void RenderWidgetHostViewWin::EnsureCaretInRect(const gfx::Rect& rect) {
+  // TODO(nona): Implement this function.
+  NOTIMPLEMENTED();
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // RenderWidgetHostViewWin, private:
 
@@ -1175,6 +1214,7 @@ LRESULT RenderWidgetHostViewWin::OnCreate(CREATESTRUCT* create_struct) {
   props_.push_back(ui::SetWindowSupportsRerouteMouseWheel(m_hWnd));
 
   WTSRegisterSessionNotification(m_hWnd, NOTIFY_FOR_THIS_SESSION);
+  SetDwmPresentParameters(m_hWnd);
 
   UpdateDesiredTouchMode();
   UpdateIMEState();
@@ -1213,8 +1253,13 @@ void RenderWidgetHostViewWin::OnDestroy() {
   TrackMouseLeave(false);
 }
 
-void RenderWidgetHostViewWin::OnPaint(HDC unused_dc) {
+LRESULT RenderWidgetHostViewWin::OnPaint(UINT message, WPARAM wparam, LPARAM lparam, BOOL& handled) {
   TRACE_EVENT0("browser", "RenderWidgetHostViewWin::OnPaint");
+  if (is_layered_window_) {
+    handled = FALSE;
+    return 0L; // return value doesn't seem to matter since we are setting handled to FALSE
+  }
+  handled = TRUE;
 
   // Grab the region to paint before creation of paint_dc since it clears the
   // damage region.
@@ -1224,7 +1269,7 @@ void RenderWidgetHostViewWin::OnPaint(HDC unused_dc) {
   CPaintDC paint_dc(m_hWnd);
 
   if (!render_widget_host_)
-    return;
+    return 0L;
 
   DCHECK(render_widget_host_->GetProcess()->HasConnection());
 
@@ -1241,13 +1286,13 @@ void RenderWidgetHostViewWin::OnPaint(HDC unused_dc) {
       paint_dc.FillRect(&host_rect,
           reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
     }
-    return;
+    return 0L;
   }
 
   if (accelerated_surface_.get() &&
       render_widget_host_->is_accelerated_compositing_active()) {
     AcceleratedPaint(paint_dc.m_hDC);
-    return;
+    return 0L;
   }
 
   about_to_validate_and_paint_ = true;
@@ -1266,7 +1311,7 @@ void RenderWidgetHostViewWin::OnPaint(HDC unused_dc) {
 
   gfx::Rect damaged_rect(paint_dc.m_ps.rcPaint);
   if (damaged_rect.IsEmpty())
-    return;
+    return 0L;
 
   if (backing_store) {
     gfx::Rect bitmap_rect(gfx::Point(),
@@ -1278,7 +1323,7 @@ void RenderWidgetHostViewWin::OnPaint(HDC unused_dc) {
 
     // Blit only the damaged regions from the backing store.
     DWORD data_size = GetRegionData(damage_region, 0, NULL);
-    scoped_array<char> region_data_buf;
+    scoped_ptr<char[]> region_data_buf;
     RGNDATA* region_data = NULL;
     RECT* region_rects = NULL;
 
@@ -1303,7 +1348,7 @@ void RenderWidgetHostViewWin::OnPaint(HDC unused_dc) {
       gfx::Rect paint_rect =
           gfx::IntersectRects(bitmap_rect, gfx::Rect(region_rects[i]));
       if (!paint_rect.IsEmpty()) {
-        BitBlt(paint_dc.m_hDC,
+          BitBlt(paint_dc.m_hDC,
                paint_rect.x(),
                paint_rect.y(),
                paint_rect.width(),
@@ -1357,6 +1402,42 @@ void RenderWidgetHostViewWin::OnPaint(HDC unused_dc) {
     if (whiteout_start_time_.is_null())
       whiteout_start_time_ = TimeTicks::Now();
   }
+
+  return 0L;
+}
+
+void RenderWidgetHostViewWin::SetLayeredWindow(HWND layered) {
+  is_layered_window_ = true;
+  layered_parent_ = layered;
+  SetTimer(NULL, 10, NULL);
+}
+
+LRESULT RenderWidgetHostViewWin::OnTimer(UINT message, WPARAM wparam, LPARAM lparam, BOOL& handled) {
+  handled = TRUE;
+
+  if (update_layered_window_) {
+    HDC dc = ::GetDC(layered_parent_);
+    BLENDFUNCTION ftn = {
+      AC_SRC_OVER, 0, 255, AC_SRC_ALPHA
+    };
+    RECT win_rect;
+    ::GetWindowRect(layered_parent_, &win_rect);
+    POINT ptDest = {win_rect.left, win_rect.top};
+    SIZE sizeDest = {
+      win_rect.right - win_rect.left,
+      win_rect.bottom - win_rect.top
+    };
+    POINT ptSrc = {0, 0};
+    BackingStoreWin* backing_store = static_cast<BackingStoreWin*>(
+        render_widget_host_->GetBackingStore(true));
+
+    if (!UpdateLayeredWindow(layered_parent_, dc, &ptDest, &sizeDest, backing_store->hdc(), &ptSrc, 0, &ftn, ULW_ALPHA)) {
+      LOG(ERROR) << "Unable to update layered window. GLE=" << std::hex << GetLastError();
+    }
+    update_layered_window_ = false;
+  }
+
+  return 0;
 }
 
 void RenderWidgetHostViewWin::DrawBackground(const RECT& dirty_rect,
@@ -1464,7 +1545,8 @@ void RenderWidgetHostViewWin::OnCancelMode() {
     SetWindowPos(NULL, 0, 0, 0, 0,
                  SWP_HIDEWINDOW | SWP_NOACTIVATE | SWP_NOMOVE |
                  SWP_NOREPOSITION | SWP_NOSIZE | SWP_NOZORDER);
-    MessageLoop::current()->PostTask(FROM_HERE,
+    base::MessageLoop::current()->PostTask(
+        FROM_HERE,
         base::Bind(&RenderWidgetHostViewWin::ShutdownHost,
                    weak_factory_.GetWeakPtr()));
   }
@@ -1778,8 +1860,9 @@ LRESULT RenderWidgetHostViewWin::OnMouseEvent(UINT message, WPARAM wparam,
   }
 
   if (message == WM_LBUTTONDOWN && pointer_down_context_ &&
-      GetBrowserAccessibilityManager())
+      GetBrowserAccessibilityManager()) {
     GetBrowserAccessibilityManager()->GotMouseDown();
+  }
 
   if (message == WM_LBUTTONUP && ui::IsMouseEventFromTouch(message) &&
       base::win::IsMetroProcess())
@@ -2072,13 +2155,17 @@ WebKit::WebTouchPoint* WebTouchState::AddTouchPoint(
 bool WebTouchState::UpdateTouchPoint(
     WebKit::WebTouchPoint* touch_point,
     TOUCHINPUT* touch_input) {
-  CPoint coordinates(TOUCH_COORD_TO_PIXEL(touch_input->x),
-                     TOUCH_COORD_TO_PIXEL(touch_input->y));
+  CPoint coordinates(
+    TOUCH_COORD_TO_PIXEL(touch_input->x) / ui::win::GetUndocumentedDPIScale(),
+    TOUCH_COORD_TO_PIXEL(touch_input->y) / ui::win::GetUndocumentedDPIScale());
   int radius_x = 1;
   int radius_y = 1;
   if (touch_input->dwMask & TOUCHINPUTMASKF_CONTACTAREA) {
-    radius_x = TOUCH_COORD_TO_PIXEL(touch_input->cxContact);
-    radius_y = TOUCH_COORD_TO_PIXEL(touch_input->cyContact);
+    // Some touch drivers send a contact area of "-1", yet flag it as valid.
+    radius_x = std::max(1,
+        static_cast<int>(TOUCH_COORD_TO_PIXEL(touch_input->cxContact)));
+    radius_y = std::max(1,
+        static_cast<int>(TOUCH_COORD_TO_PIXEL(touch_input->cyContact)));
   }
 
   // Detect and exclude stationary moves.
@@ -2093,7 +2180,7 @@ bool WebTouchState::UpdateTouchPoint(
 
   touch_point->screenPosition.x = coordinates.x;
   touch_point->screenPosition.y = coordinates.y;
-  window_->GetParent().ScreenToClient(&coordinates);
+  window_->ScreenToClient(&coordinates);
   touch_point->position.x = coordinates.x;
   touch_point->position.y = coordinates.y;
   touch_point->radiusX = radius_x;
@@ -2131,8 +2218,8 @@ LRESULT RenderWidgetHostViewWin::OnTouchEvent(UINT message, WPARAM wparam,
       static_cast<int>(WebKit::WebTouchEvent::touchesLengthCap));
   TOUCHINPUT points[WebKit::WebTouchEvent::touchesLengthCap];
 
-  if (!total || !GetTouchInputInfo((HTOUCHINPUT)lparam, total,
-                                   points, sizeof(TOUCHINPUT))) {
+  if (!total || !ui::GetTouchInputInfoWrapper((HTOUCHINPUT)lparam, total,
+                                              points, sizeof(TOUCHINPUT))) {
     TRACE_EVENT0("browser", "EarlyOut_NothingToDo");
     return 0;
   }
@@ -2140,8 +2227,8 @@ LRESULT RenderWidgetHostViewWin::OnTouchEvent(UINT message, WPARAM wparam,
   if (total == 1 && (points[0].dwFlags & TOUCHEVENTF_DOWN)) {
     pointer_down_context_ = true;
     last_touch_location_ = gfx::Point(
-        TOUCH_COORD_TO_PIXEL(points[0].x),
-        TOUCH_COORD_TO_PIXEL(points[0].y));
+        TOUCH_COORD_TO_PIXEL(points[0].x) / ui::win::GetUndocumentedDPIScale(),
+        TOUCH_COORD_TO_PIXEL(points[0].y) / ui::win::GetUndocumentedDPIScale());
   }
 
   bool should_forward = render_widget_host_->ShouldForwardTouchEvent() &&
@@ -2275,13 +2362,7 @@ LRESULT RenderWidgetHostViewWin::OnMoveOrSize(
 
 void RenderWidgetHostViewWin::OnAccessibilityNotifications(
     const std::vector<AccessibilityHostMsg_NotificationParams>& params) {
-  if (!GetBrowserAccessibilityManager()) {
-    SetBrowserAccessibilityManager(
-        BrowserAccessibilityManager::CreateEmptyDocument(
-            m_hWnd,
-            static_cast<AccessibilityNodeData::State>(0),
-            this));
-  }
+  CreateBrowserAccessibilityManagerIfNeeded();
   GetBrowserAccessibilityManager()->OnAccessibilityNotifications(params);
 }
 
@@ -2308,11 +2389,16 @@ bool RenderWidgetHostViewWin::LockMouse() {
 
   move_to_center_request_.pending = false;
   last_mouse_position_.locked_global = last_mouse_position_.unlocked_global;
-  MoveCursorToCenterIfNecessary();
 
+  // Must set the clip rectangle before MoveCursorToCenterIfNecessary()
+  // so that if the cursor is moved it uses the clip rect set to the window
+  // rect. Otherwise, MoveCursorToCenterIfNecessary() may move the cursor
+  // to the center of the screen, and then we would clip to the window
+  // rect, thus moving the cursor and causing a movement delta.
   CRect rect;
   GetWindowRect(&rect);
   ::ClipCursor(&rect);
+  MoveCursorToCenterIfNecessary();
 
   return true;
 }
@@ -2374,9 +2460,6 @@ static LRESULT CALLBACK CompositorHostWindowProc(HWND hWnd, UINT message,
   switch (message) {
   case WM_ERASEBKGND:
     return 0;
-  case WM_DESTROY:
-    ui::SetWindowUserData(hWnd, NULL);
-    return 0;
   case WM_PAINT:
     PaintCompositorHostWindow(hWnd);
     return 0;
@@ -2388,7 +2471,7 @@ static LRESULT CALLBACK CompositorHostWindowProc(HWND hWnd, UINT message,
 void RenderWidgetHostViewWin::AcceleratedPaint(HDC dc) {
   if (render_widget_host_)
     render_widget_host_->ScheduleComposite();
-  if (accelerated_surface_.get())
+  if (accelerated_surface_)
     accelerated_surface_->Present(dc);
 }
 
@@ -2425,7 +2508,7 @@ gfx::GLSurfaceHandle RenderWidgetHostViewWin::GetCompositingSurface() {
   // On Vista and later we present directly to the view window rather than a
   // child window.
   if (GpuDataManagerImpl::GetInstance()->IsUsingAcceleratedSurface()) {
-    if (!accelerated_surface_.get())
+    if (!accelerated_surface_)
       accelerated_surface_.reset(new AcceleratedSurface(m_hWnd));
     return gfx::GLSurfaceHandle(m_hWnd, gfx::NATIVE_TRANSPORT);
   }
@@ -2464,6 +2547,8 @@ gfx::GLSurfaceHandle RenderWidgetHostViewWin::GetCompositingSurface() {
   ui::CheckWindowCreated(compositor_host_window_);
 
   ui::SetWindowUserData(compositor_host_window_, this);
+
+  SetDwmPresentParameters(compositor_host_window_);
 
   gfx::GLSurfaceHandle surface_handle(compositor_host_window_,
                                       gfx::NATIVE_TRANSPORT);
@@ -2513,7 +2598,7 @@ void RenderWidgetHostViewWin::OnAcceleratedCompositingStateChange() {
     // Drop the backing store for the accelerated surface when the accelerated
     // compositor is disabled. Otherwise, a flash of the last presented frame
     // could appear when it is next enabled.
-    if (accelerated_surface_.get())
+    if (accelerated_surface_)
       accelerated_surface_->Suspend();
     hide_compositor_window_at_next_paint_ = true;
   }
@@ -2532,7 +2617,7 @@ void RenderWidgetHostViewWin::AcceleratedSurfacePostSubBuffer(
 }
 
 void RenderWidgetHostViewWin::AcceleratedSurfaceSuspend() {
-    if (!accelerated_surface_.get())
+    if (!accelerated_surface_)
       return;
 
     accelerated_surface_->Suspend();
@@ -2592,6 +2677,11 @@ gfx::Point RenderWidgetHostViewWin::GetLastTouchEventLocation() const {
   return last_touch_location_;
 }
 
+void RenderWidgetHostViewWin::FatalAccessibilityTreeError() {
+  render_widget_host_->FatalAccessibilityTreeError();
+  SetBrowserAccessibilityManager(NULL);
+}
+
 LRESULT RenderWidgetHostViewWin::OnGetObject(UINT message, WPARAM wparam,
                                              LPARAM lparam, BOOL& handled) {
   TRACE_EVENT0("browser", "RenderWidgetHostViewWin::OnGetObject");
@@ -2600,7 +2690,7 @@ LRESULT RenderWidgetHostViewWin::OnGetObject(UINT message, WPARAM wparam,
     // active windows screen reader.
     BrowserAccessibilityState::GetInstance()->OnScreenReaderDetected();
     render_widget_host_->SetAccessibilityMode(
-        BrowserAccessibilityStateImpl::GetInstance()->GetAccessibilityMode());
+        BrowserAccessibilityStateImpl::GetInstance()->accessibility_mode());
 
     // Return with failure.
     return static_cast<LRESULT>(0L);
@@ -2665,7 +2755,7 @@ LRESULT RenderWidgetHostViewWin::OnSessionChange(UINT message,
   handled = FALSE;
   TRACE_EVENT0("browser", "RenderWidgetHostViewWin::OnSessionChange");
 
-  if (!accelerated_surface_.get())
+  if (!accelerated_surface_)
     return 0;
 
   switch (wparam) {
@@ -2674,8 +2764,10 @@ LRESULT RenderWidgetHostViewWin::OnSessionChange(UINT message,
       break;
     case WTS_SESSION_UNLOCK:
       // Force a repaint to update the window contents.
-      if (!is_hidden_)
+      if (!is_hidden_) {
         InvalidateRect(NULL, FALSE);
+        update_layered_window_ = true;
+      }
       accelerated_surface_->SetIsSessionLocked(false);
       break;
     default:

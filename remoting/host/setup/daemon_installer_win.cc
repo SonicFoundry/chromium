@@ -113,13 +113,12 @@ DaemonComInstallerWin::DaemonComInstallerWin(
     const CompletionCallback& done)
     : DaemonInstallerWin(done),
       update3_(update3),
-      ALLOW_THIS_IN_INITIALIZER_LIST(
-          polling_timer_(
-              FROM_HERE,
-              base::TimeDelta::FromMilliseconds(kOmahaPollIntervalMs),
-              base::Bind(&DaemonComInstallerWin::PollInstallationStatus,
-                         base::Unretained(this)),
-              false)) {
+      polling_timer_(
+          FROM_HERE,
+          base::TimeDelta::FromMilliseconds(kOmahaPollIntervalMs),
+          base::Bind(&DaemonComInstallerWin::PollInstallationStatus,
+                     base::Unretained(this)),
+          false) {
 }
 
 void DaemonComInstallerWin::Install() {
@@ -295,10 +294,10 @@ void DaemonCommandLineInstallerWin::Install() {
 
   // Launch the updater process and wait for its termination.
   string16 command_line = WideToUTF16(
-      StringPrintf(kGoogleUpdateCommandLineFormat,
-                   google_update.c_str(),
-                   kHostOmahaAppid,
-                   kOmahaLanguage));
+      base::StringPrintf(kGoogleUpdateCommandLineFormat,
+                         google_update.c_str(),
+                         kHostOmahaAppid,
+                         kOmahaLanguage));
 
   base::LaunchOptions options;
   if (!base::LaunchProcess(command_line, options, process_.Receive())) {

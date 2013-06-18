@@ -43,7 +43,7 @@ const int kWindowContainerIds[] = {
     // containers even though these layers are higher. The user expects their
     // windows to be focused before these elements.
     kShellWindowId_PanelContainer,
-    kShellWindowId_LauncherContainer,
+    kShellWindowId_ShelfContainer,
     kShellWindowId_StatusContainer,
 };
 
@@ -149,7 +149,7 @@ ActivationController::ActivationController(
     : focus_client_(focus_client),
       updating_activation_(false),
       active_window_(NULL),
-      ALLOW_THIS_IN_INITIALIZER_LIST(observer_manager_(this)),
+      observer_manager_(this),
       delegate_(delegate) {
   aura::Env::GetInstance()->AddObserver(this);
   focus_client_->AddObserver(this);

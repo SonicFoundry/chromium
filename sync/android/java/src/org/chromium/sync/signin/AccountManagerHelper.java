@@ -10,6 +10,7 @@ import com.google.common.annotations.VisibleForTesting;
 import android.accounts.Account;
 import android.accounts.AccountManager;
 import android.accounts.AccountManagerFuture;
+import android.accounts.AuthenticatorDescription;
 import android.accounts.AuthenticatorException;
 import android.accounts.OperationCanceledException;
 import android.app.Activity;
@@ -26,6 +27,7 @@ import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.List;
+import javax.annotation.Nullable;
 
 /**
  * AccountManagerHelper wraps our access of AccountManager in Android.
@@ -133,6 +135,17 @@ public class AccountManagerHelper {
     }
 
     /**
+     * @return Whether or not there is an account authenticator for Google accounts.
+     */
+    public boolean hasGoogleAccountAuthenticator() {
+        AuthenticatorDescription[] descs = mAccountManager.getAuthenticatorTypes();
+        for (AuthenticatorDescription desc : descs) {
+            if (GOOGLE_ACCOUNT_TYPE.equals(desc.type)) return true;
+        }
+        return false;
+    }
+
+    /**
      * Gets the auth token synchronously.
      *
      * - Assumes that the account is a valid account.
@@ -153,18 +166,12 @@ public class AccountManagerHelper {
      *
      * - Assumes that the account is a valid account.
      */
-    public void getAuthTokenFromForeground(Account account, String authTokenType,
+    public void getAuthTokenFromForeground(Activity activity, Account account, String authTokenType,
                 GetAuthTokenCallback callback) {
         AtomicInteger numTries = new AtomicInteger(0);
         AtomicBoolean errorEncountered = new AtomicBoolean(false);
-        getAuthTokenAsynchronously(account, authTokenType, callback, numTries, errorEncountered,
-                null);
-    }
-
-    @Deprecated
-    public void getAuthTokenFromForeground(Activity activity, Account account,
-            String authTokenType, GetAuthTokenCallback callback) {
-        getAuthTokenFromForeground(account, authTokenType, callback);
+        getAuthTokenAsynchronously(activity, account, authTokenType, callback, numTries,
+                errorEncountered, null);
     }
 
     private class ConnectionRetry implements NetworkChangeNotifier.ConnectionTypeObserver {
@@ -192,7 +199,7 @@ public class AccountManagerHelper {
             }
             if (NetworkChangeNotifier.isOnline()) {
                 NetworkChangeNotifier.removeConnectionTypeObserver(this);
-                getAuthTokenAsynchronously(mAccount, mAuthTokenType, mCallback, mNumTries,
+                getAuthTokenAsynchronously(null, mAccount, mAuthTokenType, mCallback, mNumTries,
                         mErrorEncountered, this);
             }
         }
@@ -229,21 +236,30 @@ public class AccountManagerHelper {
         return null;
     }
 
-    private void getAuthTokenAsynchronously(final Account account, final String authTokenType,
-            final GetAuthTokenCallback callback, final AtomicInteger numTries,
-            final AtomicBoolean errorEncountered, final ConnectionRetry retry) {
-        final AccountManagerFuture<Bundle> future = mAccountManager.getAuthToken(account,
-                authTokenType, false, null, null);
+    private void getAuthTokenAsynchronously(@Nullable Activity activity, final Account account,
+            final String authTokenType, final GetAuthTokenCallback callback,
+            final AtomicInteger numTries, final AtomicBoolean errorEncountered,
+            final ConnectionRetry retry) {
+        AccountManagerFuture<Bundle> future;
+        if (numTries.get() == 0 && activity != null) {
+            future = mAccountManager.getAuthToken(
+                    account, authTokenType, null, activity, null, null);
+        } else {
+            future = mAccountManager.getAuthToken(
+                    account, authTokenType, false, null, null);
+        }
+        final AccountManagerFuture<Bundle> finalFuture = future;
         errorEncountered.set(false);
         new AsyncTask<Void, Void, String>() {
             @Override
             public String doInBackground(Void... params) {
-                return getAuthTokenInner(future, errorEncountered);
+                return getAuthTokenInner(finalFuture, errorEncountered);
             }
             @Override
             public void onPostExecute(String authToken) {
                 if (authToken != null || !errorEncountered.get() ||
-                        numTries.incrementAndGet() == MAX_TRIES) {
+                        numTries.incrementAndGet() == MAX_TRIES ||
+                        !NetworkChangeNotifier.isInitialized()) {
                     callback.tokenAvailable(authToken);
                     return;
                 }
@@ -301,6 +317,13 @@ public class AccountManagerHelper {
         AtomicInteger numTries = new AtomicInteger(0);
         AtomicBoolean errorEncountered = new AtomicBoolean(false);
         getAuthTokenAsynchronously(
-            account, authTokenType, callback, numTries, errorEncountered, null);
+            null, account, authTokenType, callback, numTries, errorEncountered, null);
+    }
+
+    /**
+     * Removes an auth token from the AccountManager's cache.
+     */
+    public void invalidateAuthToken(String accountType, String authToken) {
+        mAccountManager.invalidateAuthToken(accountType, authToken);
     }
 }

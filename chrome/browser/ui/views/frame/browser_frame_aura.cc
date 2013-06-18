@@ -91,18 +91,28 @@ class BrowserFrameAura::WindowPropertyWatcher : public aura::WindowObserver {
 ///////////////////////////////////////////////////////////////////////////////
 // BrowserFrameAura, public:
 
+// static
+const char BrowserFrameAura::kWindowName[] = "BrowserFrameAura";
+
 BrowserFrameAura::BrowserFrameAura(BrowserFrame* browser_frame,
                                    BrowserView* browser_view)
     : views::NativeWidgetAura(browser_frame),
       browser_view_(browser_view),
       window_property_watcher_(new WindowPropertyWatcher(this, browser_frame)) {
-  GetNativeWindow()->SetName("BrowserFrameAura");
+  GetNativeWindow()->SetName(kWindowName);
   GetNativeWindow()->AddObserver(window_property_watcher_.get());
 #if defined(USE_ASH)
-  // Tabbed browsers and apps (some apps are TYPE_POPUP) get their own
-  // workspace.
-  if (browser_view->browser()->type() != Browser::TYPE_POPUP ||
-      browser_view->browser()->is_app()) {
+  bool gets_own_workspace = false;
+  if (browser_view->browser()->type() != Browser::TYPE_POPUP) {
+    gets_own_workspace = true;
+  } else if (browser_view->browser()->is_app() &&
+             browser_view->browser()->app_type() == Browser::APP_TYPE_HOST) {
+    // All app windows are of type Browser::TYPE_POPUP. App windows created
+    // from the launcher get their own workspace.
+    gets_own_workspace = true;
+  }
+
+  if (gets_own_workspace) {
     ash::SetPersistsAcrossAllWorkspaces(
         GetNativeWindow(),
         ash::WINDOW_PERSISTS_ACROSS_ALL_WORKSPACES_VALUE_NO);
@@ -126,17 +136,10 @@ void BrowserFrameAura::OnWindowDestroying() {
 }
 
 void BrowserFrameAura::OnWindowTargetVisibilityChanged(bool visible) {
-  // On Aura when the BrowserView is shown it tries to restore focus, but can
-  // be blocked when this parent BrowserFrameAura isn't visible. Therefore we
-  // RestoreFocus() when we become visible, which results in the web contents
-  // being asked to focus, which places focus either in the web contents or in
-  // the location bar as appropriate.
   if (visible) {
     // Once the window has been shown we know the requested bounds
     // (if provided) have been honored and we can switch on window management.
     SetWindowAutoManaged();
-
-    browser_view_->RestoreFocus();
   }
   views::NativeWidgetAura::OnWindowTargetVisibilityChanged(visible);
 }

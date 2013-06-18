@@ -2,20 +2,46 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file. */
 
-li {
-  clear: both;
+
+.peer-connection-dump-root {
+  font-size: 0.8em;
+  padding-bottom: 3px;
 }
 
-textarea {
-  width: 100%;
+.peer-connection-hidden > *:not(h3) {
+  display:none;
 }
 
-.log-container {
+.update-log-container {
   float: left;
 }
 
-.log-header-event {
-  min-width: 600px;
+.ssrc-info-block {
+  color: #999;
+  font-size: 0.8em;
+}
+
+.stats-graph-container {
+  clear: both;
+  margin: 0.5em 0 0.5em 0;
+}
+
+.stats-graph-container-heading {
+  font-size: 0.8em;
+  font-weight: bold;
+}
+
+.stats-graph-sub-container {
+  float: left;
+  margin: 0.5em;
+}
+
+.stats-graph-sub-container > div {
+  float: left;
+}
+
+.stats-graph-sub-container > div:first-child {
+  float: none;
 }
 
 .stats-table-container {
@@ -28,8 +54,8 @@ body {
   padding: 20px;
 }
 
-button {
-  margin-left: 1em;
+details {
+  min-width: 30em;
 }
 
 h3 + div {
@@ -46,20 +72,18 @@ h2 {
 }
 
 h3 {
-  color: #666;
+  color: #555;
+  cursor: pointer;
   font-size: 0.9em;
-  margin: 0 0 0.5em 0;
+  margin: 2em 0 0.5em 0;
+  text-decoration: underline;
 }
 
 li {
+  clear: both;
   list-style-type: none;
   margin: none;
   padding: none;
-}
-
-span {
-  width: 17em;
-  display: inline-block;
 }
 
 table {
@@ -75,11 +99,6 @@ td {
 
 td:first-child {
   padding-top: 0.3em;
-}
-
-textarea {
-  border: none;
-  outline: none;
 }
 
 table > tr {

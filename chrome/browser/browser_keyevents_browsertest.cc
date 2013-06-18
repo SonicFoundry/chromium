@@ -14,8 +14,8 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/dom_operation_notification_details.h"
 #include "content/public/browser/notification_registrar.h"
@@ -25,9 +25,14 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
 #include "content/public/test/browser_test_utils.h"
-#include "net/test/test_server.h"
+#include "net/test/spawned_test_server.h"
 #include "ui/base/keycodes/keyboard_codes.h"
 #include "ui/views/controls/textfield/textfield.h"
+
+// TODO(kbr): remove: http://crbug.com/222296
+#if defined(OS_MACOSX)
+#import "base/mac/mac_util.h"
+#endif
 
 using content::DomOperationNotificationDetails;
 using content::NavigationController;
@@ -755,6 +760,10 @@ IN_PROC_BROWSER_TEST_F(BrowserKeyEventsTest, MAYBE_ReservedAccelerators) {
 
 #if defined(OS_MACOSX)
 IN_PROC_BROWSER_TEST_F(BrowserKeyEventsTest, EditorKeyBindings) {
+  // TODO(kbr): re-enable: http://crbug.com/222296
+  if (base::mac::IsOSMountainLionOrLater())
+    return;
+
   static const KeyEventTestData kTestCtrlA = {
     ui::VKEY_A, true, false, false, false,
     false, false, false, false, 4,

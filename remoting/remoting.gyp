@@ -20,6 +20,7 @@
     },
 
     'remoting_multi_process%': '<(remoting_multi_process)',
+    'remoting_rdp_session%': 1,
     'remoting_use_apps_v2%': 0,
 
     # The |major|, |build| and |patch| versions are inherited from Chrome.
@@ -54,8 +55,8 @@
     'host_plugin_name': '<!(python <(version_py_path) -f <(branding_path) -t "@HOST_PLUGIN_FILE_NAME@")',
 
     'conditions': [
-      # Remoting host is supported only on Windows, OSX and Linux.
-      ['OS=="win" or OS=="mac" or (OS=="linux" and chromeos==0)', {
+      # Remoting host is supported only on Windows, OSX and Linux (with X11).
+      ['OS=="win" or OS=="mac" or (OS=="linux" and chromeos==0 and use_x11==1)', {
         'enable_remoting_host': 1,
       }, {
         'enable_remoting_host': 0,
@@ -181,12 +182,15 @@
       'webapp/connection_history.js',
       'webapp/connection_stats.js',
       'webapp/cs_oauth2_trampoline.js',
+      'webapp/cs_third_party_auth_trampoline.js',
       'webapp/error.js',
       'webapp/event_handlers.js',
       'webapp/format_iq.js',
       'webapp/host.js',
       'webapp/host_controller.js',
       'webapp/host_list.js',
+      'webapp/host_native_messaging.js',
+      'webapp/host_plugin_wrapper.js',
       'webapp/host_screen.js',
       'webapp/host_session.js',
       'webapp/host_settings.js',
@@ -204,6 +208,9 @@
       'webapp/server_log_entry.js',
       'webapp/stats_accumulator.js',
       'webapp/storage.js',
+      'webapp/survey.js',
+      'webapp/third_party_host_permissions.js',
+      'webapp/third_party_token_fetcher.js',
       'webapp/toolbar.js',
       'webapp/ui_mode.js',
       'webapp/wcs.js',
@@ -264,6 +271,12 @@
           'REMOTING_ENABLE_BREAKPAD'
         ],
       }],
+      ['OS=="win" and remoting_multi_process != 0 and \
+          remoting_rdp_session != 0', {
+        'defines': [
+          'REMOTING_RDP_SESSION',
+        ],
+      }],
       ['remoting_multi_process != 0', {
         'defines': [
           'REMOTING_MULTI_PROCESS',
@@ -315,14 +328,16 @@
             'host/chromoting_messages.h',
             'host/client_session.cc',
             'host/client_session.h',
+            'host/client_session_control.h',
             'host/clipboard.h',
-            'host/clipboard_linux.cc',
             'host/clipboard_mac.mm',
             'host/clipboard_win.cc',
+            'host/clipboard_x11.cc',
             'host/config_file_watcher.cc',
             'host/config_file_watcher.h',
             'host/constants_mac.cc',
             'host/constants_mac.h',
+            'host/continue_window.cc',
             'host/continue_window.h',
             'host/continue_window_gtk.cc',
             'host/continue_window_mac.mm',
@@ -335,17 +350,12 @@
             'host/desktop_session_connector.h',
             'host/desktop_session_proxy.cc',
             'host/desktop_session_proxy.h',
-            'host/disconnect_window.h',
             'host/disconnect_window_gtk.cc',
             'host/disconnect_window_mac.h',
             'host/disconnect_window_mac.mm',
             'host/disconnect_window_win.cc',
             'host/dns_blackhole_checker.cc',
             'host/dns_blackhole_checker.h',
-            'host/event_executor.h',
-            'host/event_executor_linux.cc',
-            'host/event_executor_mac.cc',
-            'host/event_executor_win.cc',
             'host/heartbeat_sender.cc',
             'host/heartbeat_sender.h',
             'host/host_change_notification_listener.cc', 
@@ -353,32 +363,37 @@
             'host/host_config.cc',
             'host/host_config.h',
             'host/host_exit_codes.h',
-            'host/host_key_pair.cc',
-            'host/host_key_pair.h',
             'host/host_port_allocator.cc',
             'host/host_port_allocator.h',
             'host/host_secret.cc',
             'host/host_secret.h',
             'host/host_status_monitor.h',
             'host/host_status_observer.h',
-            'host/host_user_interface.cc',
-            'host/host_user_interface.h',
+            'host/host_window.h',
+            'host/host_window_proxy.cc',
+            'host/host_window_proxy.h',
             'host/in_memory_host_config.cc',
             'host/in_memory_host_config.h',
+            'host/input_injector.h',
+            'host/input_injector_linux.cc',
+            'host/input_injector_mac.cc',
+            'host/input_injector_win.cc',
             'host/ipc_audio_capturer.cc',
             'host/ipc_audio_capturer.h',
             'host/ipc_constants.cc',
             'host/ipc_constants.h',
             'host/ipc_desktop_environment.cc',
             'host/ipc_desktop_environment.h',
-            'host/ipc_event_executor.cc',
-            'host/ipc_event_executor.h',
             'host/ipc_host_event_logger.cc',
             'host/ipc_host_event_logger.h',
+            'host/ipc_input_injector.cc',
+            'host/ipc_input_injector.h',
+            'host/ipc_screen_controls.cc',
+            'host/ipc_screen_controls.h',
             'host/ipc_video_frame_capturer.cc',
             'host/ipc_video_frame_capturer.h',
-            'host/it2me_host_user_interface.cc',
-            'host/it2me_host_user_interface.h',
+            'host/it2me_desktop_environment.cc',
+            'host/it2me_desktop_environment.h',
             'host/json_host_config.cc',
             'host/json_host_config.h',
             'host/linux/audio_pipe_reader.cc',
@@ -390,14 +405,13 @@
             'host/local_input_monitor.h',
             'host/local_input_monitor_linux.cc',
             'host/local_input_monitor_mac.mm',
-            'host/local_input_monitor_thread_linux.cc',
-            'host/local_input_monitor_thread_linux.h',
             'host/local_input_monitor_win.cc',
             'host/log_to_server.cc',
             'host/log_to_server.h',
+            'host/me2me_desktop_environment.cc',
+            'host/me2me_desktop_environment.h',
             'host/mouse_clamping_filter.cc',
             'host/mouse_clamping_filter.h',
-            'host/mouse_move_observer.h',
             'host/network_settings.h',
             'host/pam_authorization_factory_posix.cc',
             'host/pam_authorization_factory_posix.h',
@@ -416,6 +430,9 @@
             'host/resizing_host_observer.h',
             'host/sas_injector.h',
             'host/sas_injector_win.cc',
+            'host/screen_controls.h',
+            'host/screen_resolution.cc',
+            'host/screen_resolution.h',
             'host/server_log_entry.cc',
             'host/server_log_entry.h',
             'host/service_client.cc',
@@ -426,6 +443,8 @@
             'host/session_manager_factory.h',
             'host/signaling_connector.cc',
             'host/signaling_connector.h',
+            'host/token_validator_factory_impl.cc',
+            'host/token_validator_factory_impl.h',
             'host/ui_strings.cc',
             'host/ui_strings.h',
             'host/url_request_context.cc',
@@ -439,6 +458,8 @@
             'host/vlog_net_log.h',
             'host/win/launch_process_with_token.cc',
             'host/win/launch_process_with_token.h',
+            'host/win/message_window.cc',
+            'host/win/message_window.h',
             'host/win/omaha.cc',
             'host/win/omaha.h',
             'host/win/rdp_client.cc',
@@ -449,10 +470,13 @@
             'host/win/security_descriptor.h',
             'host/win/session_desktop_environment.cc',
             'host/win/session_desktop_environment.h',
-            'host/win/session_event_executor.cc',
-            'host/win/session_event_executor.h',
+            'host/win/session_input_injector.cc',
+            'host/win/session_input_injector.h',
             'host/win/window_station_and_desktop.cc',
             'host/win/window_station_and_desktop.h',
+            'host/win/wts_terminal_monitor.cc',
+            'host/win/wts_terminal_monitor.h',
+            'host/win/wts_terminal_observer.h',
           ],
           'conditions': [
             ['toolkit_uses_gtk==1', {
@@ -687,6 +711,27 @@
           ],
         },  # end of target 'remoting_host_plugin'
 
+        {
+          'target_name': 'remoting_native_messaging_host',
+          'type': 'executable',
+          'variables': { 'enable_wexit_time_destructors': 1, },
+          'dependencies': [
+            '../base/base.gyp:base',
+            'remoting_host',
+            'remoting_host_logging',
+            'remoting_host_setup_base',
+          ],
+          'defines': [
+            'VERSION=<(version_full)',
+          ],
+          'sources': [
+            'host/setup/native_messaging_host.cc',
+            'host/setup/native_messaging_reader.cc',
+            'host/setup/native_messaging_reader.h',
+            'host/setup/native_messaging_writer.cc',
+            'host/setup/native_messaging_writer.h',
+          ],
+        },  # end of target 'remoting_native_messaging_host'
       ],  # end of 'targets'
     }],  # 'enable_remoting_host==1'
 
@@ -832,7 +877,7 @@
     }],  # 'OS!="win" and enable_remoting_host==1'
 
 
-    ['OS=="linux" and chromeos==0', {
+    ['OS=="linux" and chromeos==0 and enable_remoting_host==1', {
       'targets': [
         # Linux breakpad processing
         {
@@ -1176,6 +1221,27 @@
           ],
         },  # end of target 'remoting_lib_idl'
 
+        # remoting_lib_ps builds the proxy/stub code generated by MIDL (see
+        # remoting_lib_idl).
+        {
+          'target_name': 'remoting_lib_ps',
+          'type': 'static_library',
+          'defines': [
+            # Prepend 'Ps' to the MIDL-generated routines. This includes
+            # DllGetClassObject, DllCanUnloadNow, DllRegisterServer,
+            # DllUnregisterServer, and DllMain.
+            'ENTRY_PREFIX=Ps',
+            'REGISTER_PROXY_DLL',
+          ],
+          'dependencies': [
+            'remoting_lib_idl',
+          ],
+          'sources': [
+            '<(SHARED_INTERMEDIATE_DIR)/remoting/host/chromoting_lib.dlldata.c',
+            '<(SHARED_INTERMEDIATE_DIR)/remoting/host/chromoting_lib_p.c',
+          ],
+        },  # end of target 'remoting_lib_ps'
+
         # Regenerates 'chromoting_lib.rc' (used to embed 'chromoting_lib.tlb'
         # into remoting_core.dll's resources) every time
         # 'chromoting_lib_idl.templ' changes. Making remoting_core depend on
@@ -1332,6 +1398,7 @@
             'remoting_host_event_logger',
             'remoting_host_logging',
             'remoting_lib_idl',
+            'remoting_lib_ps',
             'remoting_lib_rc',
             'remoting_me2me_host_static',
             'remoting_protocol',
@@ -1391,15 +1458,25 @@
             'host/win/wts_console_session_process_driver.h',
             'host/win/wts_session_process_delegate.cc',
             'host/win/wts_session_process_delegate.h',
-            'host/win/wts_terminal_monitor.h',
-            'host/win/wts_terminal_observer.h',
             'host/worker_process_ipc_delegate.h',
           ],
           'msvs_settings': {
             'VCLinkerTool': {
               'AdditionalDependencies': [
                 'comctl32.lib',
+                'rpcns4.lib',
+                'rpcrt4.lib',
+                'uuid.lib',
                 'wtsapi32.lib',
+              ],
+              # Export the proxy/stub entry points. Note that the generated
+              # routines have 'Ps' prefix to avoid conflicts with our own
+              # DllMain().
+              'AdditionalOptions': [
+                '/EXPORT:DllGetClassObject=PsDllGetClassObject,PRIVATE',
+                '/EXPORT:DllCanUnloadNow=PsDllCanUnloadNow,PRIVATE',
+                '/EXPORT:DllRegisterServer=PsDllRegisterServer,PRIVATE',
+                '/EXPORT:DllUnregisterServer=PsDllUnregisterServer,PRIVATE',
               ],
             },
           },
@@ -1661,12 +1738,11 @@
       ],  # end of 'targets'
     }],  # 'OS=="win"'
 
-    # The host installation is generated only if WiX is available and when
-    # building a non-component build. WiX does not provide a easy way to
-    # include all DLLs imported by the installed binaries, so supporting
-    # the component build becomes a burden.
-    ['OS == "win" and component != "shared_library" and wix_exists == "True" \
-        and sas_dll_exists == "True"', {
+    # The host installation is generated only if WiX is available. If
+    # component build is used the produced installation will not work due to
+    # missing DLLs. We build it anyway to make sure the GYP scripts are executed
+    # by the bots.
+    ['OS == "win" and wix_exists == "True" and sas_dll_exists == "True"', {
       'targets': [
         {
           'target_name': 'remoting_host_installation',
@@ -1857,6 +1933,8 @@
         'client/plugin/pepper_plugin_thread_delegate.h',
         'client/plugin/pepper_port_allocator.cc',
         'client/plugin/pepper_port_allocator.h',
+        'client/plugin/pepper_token_fetcher.cc',
+        'client/plugin/pepper_token_fetcher.h',
         'client/plugin/pepper_view.cc',
         'client/plugin/pepper_view.h',
         'client/plugin/pepper_util.cc',
@@ -2149,6 +2227,7 @@
         '../net/net.gyp:net',
         '../skia/skia.gyp:skia',
         '../third_party/libvpx/libvpx.gyp:libvpx',
+        '../third_party/libyuv/libyuv.gyp:libyuv',
         '../third_party/opus/opus.gyp:opus',
         '../third_party/protobuf/protobuf.gyp:protobuf_lite',
         '../third_party/speex/speex.gyp:libspeex',
@@ -2170,12 +2249,14 @@
       # depend on chromotocol_proto_lib for headers.
       'hard_dependency': 1,
       'sources': [
+        'base/auth_token_util.cc',
+        'base/auth_token_util.h',
         'base/auto_thread.cc',
         'base/auto_thread.h',
         'base/auto_thread_task_runner.cc',
         'base/auto_thread_task_runner.h',
-        'base/auth_token_util.cc',
-        'base/auth_token_util.h',
+        'base/capabilities.cc',
+        'base/capabilities.h',
         'base/compound_buffer.cc',
         'base/compound_buffer.h',
         'base/constants.cc',
@@ -2186,6 +2267,8 @@
         'base/rate_counter.h',
         'base/resources.cc',
         'base/resources.h',
+        'base/rsa_key_pair.cc',
+        'base/rsa_key_pair.h',
         'base/running_average.cc',
         'base/running_average.h',
         'base/socket_reader.cc',
@@ -2282,11 +2365,9 @@
         '../jingle/jingle.gyp:jingle_glue',
         '../jingle/jingle.gyp:notifier',
         '../third_party/libjingle/libjingle.gyp:libjingle',
-        '../third_party/libjingle/libjingle.gyp:libjingle_p2p',
       ],
       'export_dependent_settings': [
         '../third_party/libjingle/libjingle.gyp:libjingle',
-        '../third_party/libjingle/libjingle.gyp:libjingle_p2p',
       ],
       'sources': [
         'jingle_glue/chromium_socket_factory.cc',
@@ -2385,8 +2466,12 @@
         'protocol/mouse_input_filter.cc',
         'protocol/mouse_input_filter.h',
         'protocol/name_value_map.h',
-        'protocol/negotiating_authenticator.cc',
-        'protocol/negotiating_authenticator.h',
+        'protocol/negotiating_authenticator_base.cc',
+        'protocol/negotiating_authenticator_base.h',
+        'protocol/negotiating_client_authenticator.cc',
+        'protocol/negotiating_client_authenticator.h',
+        'protocol/negotiating_host_authenticator.cc',
+        'protocol/negotiating_host_authenticator.h',
         'protocol/protobuf_video_reader.cc',
         'protocol/protobuf_video_reader.h',
         'protocol/protobuf_video_writer.cc',
@@ -2403,6 +2488,12 @@
         'protocol/transport_config.h',
         'protocol/util.cc',
         'protocol/util.h',
+        'protocol/third_party_authenticator_base.cc',
+        'protocol/third_party_authenticator_base.h',
+        'protocol/third_party_client_authenticator.cc',
+        'protocol/third_party_client_authenticator.h',
+        'protocol/third_party_host_authenticator.cc',
+        'protocol/third_party_host_authenticator.h',
         'protocol/v2_authenticator.cc',
         'protocol/v2_authenticator.h',
         'protocol/video_reader.cc',
@@ -2452,8 +2543,13 @@
         'base/auto_thread_task_runner_unittest.cc',
         'base/auto_thread_unittest.cc',
         'base/breakpad_win_unittest.cc',
+        'base/capabilities_unittest.cc',
         'base/compound_buffer_unittest.cc',
+        'base/rate_counter_unittest.cc',
         'base/resources_unittest.cc',
+        'base/rsa_key_pair_unittest.cc',
+        'base/running_average_unittest.cc',
+        'base/test_rsa_key_pair.h',
         'base/typed_buffer_unittest.cc',
         'base/util_unittest.cc',
         'client/audio_player_unittest.cc',
@@ -2468,6 +2564,7 @@
         'host/audio_silence_detector_unittest.cc',
         'host/branding.cc',
         'host/branding.h',
+        'host/capture_scheduler_unittest.cc',
         'host/chromoting_host_context_unittest.cc',
         'host/chromoting_host_unittest.cc',
         'host/client_session_unittest.cc',
@@ -2486,7 +2583,6 @@
         'host/desktop_session_agent_win.cc',
         'host/heartbeat_sender_unittest.cc',
         'host/host_change_notification_listener_unittest.cc',
-        'host/host_key_pair_unittest.cc',
         'host/host_mock_objects.cc',
         'host/host_mock_objects.h',
         'host/host_status_monitor_fake.h',
@@ -2504,11 +2600,13 @@
         'host/register_support_host_request_unittest.cc',
         'host/remote_input_filter_unittest.cc',
         'host/resizing_host_observer_unittest.cc',
+        'host/screen_resolution_unittest.cc',
         'host/server_log_entry_unittest.cc',
         'host/setup/oauth_helper_unittest.cc',
         'host/setup/pin_validator_unittest.cc',
-        'host/test_key_pair.h',
+        'host/token_validator_factory_impl_unittest.cc',
         'host/video_scheduler_unittest.cc',
+        'host/win/message_window_unittest.cc',
         'host/win/rdp_client_unittest.cc',
         'host/win/worker_process_launcher.cc',
         'host/win/worker_process_launcher.h',
@@ -2545,6 +2643,7 @@
         'protocol/protocol_mock_objects.cc',
         'protocol/protocol_mock_objects.h',
         'protocol/ssl_hmac_channel_authenticator_unittest.cc',
+        'protocol/third_party_authenticator_unittest.cc',
         'protocol/v2_authenticator_unittest.cc',
       ],
       'conditions': [
@@ -2558,6 +2657,7 @@
           'link_settings': {
             'libraries': [
               '-lrpcrt4.lib',
+              '-lwtsapi32.lib',
             ],
           },
         }],

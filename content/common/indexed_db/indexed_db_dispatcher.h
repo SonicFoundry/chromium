@@ -13,21 +13,20 @@
 #include "base/nullable_string16.h"
 #include "content/common/content_export.h"
 #include "ipc/ipc_sync_message_filter.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebExceptionCode.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebIDBCallbacks.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebIDBCursor.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebIDBDatabase.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebIDBDatabaseCallbacks.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebIDBCallbacks.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebIDBCursor.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebIDBDatabase.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebIDBDatabaseCallbacks.h"
 #include "webkit/glue/worker_task_runner.h"
 
 struct IndexedDBDatabaseMetadata;
 struct IndexedDBMsg_CallbacksSuccessCursorContinue_Params;
 struct IndexedDBMsg_CallbacksSuccessCursorPrefetch_Params;
 struct IndexedDBMsg_CallbacksSuccessIDBCursor_Params;
+struct IndexedDBMsg_CallbacksUpgradeNeeded_Params;
 
 namespace WebKit {
 class WebData;
-class WebFrame;
 }
 
 namespace content {
@@ -63,16 +62,7 @@ class CONTENT_EXPORT IndexedDBDispatcher
 
   void RequestIDBFactoryGetDatabaseNames(
       WebKit::WebIDBCallbacks* callbacks,
-      const string16& origin,
-      WebKit::WebFrame* web_frame);
-
-  void RequestIDBFactoryOpen(
-      const string16& name,
-      int64 version,
-      WebKit::WebIDBCallbacks* callbacks,
-      WebKit::WebIDBDatabaseCallbacks* database_callbacks,
-      const string16& origin,
-      WebKit::WebFrame* web_frame);
+      const string16& database_identifier);
 
   void RequestIDBFactoryOpen(
       const string16& name,
@@ -80,43 +70,38 @@ class CONTENT_EXPORT IndexedDBDispatcher
       int64 transaction_id,
       WebKit::WebIDBCallbacks* callbacks,
       WebKit::WebIDBDatabaseCallbacks* database_callbacks,
-      const string16& origin,
-      WebKit::WebFrame* web_frame);
+      const string16& database_identifier);
 
   void RequestIDBFactoryDeleteDatabase(
       const string16& name,
       WebKit::WebIDBCallbacks* callbacks,
-      const string16& origin,
-      WebKit::WebFrame* web_frame);
+      const string16& database_identifier);
 
   void RequestIDBCursorAdvance(
       unsigned long count,
       WebKit::WebIDBCallbacks* callbacks_ptr,
-      int32 ipc_cursor_id,
-      WebKit::WebExceptionCode* ec);
+      int32 ipc_cursor_id);
 
   virtual void RequestIDBCursorContinue(
       const IndexedDBKey& key,
       WebKit::WebIDBCallbacks* callbacks_ptr,
-      int32 ipc_cursor_id,
-      WebKit::WebExceptionCode* ec);
+      int32 ipc_cursor_id);
 
   virtual void RequestIDBCursorPrefetch(
       int n,
       WebKit::WebIDBCallbacks* callbacks_ptr,
-      int32 ipc_cursor_id,
-      WebKit::WebExceptionCode* ec);
+      int32 ipc_cursor_id);
 
   void RequestIDBCursorPrefetchReset(int used_prefetches, int unused_prefetches,
                                      int32 ipc_cursor_id);
 
   void RequestIDBCursorDelete(
       WebKit::WebIDBCallbacks* callbacks_ptr,
-      int32 ipc_cursor_id,
-      WebKit::WebExceptionCode* ec);
+      int32 ipc_cursor_id);
 
   void RequestIDBDatabaseClose(
-      int32 ipc_database_id);
+      int32 ipc_database_id,
+      int32 ipc_database_callbacks_id);
 
   void RequestIDBDatabaseCreateTransaction(
       int32 ipc_database_id,
@@ -192,16 +177,17 @@ class CONTENT_EXPORT IndexedDBDispatcher
   void init_params(T& params, WebKit::WebIDBCallbacks* callbacks_ptr) {
     scoped_ptr<WebKit::WebIDBCallbacks> callbacks(callbacks_ptr);
     params.ipc_thread_id = CurrentWorkerId();
-    params.ipc_response_id = pending_callbacks_.Add(callbacks.release());
+    params.ipc_callbacks_id = pending_callbacks_.Add(callbacks.release());
   }
 
   // IDBCallback message handlers.
   void OnSuccessIDBDatabase(int32 ipc_thread_id,
-                            int32 ipc_response_id,
+                            int32 ipc_callbacks_id,
+                            int32 ipc_database_callbacks_id,
                             int32 ipc_object_id,
                             const IndexedDBDatabaseMetadata& idb_metadata);
   void OnSuccessIndexedDBKey(int32 ipc_thread_id,
-                             int32 ipc_response_id,
+                             int32 ipc_callbacks_id,
                              const IndexedDBKey& key);
 
   void OnSuccessOpenCursor(
@@ -211,36 +197,33 @@ class CONTENT_EXPORT IndexedDBDispatcher
   void OnSuccessCursorPrefetch(
       const IndexedDBMsg_CallbacksSuccessCursorPrefetch_Params& p);
   void OnSuccessStringList(int32 ipc_thread_id,
-                           int32 ipc_response_id,
+                           int32 ipc_callbacks_id,
                            const std::vector<string16>& value);
   void OnSuccessValue(
       int32 ipc_thread_id,
-      int32 ipc_response_id,
+      int32 ipc_callbacks_id,
       const std::vector<char>& value);
   void OnSuccessValueWithKey(
       int32 ipc_thread_id,
-      int32 ipc_response_id,
+      int32 ipc_callbacks_id,
       const std::vector<char>& value,
       const IndexedDBKey& primary_key,
       const IndexedDBKeyPath& key_path);
   void OnSuccessInteger(
       int32 ipc_thread_id,
-      int32 ipc_response_id,
+      int32 ipc_callbacks_id,
       int64 value);
   void OnSuccessUndefined(
       int32 ipc_thread_id,
-      int32 ipc_response_id);
+      int32 ipc_callbacks_id);
   void OnError(int32 ipc_thread_id,
-               int32 ipc_response_id,
+               int32 ipc_callbacks_id,
                int code,
                const string16& message);
-  void OnIntBlocked(int32 ipc_thread_id, int32 ipc_response_id,
+  void OnIntBlocked(int32 ipc_thread_id,
+                    int32 ipc_callbacks_id,
                     int64 existing_version);
-  void OnUpgradeNeeded(int32 ipc_thread_id,
-                       int32 ipc_response_id,
-                       int32 ipc_database_id,
-                       int64 old_version,
-                       const IndexedDBDatabaseMetadata& metdata);
+  void OnUpgradeNeeded(const IndexedDBMsg_CallbacksUpgradeNeeded_Params& p);
   void OnAbort(int32 ipc_thread_id,
                int32 ipc_database_id,
                int64 transaction_id,
@@ -250,9 +233,6 @@ class CONTENT_EXPORT IndexedDBDispatcher
                   int32 ipc_database_id,
                   int64 transaction_id);
   void OnForcedClose(int32 ipc_thread_id, int32 ipc_database_id);
-  void OnVersionChange(int32 ipc_thread_id,
-                       int32 ipc_database_id,
-                       const string16& newVersion);
   void OnIntVersionChange(int32 ipc_thread_id,
                           int32 ipc_database_id,
                           int64 old_version,

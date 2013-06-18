@@ -10,6 +10,8 @@ cr.define('print_preview', function() {
    * destinations.
    * @param {string} id ID of the destination.
    * @param {!print_preview.Destination.Type} type Type of the destination.
+   * @param {!print_preview.Destination.Origin} origin Origin of the
+   *     destination.
    * @param {string} displayName Display name of the destination.
    * @param {boolean} isRecent Whether the destination has been used recently.
    * @param {!print_preview.Destination.ConnectionStatus} connectionStatus
@@ -21,8 +23,8 @@ cr.define('print_preview', function() {
    *     destination.
    * @constructor
    */
-  function Destination(id, type, displayName, isRecent, connectionStatus,
-                       opt_params) {
+  function Destination(id, type, origin, displayName, isRecent,
+                       connectionStatus, opt_params) {
     /**
      * ID of the destination.
      * @type {string}
@@ -36,6 +38,13 @@ cr.define('print_preview', function() {
      * @private
      */
     this.type_ = type;
+
+    /**
+     * Origin of the destination.
+     * @type {!print_preview.Destination.Origin}
+     * @private
+     */
+    this.origin_ = origin;
 
     /**
      * Display name of the destination.
@@ -60,7 +69,7 @@ cr.define('print_preview', function() {
 
     /**
      * Print capabilities of the destination.
-     * @type {print_preview.ChromiumCapabilities}
+     * @type {print_preview.Cdd}
      * @private
      */
     this.capabilities_ = null;
@@ -133,6 +142,17 @@ cr.define('print_preview', function() {
   };
 
   /**
+   * Enumeration of the origin types for cloud destinations.
+   * @enum {string}
+   */
+  Destination.Origin = {
+    LOCAL: 'local',
+    COOKIES: 'cookies',
+    PROFILE: 'profile',
+    DEVICE: 'device'
+  };
+
+  /**
    * Enumeration of the connection statuses of printer destinations.
    * @enum {string}
    */
@@ -171,6 +191,13 @@ cr.define('print_preview', function() {
       return this.type_;
     },
 
+    /**
+     * @return {!print_preview.Destination.Origin} Origin of the destination.
+     */
+    get origin() {
+      return this.origin_;
+    },
+
     /** @return {string} Display name of the destination. */
     get displayName() {
       return this.displayName_;
@@ -198,7 +225,7 @@ cr.define('print_preview', function() {
 
     /** @return {boolean} Whether the destination is local or cloud-based. */
     get isLocal() {
-      return this.type_ == Destination.Type.LOCAL;
+      return this.origin_ == Destination.Origin.LOCAL;
     },
 
     /**
@@ -223,17 +250,14 @@ cr.define('print_preview', function() {
       return this.tags_.slice(0);
     },
 
-    /**
-     * @return {print_preview.ChromiumCapabilities} Print capabilities of the
-     *     destination.
-     */
+    /** @return {print_preview.Cdd} Print capabilities of the destination. */
     get capabilities() {
       return this.capabilities_;
     },
 
     /**
-     * @param {!print_preview.ChromiumCapabilities} capabilities Print
-     *     capabilities of the destination.
+     * @param {!print_preview.Cdd} capabilities Print capabilities of the
+     *     destination.
      */
     set capabilities(capabilities) {
       this.capabilities_ = capabilities;
@@ -314,8 +338,36 @@ cr.define('print_preview', function() {
     }
   };
 
+  /**
+   * The CDD (Cloud Device Description) describes the capabilities of a print
+   * destination.
+   *
+   * @typedef {{
+   *   version: string,
+   *   printer: {
+   *     vendor_capability: !Array.<{Object}>,
+   *     collate: {default: boolean=}=,
+   *     color: {
+   *       option: !Array.<{
+   *         type: string=,
+   *         vendor_id: string=,
+   *         custom_display_name: string=,
+   *         is_default: boolean=
+   *       }>
+   *     }=,
+   *     copies: {default: number=, max: number=}=,
+   *     duplex: {option: !Array.<{type: string=, is_default: boolean=}>}=,
+   *     page_orientation: {
+   *       option: !Array.<{type: string=, is_default: boolean=}>
+   *     }=
+   *   }
+   * }}
+   */
+  var Cdd = Object;
+
   // Export
   return {
-    Destination: Destination
+    Destination: Destination,
+    Cdd: Cdd
   };
 });

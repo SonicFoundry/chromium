@@ -21,13 +21,13 @@ class ChangeListLoaderObserver {
   virtual void OnDirectoryChanged(const base::FilePath& directory_path) {
   }
 
-  // Triggered when a resource list is fetched. |num_accumulated_entries|
-  // tells the number of entries fetched so far.
-  virtual void OnResourceListFetched(int num_accumulated_entries) {
-  }
-
   // Triggered when the feed from the server is loaded.
   virtual void OnFeedFromServerLoaded() {
+  }
+
+  // Triggered when the feed is loaded for the first time, either from the
+  // cache or the server.
+  virtual void OnInitialFeedLoaded() {
   }
 
  protected:

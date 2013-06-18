@@ -6,12 +6,14 @@
 #include <vector>
 
 #include "base/files/file_path.h"
+#include "base/memory/scoped_ptr.h"
 #include "base/stl_util.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_builder.h"
 #include "chrome/common/extensions/manifest_handler.h"
 #include "chrome/common/extensions/value_builder.h"
+#include "extensions/common/install_warning.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace extensions {
@@ -23,6 +25,20 @@ std::vector<std::string> SingleKey(const std::string& key) {
 }
 
 }  // namespace
+
+class ScopedTestingManifestHandlerRegistry {
+ public:
+  ScopedTestingManifestHandlerRegistry() {
+    old_registry_ = ManifestHandlerRegistry::SetForTesting(&registry_);
+  }
+
+  ~ScopedTestingManifestHandlerRegistry() {
+    ManifestHandlerRegistry::SetForTesting(old_registry_);
+  }
+
+  ManifestHandlerRegistry registry_;
+  ManifestHandlerRegistry* old_registry_;
+};
 
 class ManifestHandlerTest : public testing::Test {
  public:
@@ -82,7 +98,6 @@ class ManifestHandlerTest : public testing::Test {
     std::vector<std::string> prereqs_;
     ParsingWatcher* watcher_;
 
-   private:
     virtual const std::vector<std::string> Keys() const OVERRIDE {
       return keys_;
     }
@@ -116,13 +131,45 @@ class ManifestHandlerTest : public testing::Test {
     }
   };
 
+  class TestManifestValidator : public ManifestHandler {
+   public:
+    TestManifestValidator(bool return_value,
+                          bool always_validate,
+                          std::vector<std::string> keys)
+        : return_value_(return_value),
+          always_validate_(always_validate),
+          keys_(keys) {
+    }
+
+    virtual bool Parse(Extension* extension, string16* error) OVERRIDE {
+      return true;
+    }
+
+    virtual bool Validate(
+        const Extension* extension,
+        std::string* error,
+        std::vector<InstallWarning>* warnings) const OVERRIDE {
+      return return_value_;
+    }
+
+    virtual bool AlwaysValidateForType(Manifest::Type type) const OVERRIDE {
+      return always_validate_;
+    }
+
+   private:
+    virtual const std::vector<std::string> Keys() const OVERRIDE {
+      return keys_;
+    }
+
  protected:
-  virtual void TearDown() OVERRIDE {
-    ManifestHandler::ClearRegistryForTesting();
-  }
+    bool return_value_;
+    bool always_validate_;
+    std::vector<std::string> keys_;
+  };
 };
 
 TEST_F(ManifestHandlerTest, DependentHandlers) {
+  ScopedTestingManifestHandlerRegistry registry;
   ParsingWatcher watcher;
   std::vector<std::string> prereqs;
   (new TestManifestHandler("A", SingleKey("a"), prereqs, &watcher))->Register();
@@ -163,6 +210,7 @@ TEST_F(ManifestHandlerTest, DependentHandlers) {
 }
 
 TEST_F(ManifestHandlerTest, FailingHandlers) {
+  ScopedTestingManifestHandlerRegistry registry;
   // Can't use ExtensionBuilder, because this extension will fail to
   // be parsed.
   scoped_ptr<base::DictionaryValue> manifest_a(
@@ -196,6 +244,36 @@ TEST_F(ManifestHandlerTest, FailingHandlers) {
       &error);
   EXPECT_FALSE(extension);
   EXPECT_EQ("A", error);
+}
+
+TEST_F(ManifestHandlerTest, Validate) {
+  ScopedTestingManifestHandlerRegistry registry;
+  scoped_refptr<Extension> extension = ExtensionBuilder()
+      .SetManifest(DictionaryBuilder()
+                   .Set("name", "no name")
+                   .Set("version", "0")
+                   .Set("manifest_version", 2)
+                   .Set("a", 1)
+                   .Set("b", 2))
+      .Build();
+  EXPECT_TRUE(extension);
+
+  std::string error;
+  std::vector<InstallWarning> warnings;
+  // Always validates and fails.
+  (new TestManifestValidator(false, true, SingleKey("c")))->Register();
+  EXPECT_FALSE(ManifestHandler::ValidateExtension(
+      extension, &error, &warnings));
+
+  // This overrides the registered handler for "c".
+  (new TestManifestValidator(false, false, SingleKey("c")))->Register();
+  EXPECT_TRUE(ManifestHandler::ValidateExtension(
+      extension, &error, &warnings));
+
+  // Validates "a" and fails.
+  (new TestManifestValidator(false, true, SingleKey("a")))->Register();
+  EXPECT_FALSE(ManifestHandler::ValidateExtension(
+      extension, &error, &warnings));
 }
 
 }  // namespace extensions

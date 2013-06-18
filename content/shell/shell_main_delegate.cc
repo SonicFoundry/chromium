@@ -11,9 +11,9 @@
 #include "content/public/browser/browser_main_runner.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
+#include "content/shell/renderer/shell_content_renderer_client.h"
 #include "content/shell/shell_browser_main.h"
 #include "content/shell/shell_content_browser_client.h"
-#include "content/shell/shell_content_renderer_client.h"
 #include "content/shell/shell_switches.h"
 #include "content/shell/webkit_test_platform_support.h"
 #include "content/public/test/layouttest_support.h"
@@ -94,15 +94,23 @@ bool ShellMainDelegate::BasicStartupComplete(int* exit_code) {
   // Enable trace control and transport through event tracing for Windows.
   logging::LogEventProvider::Initialize(kContentShellProviderName);
 #endif
+#if defined(OS_MACOSX)
+  // Needs to happen before InitializeResourceBundle() and before
+  // WebKitTestPlatformInitialize() are called.
+  OverrideFrameworkBundlePath();
+  OverrideChildProcessPath();
+#endif  // OS_MACOSX
 
   InitLogging();
   CommandLine& command_line = *CommandLine::ForCurrentProcess();
   if (command_line.HasSwitch(switches::kDumpRenderTree)) {
+    command_line.AppendSwitch(switches::kProcessPerTab);
     command_line.AppendSwitch(switches::kAllowFileAccessFromFiles);
     command_line.AppendSwitchASCII(
         switches::kUseGL, gfx::kGLImplementationOSMesaName);
     SetAllowOSMesaImageTransportForTesting();
-    command_line.AppendSwitch(switches::kIgnoreGpuBlacklist);
+    DisableSystemDragDrop();
+    command_line.AppendSwitch(switches::kSkipGpuDataLoading);
     command_line.AppendSwitch(switches::kEnableExperimentalWebKitFeatures);
     command_line.AppendSwitch(switches::kEnableCssShaders);
     command_line.AppendSwitchASCII(switches::kTouchEvents,
@@ -122,10 +130,6 @@ bool ShellMainDelegate::BasicStartupComplete(int* exit_code) {
 }
 
 void ShellMainDelegate::PreSandboxStartup() {
-#if defined(OS_MACOSX)
-  OverrideFrameworkBundlePath();
-  OverrideChildProcessPath();
-#endif  // OS_MACOSX
   InitializeResourceBundle();
 }
 

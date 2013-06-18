@@ -23,6 +23,7 @@ GrGLInterface* CreateCommandBufferSkiaGLBinding() {
   interface->fBindAttribLocation = glBindAttribLocation;
   interface->fBindBuffer = glBindBuffer;
   interface->fBindTexture = glBindTexture;
+  interface->fBindVertexArray = glBindVertexArrayOES;
   interface->fBlendColor = glBlendColor;
   interface->fBlendFunc = glBlendFunc;
   interface->fBufferData = glBufferData;
@@ -33,6 +34,7 @@ GrGLInterface* CreateCommandBufferSkiaGLBinding() {
   interface->fColorMask = glColorMask;
   interface->fCompileShader = glCompileShader;
   interface->fCompressedTexImage2D = glCompressedTexImage2D;
+  interface->fCopyTexSubImage2D = glCopyTexSubImage2D;
   interface->fCreateProgram = glCreateProgram;
   interface->fCreateShader = glCreateShader;
   interface->fCullFace = glCullFace;
@@ -40,6 +42,7 @@ GrGLInterface* CreateCommandBufferSkiaGLBinding() {
   interface->fDeleteProgram = glDeleteProgram;
   interface->fDeleteShader = glDeleteShader;
   interface->fDeleteTextures = glDeleteTextures;
+  interface->fDeleteVertexArrays = glDeleteVertexArraysOES;
   interface->fDepthMask = glDepthMask;
   interface->fDisable = glDisable;
   interface->fDisableVertexAttribArray = glDisableVertexAttribArray;
@@ -52,6 +55,7 @@ GrGLInterface* CreateCommandBufferSkiaGLBinding() {
   interface->fFrontFace = glFrontFace;
   interface->fGenBuffers = glGenBuffers;
   interface->fGenTextures = glGenTextures;
+  interface->fGenVertexArrays = glGenVertexArraysOES;
   interface->fGetBufferParameteriv = glGetBufferParameteriv;
   interface->fGetError = glGetError;
   interface->fGetIntegerv = glGetIntegerv;

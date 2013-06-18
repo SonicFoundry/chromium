@@ -20,7 +20,7 @@
 #include "net/base/net_errors.h"
 #include "net/base/net_log.h"
 #include "net/base/net_util.h"
-#include "net/base/single_request_host_resolver.h"
+#include "net/dns/single_request_host_resolver.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/web_socket_proxy_controller.h"
@@ -95,7 +95,7 @@ void WebSocketProxyPrivate::ResolveHostIOPart(IOThread* io_thread) {
 
 bool WebSocketProxyPrivate::RunImpl() {
   AddRef();
-  SetResult(Value::CreateStringValue(""));
+  SetResult(Value::CreateStringValue(std::string()));
 
 #if defined(OS_CHROMEOS)
   bool delay_response = false;

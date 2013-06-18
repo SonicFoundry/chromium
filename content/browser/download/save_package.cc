@@ -13,9 +13,9 @@
 #include "base/logging.h"
 #include "base/message_loop.h"
 #include "base/stl_util.h"
-#include "base/string_piece.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "base/threading/thread.h"
 #include "base/utf_string_conversions.h"
 #include "content/browser/download/download_item_impl.h"
@@ -104,6 +104,31 @@ bool CanSaveAsComplete(const std::string& contents_mime_type) {
   return contents_mime_type == "text/html" ||
          contents_mime_type == "application/xhtml+xml";
 }
+
+// Request handle for SavePackage downloads. Currently doesn't support
+// pause/resume/cancel, but returns a WebContents.
+class SavePackageRequestHandle : public DownloadRequestHandleInterface {
+ public:
+  SavePackageRequestHandle(base::WeakPtr<SavePackage> save_package)
+      : save_package_(save_package) {}
+
+  // DownloadRequestHandleInterface
+  virtual WebContents* GetWebContents() const OVERRIDE {
+    return save_package_.get() ? save_package_->web_contents() : NULL;
+  }
+  virtual DownloadManager* GetDownloadManager() const OVERRIDE {
+    return NULL;
+  }
+  virtual void PauseRequest() const OVERRIDE {}
+  virtual void ResumeRequest() const OVERRIDE {}
+  virtual void CancelRequest() const OVERRIDE {}
+  virtual std::string DebugString() const OVERRIDE {
+    return "SavePackage DownloadRequestHandle";
+  }
+
+ private:
+  base::WeakPtr<SavePackage> save_package_;
+};
 
 }  // namespace
 
@@ -285,12 +310,15 @@ bool SavePackage::Init(
     return false;
   }
 
+  scoped_ptr<DownloadRequestHandleInterface> request_handle(
+      new SavePackageRequestHandle(AsWeakPtr()));
   // The download manager keeps ownership but adds us as an observer.
   download_ = download_manager_->CreateSavePackageDownloadItem(
       saved_main_file_path_,
       page_url_,
       ((save_type_ == SAVE_PAGE_TYPE_AS_MHTML) ?
        "multipart/related" : "text/html"),
+      request_handle.Pass(),
       this);
   // Confirm above didn't delete the tab out from under us.
   if (!download_created_callback.is_null())
@@ -337,7 +365,7 @@ void SavePackage::OnMHTMLGenerated(const base::FilePath& path, int64 size) {
   // with SavePackage flow.
   if (download_->IsInProgress()) {
     download_->SetTotalBytes(size);
-    download_->UpdateProgress(size, 0, "");
+    download_->UpdateProgress(size, 0, std::string());
     // Must call OnAllDataSaved here in order for
     // GDataDownloadObserver::ShouldUpload() to return true.
     // ShouldCompleteDownload() may depend on the gdata uploader to finish.
@@ -396,7 +424,7 @@ bool SavePackage::GetSafePureFileName(
                                           dir_path.value().length() -
                                           file_name_ext.length());
   // Need an extra space for the separator.
-  if (!file_util::EndsWithSeparator(dir_path))
+  if (!dir_path.EndsWithSeparator())
     --available_length;
 
   // Plenty of room.
@@ -421,7 +449,11 @@ bool SavePackage::GenerateFileName(const std::string& disposition,
                                    base::FilePath::StringType* generated_name) {
   // TODO(jungshik): Figure out the referrer charset when having one
   // makes sense and pass it to GenerateFileName.
-  base::FilePath file_path = net::GenerateFileName(url, disposition, "", "", "",
+  base::FilePath file_path = net::GenerateFileName(url,
+                                                   disposition,
+                                                   std::string(),
+                                                   std::string(),
+                                                   std::string(),
                                                    kDefaultSaveName);
 
   DCHECK(!file_path.empty());
@@ -487,7 +519,7 @@ bool SavePackage::GenerateFileName(const std::string& disposition,
     } else {
       for (int i = ordinal_number; i < kMaxFileOrdinalNumber; ++i) {
         base::FilePath::StringType new_name = base_file_name +
-            StringPrintf(FILE_PATH_LITERAL("(%d)"), i) + file_name_ext;
+            base::StringPrintf(FILE_PATH_LITERAL("(%d)"), i) + file_name_ext;
         if (file_name_set_.find(new_name) == file_name_set_.end()) {
           // Resolved name conflict.
           file_name = new_name;
@@ -760,7 +792,8 @@ void SavePackage::Finish() {
     // with SavePackage flow.
     if (download_->IsInProgress()) {
       if (save_type_ != SAVE_PAGE_TYPE_AS_MHTML) {
-        download_->UpdateProgress(all_save_items_count_, CurrentSpeed(), "");
+        download_->UpdateProgress(
+            all_save_items_count_, CurrentSpeed(), std::string());
         download_->OnAllDataSaved(DownloadItem::kEmptyFileHash);
       }
       download_->MarkAsComplete();
@@ -790,7 +823,7 @@ void SavePackage::SaveFinished(int32 save_id, int64 size, bool is_success) {
   // TODO(rdsmith/benjhayden): Integrate canceling on DownloadItem
   // with SavePackage flow.
   if (download_ && download_->IsInProgress())
-    download_->UpdateProgress(completed_count(), CurrentSpeed(), "");
+    download_->UpdateProgress(completed_count(), CurrentSpeed(), std::string());
 
   if (save_item->save_source() == SaveFileCreateInfo::SAVE_FILE_FROM_DOM &&
       save_item->url() == page_url_ && !save_item->received_bytes()) {
@@ -835,7 +868,7 @@ void SavePackage::SaveFailed(const GURL& save_url) {
   // TODO(rdsmith/benjhayden): Integrate canceling on DownloadItem
   // with SavePackage flow.
   if (download_ && download_->IsInProgress())
-    download_->UpdateProgress(completed_count(), CurrentSpeed(), "");
+    download_->UpdateProgress(completed_count(), CurrentSpeed(), std::string());
 
   if ((save_type_ == SAVE_PAGE_TYPE_AS_ONLY_HTML) ||
       (save_type_ == SAVE_PAGE_TYPE_AS_MHTML) ||

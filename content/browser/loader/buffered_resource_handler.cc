@@ -201,7 +201,7 @@ void BufferedResourceHandler::Resume() {
       NOTREACHED();
       break;
     case STATE_REPLAYING:
-      MessageLoop::current()->PostTask(
+      base::MessageLoop::current()->PostTask(
           FROM_HERE,
           base::Bind(&BufferedResourceHandler::CallReplayReadCompleted,
                      weak_ptr_factory_.GetWeakPtr()));
@@ -319,6 +319,11 @@ bool BufferedResourceHandler::SelectNextHandler(bool* defer) {
   if (!must_download) {
     if (net::IsSupportedMimeType(mime_type))
       return true;
+
+    scoped_ptr<ResourceHandler> handler(
+        host_->MaybeInterceptAsStream(request_, response_));
+    if (handler)
+      return UseAlternateNextHandler(handler.Pass());
 
 #if defined(ENABLE_PLUGINS)
     bool stale;

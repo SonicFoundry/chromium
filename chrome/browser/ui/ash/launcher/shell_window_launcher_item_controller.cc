@@ -4,7 +4,7 @@
 
 #include "chrome/browser/ui/ash/launcher/shell_window_launcher_item_controller.h"
 
-#include "ash/launcher/launcher_util.h"
+#include "ash/wm/window_util.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_app_menu_item.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_app_menu_item_v2app.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
@@ -12,6 +12,10 @@
 #include "chrome/browser/ui/ash/launcher/launcher_item_controller.h"
 #include "chrome/browser/ui/extensions/native_app_window.h"
 #include "chrome/browser/ui/extensions/shell_window.h"
+#include "content/public/browser/web_contents.h"
+#include "ui/aura/client/aura_constants.h"
+#include "ui/aura/window.h"
+#include "ui/views/corewm/window_animations.h"
 
 namespace {
 
@@ -36,7 +40,9 @@ ShellWindowLauncherItemController::ShellWindowLauncherItemController(
     const std::string& app_id,
     ChromeLauncherController* controller)
     : LauncherItemController(type, app_id, controller),
-      app_launcher_id_(app_launcher_id) {
+      last_active_shell_window_(NULL),
+      app_launcher_id_(app_launcher_id),
+      observed_windows_(this) {
 }
 
 ShellWindowLauncherItemController::~ShellWindowLauncherItemController() {
@@ -45,13 +51,10 @@ ShellWindowLauncherItemController::~ShellWindowLauncherItemController() {
 void ShellWindowLauncherItemController::AddShellWindow(
     ShellWindow* shell_window,
     ash::LauncherItemStatus status) {
-  if (shell_window->window_type_is_panel() && type() != TYPE_APP_PANEL) {
+  if (shell_window->window_type_is_panel() && type() != TYPE_APP_PANEL)
     LOG(ERROR) << "ShellWindow of type Panel added to non-panel launcher item";
-  }
-  if (status == ash::STATUS_ACTIVE)
-    shell_windows_.push_front(shell_window);
-  else
-    shell_windows_.push_back(shell_window);
+  shell_windows_.push_front(shell_window);
+  observed_windows_.Add(shell_window->GetNativeWindow());
 }
 
 void ShellWindowLauncherItemController::RemoveShellWindowForWindow(
@@ -59,23 +62,33 @@ void ShellWindowLauncherItemController::RemoveShellWindowForWindow(
   ShellWindowList::iterator iter =
       std::find_if(shell_windows_.begin(), shell_windows_.end(),
                    ShellWindowHasWindow(window));
-  if (iter != shell_windows_.end())
+  if (iter != shell_windows_.end()) {
+    if (*iter == last_active_shell_window_)
+      last_active_shell_window_ = NULL;
     shell_windows_.erase(iter);
+  }
+  observed_windows_.Remove(window);
 }
 
-void ShellWindowLauncherItemController::SetActiveWindow(
-    aura::Window* window) {
+void ShellWindowLauncherItemController::SetActiveWindow(aura::Window* window) {
   ShellWindowList::iterator iter =
       std::find_if(shell_windows_.begin(), shell_windows_.end(),
                    ShellWindowHasWindow(window));
-  if (iter != shell_windows_.end()) {
-    ShellWindow* shell_window = *iter;
-    shell_windows_.erase(iter);
-    shell_windows_.push_front(shell_window);
-  }
+  if (iter != shell_windows_.end())
+    last_active_shell_window_ = *iter;
 }
 
 string16 ShellWindowLauncherItemController::GetTitle() {
+  // For panels return the title of the contents if set.
+  // Otherwise return the title of the app.
+  if (type() == TYPE_APP_PANEL && !shell_windows_.empty()) {
+    ShellWindow* shell_window = shell_windows_.front();
+    if (shell_window->web_contents()) {
+      string16 title = shell_window->web_contents()->GetTitle();
+      if (!title.empty())
+        return title;
+    }
+  }
   return GetAppTitle();
 }
 
@@ -91,6 +104,16 @@ bool ShellWindowLauncherItemController::IsOpen() const {
   return !shell_windows_.empty();
 }
 
+bool ShellWindowLauncherItemController::IsVisible() const {
+  // Return true if any windows are visible.
+  for (ShellWindowList::const_iterator iter = shell_windows_.begin();
+       iter != shell_windows_.end(); ++iter) {
+    if ((*iter)->GetNativeWindow()->IsVisible())
+      return true;
+  }
+  return false;
+}
+
 void ShellWindowLauncherItemController::Launch(
     int event_flags) {
   launcher_controller()->LaunchApp(app_id(), ui::EF_NONE);
@@ -98,7 +121,9 @@ void ShellWindowLauncherItemController::Launch(
 
 void ShellWindowLauncherItemController::Activate() {
   DCHECK(!shell_windows_.empty());
-  shell_windows_.front()->GetBaseWindow()->Activate();
+  ShellWindow* window_to_activate = last_active_shell_window_ ?
+      last_active_shell_window_ : shell_windows_.back();
+  window_to_activate->GetBaseWindow()->Activate();
 }
 
 void ShellWindowLauncherItemController::Close() {
@@ -110,89 +135,125 @@ void ShellWindowLauncherItemController::Close() {
   }
 }
 
-// Behavior for app windows:
-// * One window: Toggle minimization when clicked.
-// * Multiple windows:
-// ** If the first window is not active, activate it.
-// ** Otherwise activate the next window.
 void ShellWindowLauncherItemController::Clicked(const ui::Event& event) {
   if (shell_windows_.empty())
     return;
-  ShellWindow* first_window = shell_windows_.front();
-  if (shell_windows_.size() == 1) {
-    ash::launcher::MoveToEventRootIfPanel(first_window->GetNativeWindow(),
-                                          event);
-    // If the window moves, it becomes inactive first then
-    // gets activated in |RestoreOrShow| below.
-    if (first_window->GetBaseWindow()->IsActive())
-      first_window->GetBaseWindow()->Minimize();
-    else
-      RestoreOrShow(first_window);
-  } else {
-    if (!first_window->GetBaseWindow()->IsActive()) {
-      RestoreOrShow(first_window);
+  if (type() == TYPE_APP_PANEL) {
+    DCHECK(shell_windows_.size() == 1);
+    ShellWindow* panel = shell_windows_.front();
+    // If the panel is on another display, move it to the current display and
+    // activate it.
+    if (ash::wm::MoveWindowToEventRoot(panel->GetNativeWindow(), event)) {
+      if (!panel->GetBaseWindow()->IsActive())
+        ShowAndActivateOrMinimize(panel);
     } else {
-      shell_windows_.pop_front();
-      shell_windows_.push_back(first_window);
-      RestoreOrShow(shell_windows_.front());
+      if (panel->GetBaseWindow()->IsActive())
+        panel->GetBaseWindow()->Minimize();
+      else
+        ShowAndActivateOrMinimize(panel);
     }
+  } else if (launcher_controller()->GetPerAppInterface() ||
+      shell_windows_.size() == 1) {
+    ShellWindow* window_to_show = last_active_shell_window_ ?
+        last_active_shell_window_ : shell_windows_.front();
+    // If the event was triggered by a keystroke, we try to advance to the next
+    // item if the window we are trying to activate is already active.
+    if (shell_windows_.size() >= 1 &&
+        window_to_show->GetBaseWindow()->IsActive() &&
+        event.type() == ui::ET_KEY_RELEASED) {
+      ActivateOrAdvanceToNextShellWindow(window_to_show);
+    } else {
+      ShowAndActivateOrMinimize(window_to_show);
+    }
+  } else {
+    // TODO(stevenjb): Deprecate
+    if (!last_active_shell_window_ ||
+        last_active_shell_window_->GetBaseWindow()->IsActive()) {
+      // Restore all windows since there is no other way to restore them.
+      for (ShellWindowList::iterator iter = shell_windows_.begin();
+           iter != shell_windows_.end(); ++iter) {
+        ShellWindow* shell_window = *iter;
+        if (shell_window->GetBaseWindow()->IsMinimized())
+          shell_window->GetBaseWindow()->Restore();
+      }
+    }
+    if (last_active_shell_window_)
+      ShowAndActivateOrMinimize(last_active_shell_window_);
   }
 }
 
-void ShellWindowLauncherItemController::ActivateIndexedApp(
-    size_t index) {
-  if (index < shell_windows_.size()) {
-    ShellWindowList::iterator it = shell_windows_.begin();
-    std::advance(it, index);
-    RestoreOrShow(*it);
-  }
-}
-
-string16 ShellWindowLauncherItemController::GetTitleOfIndexedApp(
-    size_t index) {
-  if (index < shell_windows_.size()) {
-    ShellWindowList::iterator it = shell_windows_.begin();
-    std::advance(it, index);
-    return (*it)->GetTitle();
-  }
-  return string16();
-}
-
-gfx::Image*
-ShellWindowLauncherItemController::GetIconOfIndexedApp(size_t index) {
-  if (index < shell_windows_.size()) {
-    ShellWindowList::iterator it = shell_windows_.begin();
-    std::advance(it, index);
-    return (*it)->GetAppListIcon();
-  }
-  return new gfx::Image();
+void ShellWindowLauncherItemController::ActivateIndexedApp(size_t index) {
+  if (index >= shell_windows_.size())
+    return;
+  ShellWindowList::iterator it = shell_windows_.begin();
+  std::advance(it, index);
+  ShowAndActivateOrMinimize(*it);
 }
 
 ChromeLauncherAppMenuItems
 ShellWindowLauncherItemController::GetApplicationList() {
   ChromeLauncherAppMenuItems items;
-  if (!launcher_controller()->GetPerAppInterface()) {
-    items.push_back(new ChromeLauncherAppMenuItem(GetTitle(), NULL));
-    for (size_t i = 0; i < shell_window_count(); i++) {
-      gfx::Image* image = GetIconOfIndexedApp(i);
-      items.push_back(new ChromeLauncherAppMenuItemV2App(
-          GetTitleOfIndexedApp(i),
-          image,
-          app_id(),
-          launcher_controller()->GetPerAppInterface(),
-          i));
-      delete image;
-    }
+  items.push_back(new ChromeLauncherAppMenuItem(GetTitle(), NULL, false));
+  int index = 0;
+  for (ShellWindowList::iterator iter = shell_windows_.begin();
+       iter != shell_windows_.end(); ++iter) {
+    ShellWindow* shell_window = *iter;
+    scoped_ptr<gfx::Image> image(shell_window->GetAppListIcon());
+    items.push_back(new ChromeLauncherAppMenuItemV2App(
+        shell_window->GetTitle(),
+        image.get(),  // Will be copied
+        app_id(),
+        launcher_controller()->GetPerAppInterface(),
+        index,
+        index == 0 /* has_leading_separator */));
+    ++index;
   }
   return items.Pass();
 }
 
-void ShellWindowLauncherItemController::RestoreOrShow(
+void ShellWindowLauncherItemController::OnWindowPropertyChanged(
+    aura::Window* window,
+    const void* key,
+    intptr_t old) {
+  if (key == aura::client::kDrawAttentionKey) {
+    ash::LauncherItemStatus status;
+    if (ash::wm::IsActiveWindow(window)) {
+      status = ash::STATUS_ACTIVE;
+    } else if (window->GetProperty(aura::client::kDrawAttentionKey)) {
+      status = ash::STATUS_ATTENTION;
+    } else {
+      status = ash::STATUS_RUNNING;
+    }
+    launcher_controller()->SetItemStatus(launcher_id(), status);
+  }
+}
+
+void ShellWindowLauncherItemController::ShowAndActivateOrMinimize(
     ShellWindow* shell_window) {
-  if (shell_window->GetBaseWindow()->IsMinimized())
-    shell_window->GetBaseWindow()->Restore();
-  else
-    shell_window->GetBaseWindow()->Show();
-  // Always activate windows when shown from the launcher.
-  shell_window->GetBaseWindow()->Activate();
+  // Either show or minimize windows when shown from the launcher.
+  launcher_controller()->ActivateWindowOrMinimizeIfActive(
+      shell_window->GetBaseWindow(),
+      GetApplicationList().size() == 2);
+}
+
+void ShellWindowLauncherItemController::ActivateOrAdvanceToNextShellWindow(
+    ShellWindow* window_to_show) {
+  ShellWindowList::iterator i(
+      std::find(shell_windows_.begin(),
+                shell_windows_.end(),
+                window_to_show));
+  if (i != shell_windows_.end()) {
+    if (++i != shell_windows_.end())
+      window_to_show = *i;
+    else
+      window_to_show = shell_windows_.front();
+  }
+  if (window_to_show->GetBaseWindow()->IsActive()) {
+    // Coming here, only a single window is active. For keyboard activations
+    // the window gets animated.
+    AnimateWindow(window_to_show->GetNativeWindow(),
+                  views::corewm::WINDOW_ANIMATION_TYPE_BOUNCE);
+  } else {
+    ShowAndActivateOrMinimize(window_to_show);
+  }
 }

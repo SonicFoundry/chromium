@@ -6,9 +6,14 @@
 #define CHROME_BROWSER_EXTENSIONS_API_RUNTIME_RUNTIME_API_H_
 
 #include "chrome/browser/extensions/extension_function.h"
+#include "content/public/browser/notification_observer.h"
+#include "content/public/browser/notification_registrar.h"
 
 class Profile;
+
+namespace base {
 class Version;
+}
 
 namespace extensions {
 class Extension;
@@ -23,7 +28,7 @@ class RuntimeEventRouter {
   // Dispatches the onInstalled event to the given extension.
   static void DispatchOnInstalledEvent(Profile* profile,
                                        const std::string& extension_id,
-                                       const Version& old_version,
+                                       const base::Version& old_version,
                                        bool chrome_updated);
 
   // Dispatches the onUpdateAvailable event to the given extension.

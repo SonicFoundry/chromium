@@ -16,6 +16,7 @@
 #include "chrome/browser/ui/views/theme_image_mapper.h"
 #include "grit/theme_resources.h"
 #include "ui/base/theme_provider.h"
+#include "ui/base/win/dpi.h"
 #include "ui/views/controls/menu/native_menu_win.h"
 
 #pragma comment(lib, "dwmapi.lib")
@@ -207,10 +208,6 @@ void BrowserDesktopRootWindowHostWin::PostHandleMSG(UINT message,
 }
 
 bool BrowserDesktopRootWindowHostWin::IsUsingCustomFrame() const {
-  // App panel windows draw their own frame.
-  if (browser_view_->IsPanel())
-    return true;
-
   // We don't theme popup or app windows, so regardless of whether or not a
   // theme is active for normal browser windows, we don't want to use the custom
   // frame for popups/apps.
@@ -270,6 +267,7 @@ void BrowserDesktopRootWindowHostWin::UpdateDWMFrame() {
     if (!browser_view_->IsFullscreen()) {
       gfx::Rect tabstrip_bounds(
           browser_frame_->GetBoundsForTabStrip(browser_view_->tabstrip()));
+      tabstrip_bounds = ui::win::DIPToScreenRect(tabstrip_bounds);
       margins.cyTopHeight = tabstrip_bounds.bottom() + kDWMFrameTopOffset;
     }
   }

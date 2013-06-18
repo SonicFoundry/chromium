@@ -10,7 +10,7 @@
 
 #include "base/basictypes.h"
 #include "base/string16.h"
-#include "base/string_piece.h"
+#include "base/strings/string_piece.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "ui/base/layout.h"
@@ -57,7 +57,18 @@ struct PepperPluginInfo;
 // Setter and getter for the client.  The client should be set early, before any
 // content code is called.
 CONTENT_EXPORT void SetContentClient(ContentClient* client);
-CONTENT_EXPORT ContentClient* GetContentClient();
+
+//#if defined(CONTENT_IMPLEMENTATION)
+// Content's embedder API should only be used by content.
+ContentClient* GetContentClient();
+//#endif
+
+// Used for tests to override the relevant embedder interfaces. Each method
+// returns the old value.
+CONTENT_EXPORT ContentBrowserClient* SetBrowserClientForTesting(
+    ContentBrowserClient* b);
+CONTENT_EXPORT ContentRendererClient* SetRendererClientForTesting(
+    ContentRendererClient* r);
 
 // Returns the user agent string being used by the browser. SetContentClient()
 // must be called prior to calling this, and this routine must be used
@@ -133,6 +144,10 @@ class CONTENT_EXPORT ContentClient {
   // Returns a native image given its id.
   virtual gfx::Image& GetNativeImageNamed(int resource_id) const;
 
+  // Called by content::GetProcessTypeNameInEnglish for process types that it
+  // doesn't know about because they're from the embedder.
+  virtual std::string GetProcessTypeNameInEnglish(int type);
+
 #if defined(OS_MACOSX) && !defined(OS_IOS)
   // Allows the embedder to define a new |sandbox_type| by mapping it to the
   // resource ID corresponding to the sandbox profile to use. The legal values
@@ -150,11 +165,9 @@ class CONTENT_EXPORT ContentClient {
   virtual std::string GetCarbonInterposePath() const;
 #endif
 
-  void set_browser_for_testing(ContentBrowserClient* c) { browser_ = c; }
-  void set_renderer_for_testing(ContentRendererClient* r) { renderer_ = r; }
-
  private:
   friend class ContentClientInitializer;  // To set these pointers.
+  friend class InternalTestInitializer;
 
   // The embedder API for participating in browser logic.
   ContentBrowserClient* browser_;

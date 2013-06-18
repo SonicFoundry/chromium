@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-"""Runs the Java tests. See more information on run_instrumentation_tests.py."""
+"""Class for running instrumentation tests on a single device."""
 
 import logging
 import os
@@ -18,38 +18,42 @@ from pylib import forwarder
 from pylib import json_perf_parser
 from pylib import perf_tests_helper
 from pylib import valgrind_tools
+from pylib.base import base_test_result
 from pylib.base import base_test_runner
-from pylib.base import base_test_sharder
-from pylib.base import test_result
 
-import apk_info
+import test_result
 
 
 _PERF_TEST_ANNOTATION = 'PerfTest'
+
+
+def _GetDataFilesForTestSuite(test_suite_basename):
+  """Returns a list of data files/dirs needed by the test suite.
+
+  Args:
+    test_suite_basename: The test suite basename for which to return file paths.
+
+  Returns:
+    A list of test file and directory paths.
+  """
+  test_files = []
+  if test_suite_basename in ['ChromeTest', 'ContentShellTest']:
+    test_files += [
+        'net/data/ssl/certificates/',
+    ]
+  return test_files
 
 
 class TestRunner(base_test_runner.BaseTestRunner):
   """Responsible for running a series of tests connected to a single device."""
 
   _DEVICE_DATA_DIR = 'chrome/test/data'
-  _EMMA_JAR = os.path.join(os.environ.get('ANDROID_BUILD_TOP', ''),
-                           'external/emma/lib/emma.jar')
-  _COVERAGE_MERGED_FILENAME = 'unittest_coverage.es'
-  _COVERAGE_WEB_ROOT_DIR = os.environ.get('EMMA_WEB_ROOTDIR')
-  _COVERAGE_FILENAME = 'coverage.ec'
-  _COVERAGE_RESULT_PATH = ('/data/data/com.google.android.apps.chrome/files/' +
-                           _COVERAGE_FILENAME)
-  _COVERAGE_META_INFO_PATH = os.path.join(os.environ.get('ANDROID_BUILD_TOP',
-                                                         ''),
-                                          'out/target/common/obj/APPS',
-                                          'Chrome_intermediates/coverage.em')
   _HOSTMACHINE_PERF_OUTPUT_FILE = '/tmp/chrome-profile'
   _DEVICE_PERF_OUTPUT_SEARCH_PREFIX = (constants.DEVICE_PERF_OUTPUT_DIR +
                                        '/chrome-profile*')
   _DEVICE_HAS_TEST_FILES = {}
 
-  def __init__(self, options, device, tests_iter, coverage, shard_index, apks,
-               ports_to_forward):
+  def __init__(self, options, device, shard_index, test_pkg, ports_to_forward):
     """Create a new TestRunner.
 
     Args:
@@ -63,72 +67,43 @@ class TestRunner(base_test_runner.BaseTestRunner):
       -  wait_for_debugger: blocks until the debugger is connected.
       -  disable_assertions: Whether to disable java assertions on the device.
       device: Attached android device.
-      tests_iter: A list of tests to be run.
-      coverage: Collects coverage information if opted.
-      shard_index: shard # for this TestRunner, used to create unique port
-          numbers.
-      apks: A list of ApkInfo objects need to be installed. The first element
-            should be the tests apk, the rests could be the apks used in test.
-            The default is ChromeTest.apk.
+      shard_index: Shard index.
+      test_pkg: A TestPackage object.
       ports_to_forward: A list of port numbers for which to set up forwarders.
                         Can be optionally requested by a test case.
-    Raises:
-      Exception: if coverage metadata is not available.
     """
-    super(TestRunner, self).__init__(
-        device, options.tool, shard_index, options.build_type)
-
-    if not apks:
-      apks = [apk_info.ApkInfo(options.test_apk_path,
-                               options.test_apk_jar_path)]
+    super(TestRunner, self).__init__(device, options.tool, options.build_type)
+    self._lighttp_port = constants.LIGHTTPD_RANDOM_PORT_FIRST + shard_index
 
     self.build_type = options.build_type
-    self.install_apk = options.install_apk
     self.test_data = options.test_data
     self.save_perf_json = options.save_perf_json
     self.screenshot_failures = options.screenshot_failures
     self.wait_for_debugger = options.wait_for_debugger
     self.disable_assertions = options.disable_assertions
-
-    self.tests_iter = tests_iter
-    self.coverage = coverage
-    self.apks = apks
-    self.test_apk = apks[0]
-    self.instrumentation_class_path = self.test_apk.GetPackageName()
+    self.test_pkg = test_pkg
     self.ports_to_forward = ports_to_forward
-
-    self.test_results = test_result.TestResults()
+    self.install_apk = options.install_apk
     self.forwarder = None
 
-    if self.coverage:
-      if os.path.exists(TestRunner._COVERAGE_MERGED_FILENAME):
-        os.remove(TestRunner._COVERAGE_MERGED_FILENAME)
-      if not os.path.exists(TestRunner._COVERAGE_META_INFO_PATH):
-        raise Exception('FATAL ERROR in ' + sys.argv[0] +
-                        ' : Coverage meta info [' +
-                        TestRunner._COVERAGE_META_INFO_PATH +
-                        '] does not exist.')
-      if (not TestRunner._COVERAGE_WEB_ROOT_DIR or
-          not os.path.exists(TestRunner._COVERAGE_WEB_ROOT_DIR)):
-        raise Exception('FATAL ERROR in ' + sys.argv[0] +
-                        ' : Path specified in $EMMA_WEB_ROOTDIR [' +
-                        TestRunner._COVERAGE_WEB_ROOT_DIR +
-                        '] does not exist.')
-
-  def _GetTestsIter(self):
-    if not self.tests_iter:
-      # multiprocessing.Queue can't be pickled across processes if we have it as
-      # a member set during constructor.  Grab one here instead.
-      self.tests_iter = (base_test_sharder.BaseTestSharder.tests_container)
-    assert self.tests_iter
-    return self.tests_iter
-
-  def CopyTestFilesOnce(self):
-    """Pushes the test data files to the device. Installs the apk if opted."""
+  #override
+  def PushDependencies(self):
+    # TODO(frankf): Implement a general approach for copying/installing
+    # once across test runners.
     if TestRunner._DEVICE_HAS_TEST_FILES.get(self.device, False):
       logging.warning('Already copied test files to device %s, skipping.',
                       self.device)
       return
+
+    test_data = _GetDataFilesForTestSuite(self.test_pkg.GetApkName())
+    if test_data:
+      # Make sure SD card is ready.
+      self.adb.WaitForSdCardReady(20)
+      for data in test_data:
+        self.CopyTestData([data], self.adb.GetExternalStorage())
+
+    # TODO(frankf): Specify test data in this file as opposed to passing
+    # as command-line.
     for dest_host_pair in self.test_data:
       dst_src = dest_host_pair.split(':',1)
       dst_layer = dst_src[0]
@@ -139,69 +114,12 @@ class TestRunner(base_test_runner.BaseTestRunner):
                               self.adb.GetExternalStorage() + '/' +
                               TestRunner._DEVICE_DATA_DIR + '/' + dst_layer)
     if self.install_apk:
-      for apk in self.apks:
-        self.adb.ManagedInstall(apk.GetApkPath(),
-                                package_name=apk.GetPackageName())
+      self.test_pkg.Install(self.adb)
     self.tool.CopyFiles()
     TestRunner._DEVICE_HAS_TEST_FILES[self.device] = True
 
-  def SaveCoverageData(self, test):
-    """Saves the Emma coverage data before it's overwritten by the next test.
-
-    Args:
-      test: the test whose coverage data is collected.
-    """
-    if not self.coverage:
-      return
-    if not self.adb.Adb().Pull(TestRunner._COVERAGE_RESULT_PATH,
-                               constants.CHROME_DIR):
-      logging.error('ERROR: Unable to find file ' +
-                    TestRunner._COVERAGE_RESULT_PATH +
-                    ' on the device for test ' + test)
-    pulled_coverage_file = os.path.join(constants.CHROME_DIR,
-                                        TestRunner._COVERAGE_FILENAME)
-    if os.path.exists(TestRunner._COVERAGE_MERGED_FILENAME):
-      cmd = ['java', '-classpath', TestRunner._EMMA_JAR, 'emma', 'merge',
-             '-in', pulled_coverage_file,
-             '-in', TestRunner._COVERAGE_MERGED_FILENAME,
-             '-out', TestRunner._COVERAGE_MERGED_FILENAME]
-      cmd_helper.RunCmd(cmd)
-    else:
-      shutil.copy(pulled_coverage_file,
-                  TestRunner._COVERAGE_MERGED_FILENAME)
-    os.remove(pulled_coverage_file)
-
-  def GenerateCoverageReportIfNeeded(self):
-    """Uses the Emma to generate a coverage report and a html page."""
-    if not self.coverage:
-      return
-    cmd = ['java', '-classpath', TestRunner._EMMA_JAR,
-           'emma', 'report', '-r', 'html',
-           '-in', TestRunner._COVERAGE_MERGED_FILENAME,
-           '-in', TestRunner._COVERAGE_META_INFO_PATH]
-    cmd_helper.RunCmd(cmd)
-    new_dir = os.path.join(TestRunner._COVERAGE_WEB_ROOT_DIR,
-                           time.strftime('Coverage_for_%Y_%m_%d_%a_%H:%M'))
-    shutil.copytree('coverage', new_dir)
-
-    latest_dir = os.path.join(TestRunner._COVERAGE_WEB_ROOT_DIR,
-                              'Latest_Coverage_Run')
-    if os.path.exists(latest_dir):
-      shutil.rmtree(latest_dir)
-    os.mkdir(latest_dir)
-    webserver_new_index = os.path.join(new_dir, 'index.html')
-    webserver_new_files = os.path.join(new_dir, '_files')
-    webserver_latest_index = os.path.join(latest_dir, 'index.html')
-    webserver_latest_files = os.path.join(latest_dir, '_files')
-    # Setup new softlinks to last result.
-    os.symlink(webserver_new_index, webserver_latest_index)
-    os.symlink(webserver_new_files, webserver_latest_files)
-    cmd_helper.RunCmd(['chmod', '755', '-R', latest_dir, new_dir])
-
   def _GetInstrumentationArgs(self):
     ret = {}
-    if self.coverage:
-      ret['coverage'] = 'true'
     if self.wait_for_debugger:
       ret['debug'] = 'true'
     return ret
@@ -226,8 +144,7 @@ class TestRunner(base_test_runner.BaseTestRunner):
     # because it may have race condition when multiple processes are trying to
     # launch lighttpd with same port at same time.
     http_server_ports = self.LaunchTestHttpServer(
-        os.path.join(constants.CHROME_DIR),
-        (constants.LIGHTTPD_RANDOM_PORT_FIRST + self.shard_index))
+        os.path.join(constants.CHROME_DIR), self._lighttp_port)
     if self.ports_to_forward:
       port_pairs = [(port, port) for port in self.ports_to_forward]
       # We need to remember which ports the HTTP server is using, since the
@@ -235,14 +152,12 @@ class TestRunner(base_test_runner.BaseTestRunner):
       port_pairs.append(http_server_ports)
       self.forwarder = forwarder.Forwarder(self.adb, self.build_type)
       self.forwarder.Run(port_pairs, self.tool, '127.0.0.1')
-    self.CopyTestFilesOnce()
     self.flags.AddFlags(['--enable-test-intents'])
 
   def TearDown(self):
     """Cleans up the test harness and saves outstanding data from test run."""
     if self.forwarder:
       self.forwarder.Close()
-    self.GenerateCoverageReportIfNeeded()
     super(TestRunner, self).TearDown()
 
   def TestSetup(self, test):
@@ -267,7 +182,7 @@ class TestRunner(base_test_runner.BaseTestRunner):
     Returns:
       Whether the test is annotated as a performance test.
     """
-    return _PERF_TEST_ANNOTATION in self.test_apk.GetTestAnnotations(test)
+    return _PERF_TEST_ANNOTATION in self.test_pkg.GetTestAnnotations(test)
 
   def SetupPerfMonitoringIfNeeded(self, test):
     """Sets up performance monitoring if the specified test requires it.
@@ -284,9 +199,8 @@ class TestRunner(base_test_runner.BaseTestRunner):
   def TestTeardown(self, test, raw_result):
     """Cleans up the test harness after running a particular test.
 
-    Depending on the options of this TestRunner this might handle coverage
-    tracking or performance tracking.  This method will only be called if the
-    test passed.
+    Depending on the options of this TestRunner this might handle performance
+    tracking.  This method will only be called if the test passed.
 
     Args:
       test: The name of the test that was just run.
@@ -300,7 +214,6 @@ class TestRunner(base_test_runner.BaseTestRunner):
       return
 
     self.TearDownPerfMonitoring(test)
-    self.SaveCoverageData(test)
 
   def TearDownPerfMonitoring(self, test):
     """Cleans up performance monitoring if the specified test required it.
@@ -366,7 +279,7 @@ class TestRunner(base_test_runner.BaseTestRunner):
 
   def _GetIndividualTestTimeoutScale(self, test):
     """Returns the timeout scale for the given |test|."""
-    annotations = self.apks[0].GetTestAnnotations(test)
+    annotations = self.test_pkg.GetTestAnnotations(test)
     timeout_scale = 1
     if 'TimeoutScale' in annotations:
       for annotation in annotations:
@@ -379,7 +292,7 @@ class TestRunner(base_test_runner.BaseTestRunner):
 
   def _GetIndividualTestTimeoutSecs(self, test):
     """Returns the timeout in seconds for the given |test|."""
-    annotations = self.apks[0].GetTestAnnotations(test)
+    annotations = self.test_pkg.GetTestAnnotations(test)
     if 'Manual' in annotations:
       return 600 * 60
     if 'External' in annotations:
@@ -390,63 +303,54 @@ class TestRunner(base_test_runner.BaseTestRunner):
       return 3 * 60
     return 1 * 60
 
-  def RunTests(self):
-    """Runs the tests, generating the coverage if needed.
+  def _RunTest(self, test, timeout):
+    return self.adb.RunInstrumentationTest(
+        test, self.test_pkg.GetPackageName(),
+        self._GetInstrumentationArgs(), timeout)
 
-    Returns:
-      A test_result.TestResults object.
-    """
-    instrumentation_path = (self.instrumentation_class_path +
-                            '/android.test.InstrumentationTestRunner')
-    instrumentation_args = self._GetInstrumentationArgs()
-    for test in self._GetTestsIter():
-      raw_result = None
-      start_date_ms = None
-      try:
-        self.TestSetup(test)
-        start_date_ms = int(time.time()) * 1000
-        args_with_filter = dict(instrumentation_args)
-        args_with_filter['class'] = test
-        # |raw_results| is a list that should contain
-        # a single TestResult object.
-        logging.warn(args_with_filter)
-        (raw_results, _) = self.adb.Adb().StartInstrumentation(
-            instrumentation_path=instrumentation_path,
-            instrumentation_args=args_with_filter,
-            timeout_time=(self._GetIndividualTestTimeoutSecs(test) *
-                          self._GetIndividualTestTimeoutScale(test) *
-                          self.tool.GetTimeoutScale()))
+  #override
+  def RunTest(self, test):
+    raw_result = None
+    start_date_ms = None
+    results = base_test_result.TestRunResults()
+    timeout=(self._GetIndividualTestTimeoutSecs(test) *
+             self._GetIndividualTestTimeoutScale(test) *
+             self.tool.GetTimeoutScale())
+    try:
+      self.TestSetup(test)
+      start_date_ms = int(time.time()) * 1000
+      raw_result = self._RunTest(test, timeout)
+      duration_ms = int(time.time()) * 1000 - start_date_ms
+      status_code = raw_result.GetStatusCode()
+      if status_code:
+        log = raw_result.GetFailureReason()
+        if not log:
+          log = 'No information.'
+        if self.screenshot_failures or log.find('INJECT_EVENTS perm') >= 0:
+          self._TakeScreenshot(test)
+        result = test_result.InstrumentationTestResult(
+            test, base_test_result.ResultType.FAIL, start_date_ms, duration_ms,
+            log=log)
+      else:
+        result = test_result.InstrumentationTestResult(
+            test, base_test_result.ResultType.PASS, start_date_ms, duration_ms)
+      results.AddResult(result)
+    # Catch exceptions thrown by StartInstrumentation().
+    # See ../../third_party/android/testrunner/adb_interface.py
+    except (android_commands.errors.WaitForResponseTimedOutError,
+            android_commands.errors.DeviceUnresponsiveError,
+            android_commands.errors.InstrumentationError), e:
+      if start_date_ms:
         duration_ms = int(time.time()) * 1000 - start_date_ms
-        assert len(raw_results) == 1
-        raw_result = raw_results[0]
-        status_code = raw_result.GetStatusCode()
-        if status_code:
-          log = raw_result.GetFailureReason()
-          if not log:
-            log = 'No information.'
-          if self.screenshot_failures or log.find('INJECT_EVENTS perm') >= 0:
-            self._TakeScreenshot(test)
-          self.test_results.failed += [test_result.SingleTestResult(
-              test, start_date_ms, duration_ms, log)]
-        else:
-          result = [test_result.SingleTestResult(test, start_date_ms,
-                                                 duration_ms)]
-          self.test_results.ok += result
-      # Catch exceptions thrown by StartInstrumentation().
-      # See ../../third_party/android/testrunner/adb_interface.py
-      except (android_commands.errors.WaitForResponseTimedOutError,
-              android_commands.errors.DeviceUnresponsiveError,
-              android_commands.errors.InstrumentationError), e:
-        if start_date_ms:
-          duration_ms = int(time.time()) * 1000 - start_date_ms
-        else:
-          start_date_ms = int(time.time()) * 1000
-          duration_ms = 0
-        message = str(e)
-        if not message:
-          message = 'No information.'
-        self.test_results.crashed += [test_result.SingleTestResult(
-            test, start_date_ms, duration_ms, message)]
-        raw_result = None
-      self.TestTeardown(test, raw_result)
-    return self.test_results
+      else:
+        start_date_ms = int(time.time()) * 1000
+        duration_ms = 0
+      message = str(e)
+      if not message:
+        message = 'No information.'
+      results.AddResult(test_result.InstrumentationTestResult(
+          test, base_test_result.ResultType.CRASH, start_date_ms, duration_ms,
+          log=message))
+      raw_result = None
+    self.TestTeardown(test, raw_result)
+    return (results, None if results.DidRunPass() else test)

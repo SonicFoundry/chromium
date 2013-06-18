@@ -23,6 +23,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/l10n_util_win.h"
 #include "ui/base/range/range.h"
+#include "ui/base/win/hwnd_util.h"
 #include "ui/base/win/mouse_wheel_util.h"
 #include "ui/native_theme/native_theme_win.h"
 #include "ui/views/controls/label.h"
@@ -97,9 +98,8 @@ NativeTextfieldWin::NativeTextfieldWin(Textfield* textfield)
       ime_composition_length_(0),
       container_view_(new NativeViewHost),
       bg_color_(0),
-      ALLOW_THIS_IN_INITIALIZER_LIST(
-          tsf_event_router_(base::win::IsTSFAwareRequired() ?
-              new ui::TSFEventRouter(this) : NULL)) {
+      tsf_event_router_(base::win::IsTSFAwareRequired() ?
+          new ui::TSFEventRouter(this) : NULL) {
 #if 0
   if (!loaded_libarary_module_) {
     // msftedit.dll is RichEdit ver 4.1.
@@ -157,25 +157,6 @@ bool NativeTextfieldWin::IsDoubleClick(const POINT& origin,
   return (elapsed_time <= GetDoubleClickTime()) &&
       (abs(current.x - origin.x) <= (GetSystemMetrics(SM_CXDOUBLECLK) / 2)) &&
       (abs(current.y - origin.y) <= (GetSystemMetrics(SM_CYDOUBLECLK) / 2));
-}
-
-// static
-bool NativeTextfieldWin::IsNumPadDigit(int key_code, bool extended_key) {
-  if (key_code >= VK_NUMPAD0 && key_code <= VK_NUMPAD9)
-    return true;
-
-  // Check for num pad keys without NumLock.
-  // Note: there is no easy way to know if a the key that was pressed comes from
-  //       the num pad or the rest of the keyboard.  Investigating how
-  //       TranslateMessage() generates the WM_KEYCHAR from an
-  //       ALT + <NumPad sequences> it appears it looks at the extended key flag
-  //       (which is on if the key pressed comes from one of the 3 clusters to
-  //       the left of the numeric keypad).  So we use it as well.
-  return !extended_key &&
-            ((key_code >= VK_PRIOR && key_code <= VK_DOWN) ||  // All keys but 5
-                                                               // and 0.
-            (key_code == VK_CLEAR) ||  // Key 5.
-            (key_code == VK_INSERT));  // Key 0.
 }
 
 void NativeTextfieldWin::AttachHack() {
@@ -449,8 +430,18 @@ int NativeTextfieldWin::GetTextfieldBaseline() const {
   return textfield_->font().GetBaseline();
 }
 
+int NativeTextfieldWin::GetWidthNeededForText() const {
+  NOTIMPLEMENTED();
+  return 0;
+}
+
 void NativeTextfieldWin::ExecuteTextCommand(int command_id) {
-  ExecuteCommand(command_id);
+  ExecuteCommand(command_id, 0);
+}
+
+bool NativeTextfieldWin::HasTextBeingDragged() {
+  NOTIMPLEMENTED();
+  return false;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -491,7 +482,7 @@ bool NativeTextfieldWin::GetAcceleratorForCommandId(int command_id,
   return container_view_->GetWidget()->GetAccelerator(command_id, accelerator);
 }
 
-void NativeTextfieldWin::ExecuteCommand(int command_id) {
+void NativeTextfieldWin::ExecuteCommand(int command_id, int event_flags) {
   ScopedFreeze freeze(this, GetTextObjectModel());
   OnBeforePossibleChange();
   switch (command_id) {
@@ -642,10 +633,10 @@ void NativeTextfieldWin::OnCopy() {
 
   const string16 text(GetSelectedText());
   if (!text.empty()) {
-    ui::ScopedClipboardWriter scw(
-        ui::Clipboard::GetForCurrentThread(),
-        ui::Clipboard::BUFFER_STANDARD);
-    scw.WriteText(text);
+    ui::ScopedClipboardWriter(ui::Clipboard::GetForCurrentThread(),
+                              ui::Clipboard::BUFFER_STANDARD).WriteText(text);
+    if (TextfieldController* controller = textfield_->GetController())
+      controller->OnAfterCutOrCopy();
   }
 }
 
@@ -1107,15 +1098,15 @@ void NativeTextfieldWin::OnKillFocus(HWND hwnd) {
 }
 
 void NativeTextfieldWin::OnSysChar(TCHAR ch, UINT repeat_count, UINT flags) {
-  // Nearly all alt-<xxx> combos result in beeping rather than doing something
-  // useful, so we discard most.  Exceptions:
-  //   * ctrl-alt-<xxx>, which is sometimes important, generates WM_CHAR instead
-  //     of WM_SYSCHAR, so it doesn't need to be handled here.
-  //   * alt-space gets translated by the default WM_SYSCHAR handler to a
-  //     WM_SYSCOMMAND to open the application context menu, so we need to allow
-  //     it through.
-  if (ch == VK_SPACE)
-    SetMsgHandled(false);
+  DCHECK(flags & KF_ALTDOWN);
+  // Explicitly show the system menu at a good location on [Alt]+[Space].
+  // Nearly all other [Alt]+<xxx> combos result in beeping rather than doing
+  // something useful, so discard those. Note that [Ctrl]+[Alt]+<xxx> generates
+  // WM_CHAR instead of WM_SYSCHAR, so it is not handled here.
+  if (ch == VK_SPACE) {
+    ui::ShowSystemMenu(
+        container_view_->GetWidget()->GetTopLevelWidget()->GetNativeWindow());
+  }
 }
 
 void NativeTextfieldWin::OnFinalMessage(HWND hwnd) {
@@ -1124,16 +1115,11 @@ void NativeTextfieldWin::OnFinalMessage(HWND hwnd) {
 
 void NativeTextfieldWin::HandleKeystroke() {
   const MSG* msg = GetCurrentMessage();
+  ui::KeyEvent event(*msg, msg->message == WM_CHAR);
   ScopedFreeze freeze(this, GetTextObjectModel());
 
   TextfieldController* controller = textfield_->GetController();
-  bool handled = false;
-  if (controller) {
-    ui::KeyEvent event(*msg, msg->message == WM_CHAR);
-    handled = controller->HandleKeyEvent(textfield_, event);
-  }
-
-  if (!handled) {
+  if (!controller || !controller->HandleKeyEvent(textfield_, event)) {
     OnBeforePossibleChange();
 
     if (msg->wParam == ui::VKEY_HOME || msg->wParam == ui::VKEY_END) {

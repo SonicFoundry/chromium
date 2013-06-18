@@ -8,7 +8,7 @@
 #import "base/string_util.h"
 #include "base/utf_string_conversions.h"
 #import "chrome/app/chrome_command_ids.h"  // For translate menu command ids.
-#include "chrome/browser/api/infobars/infobar_service.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #import "chrome/browser/translate/translate_infobar_delegate.h"
 #include "chrome/browser/ui/cocoa/cocoa_profile_test.h"
 #import "chrome/browser/ui/cocoa/infobars/before_translate_infobar_controller.h"
@@ -37,9 +37,10 @@ class MockTranslateInfoBarDelegate : public TranslateInfoBarDelegate {
   MockTranslateInfoBarDelegate(TranslateInfoBarDelegate::Type type,
                                TranslateErrors::Type error,
                                InfoBarService* infobar_service,
-                               PrefService* prefs)
+                               PrefService* prefs,
+                               ShortcutConfiguration config)
       : TranslateInfoBarDelegate(type, error, infobar_service, prefs,
-                                 "en", "es") {
+                                 config, "en", "es") {
   }
 
   MOCK_METHOD0(Translate, void());
@@ -79,11 +80,15 @@ class TranslationInfoBarTest : public CocoaProfileTest {
         InfoBarService::FromWebContents(web_contents_.get());
     Profile* profile =
         Profile::FromBrowserContext(web_contents_->GetBrowserContext());
+    ShortcutConfiguration config;
+    config.never_translate_min_count = 3;
+    config.always_translate_min_count = 3;
     infobar_delegate_.reset(new MockTranslateInfoBarDelegate(
         type,
         error,
         infobar_service,
-        profile->GetPrefs()));
+        profile->GetPrefs(),
+        config));
     [[infobar_controller_ view] removeFromSuperview];
     scoped_ptr<InfoBar> infobar(
         static_cast<InfoBarDelegate*>(infobar_delegate_.get())->

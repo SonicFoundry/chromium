@@ -38,7 +38,8 @@ const MockTransaction kSimpleGET_Transaction = {
   "<html><body>Google Blah Blah</body></html>",
   TEST_MODE_NORMAL,
   NULL,
-  0
+  0,
+  net::OK
 };
 
 const MockTransaction kSimplePOST_Transaction = {
@@ -53,7 +54,8 @@ const MockTransaction kSimplePOST_Transaction = {
   "<html><body>Google Blah Blah</body></html>",
   TEST_MODE_NORMAL,
   NULL,
-  0
+  0,
+  net::OK
 };
 
 const MockTransaction kTypicalGET_Transaction = {
@@ -69,7 +71,8 @@ const MockTransaction kTypicalGET_Transaction = {
   "<html><body>Google Blah Blah</body></html>",
   TEST_MODE_NORMAL,
   NULL,
-  0
+  0,
+  net::OK
 };
 
 const MockTransaction kETagGET_Transaction = {
@@ -85,7 +88,8 @@ const MockTransaction kETagGET_Transaction = {
   "<html><body>Google Blah Blah</body></html>",
   TEST_MODE_NORMAL,
   NULL,
-  0
+  0,
+  net::OK
 };
 
 const MockTransaction kRangeGET_Transaction = {
@@ -100,7 +104,8 @@ const MockTransaction kRangeGET_Transaction = {
   "<html><body>Google Blah Blah</body></html>",
   TEST_MODE_NORMAL,
   NULL,
-  0
+  0,
+  net::OK
 };
 
 static const MockTransaction* const kBuiltinMockTransactions[] = {
@@ -146,12 +151,13 @@ MockHttpRequest::MockHttpRequest(const MockTransaction& t) {
 int TestTransactionConsumer::quit_counter_ = 0;
 
 TestTransactionConsumer::TestTransactionConsumer(
+    net::RequestPriority priority,
     net::HttpTransactionFactory* factory)
     : state_(IDLE),
       trans_(NULL),
       error_(net::OK) {
   // Disregard the error code.
-  factory->CreateTransaction(&trans_, NULL);
+  factory->CreateTransaction(priority, &trans_, NULL);
   ++quit_counter_;
 }
 
@@ -215,9 +221,12 @@ void TestTransactionConsumer::OnIOComplete(int result) {
   }
 }
 
-MockNetworkTransaction::MockNetworkTransaction(MockNetworkLayer* factory)
-    : ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)),
+MockNetworkTransaction::MockNetworkTransaction(
+    net::RequestPriority priority,
+    MockNetworkLayer* factory)
+    : weak_factory_(this),
       data_cursor_(0),
+      priority_(priority),
       transaction_factory_(factory->AsWeakPtr()) {
 }
 
@@ -229,6 +238,16 @@ int MockNetworkTransaction::Start(const net::HttpRequestInfo* request,
   const MockTransaction* t = FindMockTransaction(request->url);
   if (!t)
     return net::ERR_FAILED;
+
+  test_mode_ = t->test_mode;
+
+  // Return immediately if we're returning in error.
+  if (net::OK != t->return_code) {
+    if (test_mode_ & TEST_MODE_SYNC_NET_START)
+      return t->return_code;
+    CallbackLater(callback, t->return_code);
+    return net::ERR_IO_PENDING;
+  }
 
   std::string resp_status = t->status;
   std::string resp_headers = t->response_headers;
@@ -245,6 +264,7 @@ int MockNetworkTransaction::Start(const net::HttpRequestInfo* request,
     response_.request_time = t->request_time;
 
   response_.was_cached = false;
+  response_.network_accessed = true;
 
   response_.response_time = base::Time::Now();
   if (!t->response_time.is_null())
@@ -254,7 +274,6 @@ int MockNetworkTransaction::Start(const net::HttpRequestInfo* request,
   response_.vary_data.Init(*request, *response_.headers);
   response_.ssl_info.cert_status = t->cert_status;
   data_ = resp_data;
-  test_mode_ = t->test_mode;
 
   if (test_mode_ & TEST_MODE_SYNC_NET_START)
     return net::OK;
@@ -325,6 +344,10 @@ bool MockNetworkTransaction::GetLoadTimingInfo(
   return false;
 }
 
+void MockNetworkTransaction::SetPriority(net::RequestPriority priority) {
+  priority_ = priority;
+}
+
 void MockNetworkTransaction::CallbackLater(
     const net::CompletionCallback& callback, int result) {
   MessageLoop::current()->PostTask(
@@ -338,7 +361,9 @@ void MockNetworkTransaction::RunCallback(
 }
 
 MockNetworkLayer::MockNetworkLayer()
-    : transaction_count_(0), done_reading_called_(false) {}
+    : transaction_count_(0),
+      done_reading_called_(false),
+      last_create_transaction_priority_(net::DEFAULT_PRIORITY) {}
 
 MockNetworkLayer::~MockNetworkLayer() {}
 
@@ -347,10 +372,15 @@ void MockNetworkLayer::TransactionDoneReading() {
 }
 
 int MockNetworkLayer::CreateTransaction(
+    net::RequestPriority priority,
     scoped_ptr<net::HttpTransaction>* trans,
     net::HttpTransactionDelegate* delegate) {
   transaction_count_++;
-  trans->reset(new MockNetworkTransaction(this));
+  last_create_transaction_priority_ = priority;
+  scoped_ptr<MockNetworkTransaction> mock_transaction(
+      new MockNetworkTransaction(priority, this));
+  last_transaction_ = mock_transaction->AsWeakPtr();
+  *trans = mock_transaction.Pass();
   return net::OK;
 }
 

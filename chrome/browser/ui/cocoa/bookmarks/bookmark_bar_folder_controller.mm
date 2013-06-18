@@ -6,7 +6,7 @@
 
 #include "base/mac/bundle_locations.h"
 #include "base/mac/mac_util.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/bookmarks/bookmark_model.h"
 #include "chrome/browser/bookmarks/bookmark_utils.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_constants.h"
@@ -235,13 +235,16 @@ struct LayoutMetrics {
 
 - (id)initWithParentButton:(BookmarkButton*)button
           parentController:(BookmarkBarFolderController*)parentController
-             barController:(BookmarkBarController*)barController {
+             barController:(BookmarkBarController*)barController
+                   profile:(Profile*)profile {
   NSString* nibPath =
       [base::mac::FrameworkBundle() pathForResource:@"BookmarkBarFolderWindow"
                                              ofType:@"nib"];
   if ((self = [super initWithWindowNibPath:nibPath owner:self])) {
     parentButton_.reset([button retain]);
     selectedIndex_ = -1;
+
+    profile_ = profile;
 
     // We want the button to remain bordered as part of the menu path.
     [button forceButtonBorderToStayOnAlways:YES];
@@ -305,8 +308,6 @@ struct LayoutMetrics {
     [button setTarget:nil];
     [button setAction:nil];
   }
-  [buttonMenu_ setDelegate:nil];
-  [folderMenu_ setDelegate:nil];
 
   // Note: we don't need to
   //   [NSObject cancelPreviousPerformRequestsWithTarget:self];
@@ -360,12 +361,13 @@ struct LayoutMetrics {
 
 - (BookmarkButtonCell*)cellForBookmarkNode:(const BookmarkNode*)child {
   NSImage* image = child ? [barController_ faviconForNode:child] : nil;
-  NSMenu* menu = child ? child->is_folder() ? folderMenu_ : buttonMenu_ : nil;
+  BookmarkContextMenuCocoaController* menuController =
+      [barController_ menuController];
   BookmarkBarFolderButtonCell* cell =
       [BookmarkBarFolderButtonCell buttonCellForNode:child
-                                         contextMenu:menu
-                                            cellText:nil
-                                           cellImage:image];
+                                                text:nil
+                                               image:image
+                                      menuController:menuController];
   [cell setTag:kStandardButtonTypeWithLimitedClickFeedback];
   return cell;
 }
@@ -423,7 +425,7 @@ struct LayoutMetrics {
       [button setAction:@selector(openBookmarkFolderFromButton:)];
     } else {
       // Make the button do something.
-      [button setTarget:self];
+      [button setTarget:barController_];
       [button setAction:@selector(openBookmark:)];
       // Add a tooltip.
       [button setToolTip:[BookmarkMenuCocoaController tooltipForNode:node]];
@@ -1133,70 +1135,6 @@ struct LayoutMetrics {
   }
 }
 
-#pragma mark Actions Forwarded to Parent BookmarkBarController
-
-- (BOOL)validateUserInterfaceItem:(id<NSValidatedUserInterfaceItem>)item {
-  return [barController_ validateUserInterfaceItem:item];
-}
-
-- (IBAction)openBookmark:(id)sender {
-  [barController_ openBookmark:sender];
-}
-
-- (IBAction)openBookmarkInNewForegroundTab:(id)sender {
-  [barController_ openBookmarkInNewForegroundTab:sender];
-}
-
-- (IBAction)openBookmarkInNewWindow:(id)sender {
-  [barController_ openBookmarkInNewWindow:sender];
-}
-
-- (IBAction)openBookmarkInIncognitoWindow:(id)sender {
-  [barController_ openBookmarkInIncognitoWindow:sender];
-}
-
-- (IBAction)editBookmark:(id)sender {
-  [barController_ editBookmark:sender];
-}
-
-- (IBAction)cutBookmark:(id)sender {
-  [self closeBookmarkFolder:self];
-  [barController_ cutBookmark:sender];
-}
-
-- (IBAction)copyBookmark:(id)sender {
-  [barController_ copyBookmark:sender];
-}
-
-- (IBAction)pasteBookmark:(id)sender {
-  [barController_ pasteBookmark:sender];
-}
-
-- (IBAction)deleteBookmark:(id)sender {
-  [self closeBookmarkFolder:self];
-  [barController_ deleteBookmark:sender];
-}
-
-- (IBAction)openAllBookmarks:(id)sender {
-  [barController_ openAllBookmarks:sender];
-}
-
-- (IBAction)openAllBookmarksNewWindow:(id)sender {
-  [barController_ openAllBookmarksNewWindow:sender];
-}
-
-- (IBAction)openAllBookmarksIncognitoWindow:(id)sender {
-  [barController_ openAllBookmarksIncognitoWindow:sender];
-}
-
-- (IBAction)addPage:(id)sender {
-  [barController_ addPage:sender];
-}
-
-- (IBAction)addFolder:(id)sender {
-  [barController_ addFolder:sender];
-}
-
 #pragma mark Drag & Drop
 
 // Find something like std::is_between<T>?  I can't believe one doesn't exist.
@@ -1527,10 +1465,8 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
 - (std::vector<const BookmarkNode*>)retrieveBookmarkNodeData {
   std::vector<const BookmarkNode*> dragDataNodes;
   BookmarkNodeData dragData;
-  if(dragData.ReadFromDragClipboard()) {
-    BookmarkModel* bookmarkModel = [self bookmarkModel];
-    Profile* profile = bookmarkModel->profile();
-    std::vector<const BookmarkNode*> nodes(dragData.GetNodes(profile));
+  if (dragData.ReadFromDragClipboard()) {
+    std::vector<const BookmarkNode*> nodes(dragData.GetNodes(profile_));
     dragDataNodes.assign(nodes.begin(), nodes.end());
   }
   return dragDataNodes;
@@ -1638,7 +1574,7 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
   [self setSelectedButtonByIndex:newIndex];
 }
 
-- (void) selectNext {
+- (void)selectNext {
   if (selectedIndex_ + 1 < [self buttonCount])
     [self setSelectedButtonByIndex:selectedIndex_ + 1];
 }
@@ -1663,7 +1599,7 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
       case NSCarriageReturnCharacter:
       case NSEnterCharacter:
         if (selectedIndex_ >= 0 && selectedIndex_ < [self buttonCount]) {
-          [self openBookmark:[buttons_ objectAtIndex:selectedIndex_]];
+          [barController_ openBookmark:[buttons_ objectAtIndex:selectedIndex_]];
           return NO; // NO because the selection-handling code will close later.
         } else {
           return YES; // Triggering with no selection closes the menu.
@@ -1796,7 +1732,8 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
   folderController_ =
       [[BookmarkBarFolderController alloc] initWithParentButton:parentButton
                                                parentController:self
-                                                  barController:barController_];
+                                                  barController:barController_
+                                                        profile:profile_];
   [folderController_ showWindow:self];
 }
 
@@ -1933,6 +1870,10 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
   // TODO(mrossetti): Get disappearing animation to work. http://crbug.com/42360
   BookmarkButton* oldButton = [buttons_ objectAtIndex:buttonIndex];
   NSPoint poofPoint = [oldButton screenLocationForRemoveAnimation];
+
+  // If this button has an open sub-folder, close it.
+  if ([folderController_ parentButton] == oldButton)
+    [self closeBookmarkFolder:self];
 
   // If a hover-open is pending, cancel it.
   if (oldButton == buttonThatMouseIsIn_) {

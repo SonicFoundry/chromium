@@ -19,18 +19,19 @@ namespace media {
 
 AudioDecoderSelector::AudioDecoderSelector(
     const scoped_refptr<base::MessageLoopProxy>& message_loop,
-    const AudioDecoderList& decoders,
+    ScopedVector<AudioDecoder> decoders,
     const SetDecryptorReadyCB& set_decryptor_ready_cb)
     : message_loop_(message_loop),
-      decoders_(decoders),
+      decoders_(decoders.Pass()),
       set_decryptor_ready_cb_(set_decryptor_ready_cb),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_(this)) {
+      input_stream_(NULL),
+      weak_ptr_factory_(this) {
 }
 
 AudioDecoderSelector::~AudioDecoderSelector() {}
 
 void AudioDecoderSelector::SelectAudioDecoder(
-    const scoped_refptr<DemuxerStream>& stream,
+    DemuxerStream* stream,
     const StatisticsCB& statistics_cb,
     const SelectDecoderCB& select_decoder_cb) {
   DVLOG(2) << "SelectAudioDecoder()";
@@ -43,7 +44,8 @@ void AudioDecoderSelector::SelectAudioDecoder(
   const AudioDecoderConfig& config = stream->audio_decoder_config();
   if (!config.IsValidConfig()) {
     DLOG(ERROR) << "Invalid audio stream config.";
-    base::ResetAndReturn(&select_decoder_cb_).Run(NULL, NULL);
+    base::ResetAndReturn(&select_decoder_cb_).Run(
+        scoped_ptr<AudioDecoder>(), scoped_ptr<DecryptingDemuxerStream>());
     return;
   }
 
@@ -51,24 +53,19 @@ void AudioDecoderSelector::SelectAudioDecoder(
   statistics_cb_ = statistics_cb;
 
   if (!config.is_encrypted()) {
-    if (decoders_.empty()) {
-      DLOG(ERROR) << "No audio decoder can be used to decode the input stream.";
-      base::ResetAndReturn(&select_decoder_cb_).Run(NULL, NULL);
-      return;
-    }
-
-    InitializeNextDecoder();
+    InitializeDecoder(decoders_.begin());
     return;
   }
 
   // This could happen if Encrypted Media Extension (EME) is not enabled.
   if (set_decryptor_ready_cb_.is_null()) {
-    base::ResetAndReturn(&select_decoder_cb_).Run(NULL, NULL);
+    base::ResetAndReturn(&select_decoder_cb_).Run(
+        scoped_ptr<AudioDecoder>(), scoped_ptr<DecryptingDemuxerStream>());
     return;
   }
 
-  audio_decoder_ = new DecryptingAudioDecoder(message_loop_,
-                                              set_decryptor_ready_cb_);
+  audio_decoder_.reset(new DecryptingAudioDecoder(
+      message_loop_, set_decryptor_ready_cb_));
 
   audio_decoder_->Initialize(
       input_stream_,
@@ -83,21 +80,15 @@ void AudioDecoderSelector::DecryptingAudioDecoderInitDone(
   DCHECK(message_loop_->BelongsToCurrentThread());
 
   if (status == PIPELINE_OK) {
-    decoders_.clear();
-    base::ResetAndReturn(&select_decoder_cb_).Run(audio_decoder_, NULL);
+    base::ResetAndReturn(&select_decoder_cb_).Run(
+        audio_decoder_.Pass(), scoped_ptr<DecryptingDemuxerStream>());
     return;
   }
 
-  audio_decoder_ = NULL;
+  audio_decoder_.reset();
 
-  if (decoders_.empty()) {
-    DLOG(ERROR) << "No audio decoder can be used to decode the input stream.";
-    base::ResetAndReturn(&select_decoder_cb_).Run(NULL, NULL);
-    return;
-  }
-
-  decrypted_stream_ = new DecryptingDemuxerStream(
-      message_loop_, set_decryptor_ready_cb_);
+  decrypted_stream_.reset(new DecryptingDemuxerStream(
+      message_loop_, set_decryptor_ready_cb_));
 
   decrypted_stream_->Initialize(
       input_stream_,
@@ -111,45 +102,50 @@ void AudioDecoderSelector::DecryptingDemuxerStreamInitDone(
   DCHECK(message_loop_->BelongsToCurrentThread());
 
   if (status != PIPELINE_OK) {
-    decrypted_stream_ = NULL;
-    base::ResetAndReturn(&select_decoder_cb_).Run(NULL, NULL);
+    decrypted_stream_.reset();
+    base::ResetAndReturn(&select_decoder_cb_).Run(
+        scoped_ptr<AudioDecoder>(), scoped_ptr<DecryptingDemuxerStream>());
     return;
   }
 
   DCHECK(!decrypted_stream_->audio_decoder_config().is_encrypted());
-  input_stream_ = decrypted_stream_;
-  InitializeNextDecoder();
+  input_stream_ = decrypted_stream_.get();
+  InitializeDecoder(decoders_.begin());
 }
 
-void AudioDecoderSelector::InitializeNextDecoder() {
-  DCHECK(message_loop_->BelongsToCurrentThread());
-  DCHECK(!decoders_.empty());
-
-  audio_decoder_ = decoders_.front();
-  decoders_.pop_front();
-  DCHECK(audio_decoder_);
-  audio_decoder_->Initialize(
-      input_stream_,
-      BindToCurrentLoop(base::Bind(
-          &AudioDecoderSelector::DecoderInitDone,
-          weak_ptr_factory_.GetWeakPtr())),
-      statistics_cb_);
-}
-
-void AudioDecoderSelector::DecoderInitDone(PipelineStatus status) {
+void AudioDecoderSelector::InitializeDecoder(
+    ScopedVector<AudioDecoder>::iterator iter) {
   DCHECK(message_loop_->BelongsToCurrentThread());
 
-  if (status != PIPELINE_OK) {
-    if (!decoders_.empty())
-      InitializeNextDecoder();
-    else
-      base::ResetAndReturn(&select_decoder_cb_).Run(NULL, NULL);
+  if (iter == decoders_.end()) {
+    base::ResetAndReturn(&select_decoder_cb_).Run(
+        scoped_ptr<AudioDecoder>(), scoped_ptr<DecryptingDemuxerStream>());
     return;
   }
 
-  decoders_.clear();
-  base::ResetAndReturn(&select_decoder_cb_).Run(audio_decoder_,
-                                                decrypted_stream_);
+  (*iter)->Initialize(
+      input_stream_,
+      BindToCurrentLoop(base::Bind(
+          &AudioDecoderSelector::DecoderInitDone,
+          weak_ptr_factory_.GetWeakPtr(),
+          iter)),
+      statistics_cb_);
+}
+
+void AudioDecoderSelector::DecoderInitDone(
+    ScopedVector<AudioDecoder>::iterator iter, PipelineStatus status) {
+  DCHECK(message_loop_->BelongsToCurrentThread());
+
+  if (status != PIPELINE_OK) {
+    InitializeDecoder(++iter);
+    return;
+  }
+
+  scoped_ptr<AudioDecoder> audio_decoder(*iter);
+  decoders_.weak_erase(iter);
+
+  base::ResetAndReturn(&select_decoder_cb_).Run(audio_decoder.Pass(),
+                                                decrypted_stream_.Pass());
 }
 
 }  // namespace media

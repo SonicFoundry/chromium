@@ -117,7 +117,6 @@ class OmniboxViewWin
   virtual views::View* AddToView(views::View* parent) OVERRIDE;
   virtual int OnPerformDrop(const ui::DropTargetEvent& event) OVERRIDE;
   virtual gfx::Font GetFont() OVERRIDE;
-  virtual int WidthOfTextAfterCursor() OVERRIDE;
 
   int GetPopupMaxYCoordinate();
 
@@ -189,7 +188,7 @@ class OmniboxViewWin
       ui::Accelerator* accelerator) OVERRIDE;
   virtual bool IsItemForCommandIdDynamic(int command_id) const OVERRIDE;
   virtual string16 GetLabelForCommandId(int command_id) const OVERRIDE;
-  virtual void ExecuteCommand(int command_id) OVERRIDE;
+  virtual void ExecuteCommand(int command_id, int event_flags) OVERRIDE;
 
  private:
   enum MouseButton {

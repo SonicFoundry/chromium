@@ -15,7 +15,7 @@
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/message_loop_proxy.h"
+#include "base/message_loop/message_loop_proxy.h"
 #include "base/scoped_native_library.h"
 #include "base/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
@@ -55,29 +55,15 @@ bool DoAllShowPresentWithGDI() {
       switches::kDoAllShowPresentWithGDI);
 }
 
-// Lock a D3D surface, and invoke a VideoFrame copier on the result.
-bool LockAndCopyPlane(IDirect3DSurface9* src_surface,
-                      media::VideoFrame* dst_frame,
-                      size_t plane_id) {
-  gfx::Size src_size = d3d_utils::GetSize(src_surface);
-
-  D3DLOCKED_RECT locked_rect;
-  {
-    TRACE_EVENT0("gpu", "LockRect");
-    HRESULT hr = src_surface->LockRect(&locked_rect, NULL,
-                                       D3DLOCK_READONLY | D3DLOCK_NOSYSLOCK);
-    if (FAILED(hr))
-      return false;
-  }
-
-  {
-    TRACE_EVENT0("gpu", "memcpy");
-    uint8* src = reinterpret_cast<uint8*>(locked_rect.pBits);
-    int src_stride = locked_rect.Pitch;
-    media::CopyPlane(plane_id, src, src_stride, src_size.height(), dst_frame);
-  }
-  src_surface->UnlockRect();
-  return true;
+// Use a SurfaceReader to copy into one plane of the VideoFrame.
+bool CopyPlane(AcceleratedSurfaceTransformer* gpu_ops,
+               IDirect3DSurface9* src_surface,
+               media::VideoFrame* dst_frame,
+               size_t plane_id) {
+  int width_in_bytes = dst_frame->row_bytes(plane_id);
+  return gpu_ops->ReadFast(src_surface, dst_frame->data(plane_id),
+                           width_in_bytes, dst_frame->rows(plane_id),
+                           dst_frame->row_bytes(plane_id));
 }
 
 }  // namespace
@@ -96,6 +82,7 @@ class PresentThread : public base::Thread,
   }
 
   void InitDevice();
+  void LockAndResetDevice();
   void ResetDevice();
   bool IsDeviceLost();
 
@@ -176,6 +163,8 @@ PresentThread::PresentThread(const char* name) : base::Thread(name) {
 }
 
 void PresentThread::InitDevice() {
+  lock_.AssertAcquired();
+
   if (device_)
     return;
 
@@ -184,13 +173,18 @@ void PresentThread::InitDevice() {
   ResetDevice();
 }
 
+void PresentThread::LockAndResetDevice() {
+  base::AutoLock locked(lock_);
+  ResetDevice();
+}
+
 void PresentThread::ResetDevice() {
   TRACE_EVENT0("gpu", "PresentThread::ResetDevice");
 
-  LOG(ERROR) << "Reseting D3D device";
+  lock_.AssertAcquired();
 
   // The D3D device must be created on the present thread.
-  CHECK(message_loop() == MessageLoop::current());
+  CHECK(message_loop() == base::MessageLoop::current());
 
   // This will crash some Intel drivers but we can't render anything without
   // reseting the device, which would be disappointing.
@@ -223,6 +217,8 @@ void PresentThread::ResetDevice() {
 }
 
 bool PresentThread::IsDeviceLost() {
+  lock_.AssertAcquired();
+
   HRESULT hr = device_->CheckDeviceState(NULL);
   return FAILED(hr) || hr == S_PRESENT_MODE_CHANGED;
 }
@@ -460,10 +456,9 @@ bool AcceleratedPresenter::DoCopyToARGB(const gfx::Rect& requested_src_subrect,
   src_subrect.Intersect(gfx::Rect(back_buffer_size));
   base::win::ScopedComPtr<IDirect3DSurface9> final_surface;
   {
-    TRACE_EVENT0("gpu", "CreateTemporaryLockableSurface");
-    if (!d3d_utils::CreateTemporaryLockableSurface(present_thread_->device(),
-                                                   dst_size,
-                                                   final_surface.Receive())) {
+    if (!d3d_utils::CreateOrReuseLockableSurface(present_thread_->device(),
+                                                 dst_size,
+                                                 &final_surface)) {
       LOG(ERROR) << "Failed to create temporary lockable surface";
       return false;
     }
@@ -479,39 +474,18 @@ bool AcceleratedPresenter::DoCopyToARGB(const gfx::Rect& requested_src_subrect,
     }
   }
 
-  D3DLOCKED_RECT locked_rect;
+  bitmap->setConfig(SkBitmap::kARGB_8888_Config,
+                    dst_size.width(), dst_size.height());
+  if (!bitmap->allocPixels())
+    return false;
+  bitmap->setIsOpaque(true);
 
-  // Empirical evidence seems to suggest that LockRect and memcpy are faster
-  // than would be GetRenderTargetData to an offscreen surface wrapping *buf.
-  {
-    TRACE_EVENT0("gpu", "LockRect");
-    hr = final_surface->LockRect(&locked_rect, NULL,
-                                 D3DLOCK_READONLY | D3DLOCK_NOSYSLOCK);
-    if (FAILED(hr)) {
-      LOG(ERROR) << "Failed to lock surface";
-      return false;
-    }
-  }
-
-  {
-    TRACE_EVENT0("gpu", "memcpy");
-
-    bitmap->setConfig(SkBitmap::kARGB_8888_Config,
-                      dst_size.width(), dst_size.height(),
-                      locked_rect.Pitch);
-    if (!bitmap->allocPixels()) {
-      final_surface->UnlockRect();
-      return false;
-    }
-    bitmap->setIsOpaque(true);
-
-    memcpy(reinterpret_cast<int8*>(bitmap->getPixels()),
-           reinterpret_cast<int8*>(locked_rect.pBits),
-           locked_rect.Pitch * dst_size.height());
-  }
-  final_surface->UnlockRect();
-
-  return true;
+  // Copy |final_surface| to |bitmap|. This is always a synchronous operation.
+  return gpu_ops->ReadFast(final_surface,
+                           reinterpret_cast<uint8*>(bitmap->getPixels()),
+                           bitmap->width() * bitmap->bytesPerPixel(),
+                           bitmap->height(),
+                           static_cast<int>(bitmap->rowBytes()));
 }
 
 bool AcceleratedPresenter::DoCopyToYUV(
@@ -552,17 +526,12 @@ bool AcceleratedPresenter::DoCopyToYUV(
   gfx::Rect src_subrect = requested_src_subrect;
   src_subrect.Intersect(gfx::Rect(back_buffer_size));
 
-  base::win::ScopedComPtr<IDirect3DTexture9> resized_as_texture;
   base::win::ScopedComPtr<IDirect3DSurface9> resized;
-  {
-    TRACE_EVENT0("gpu", "CreateTemporaryRenderTargetTexture");
-    if (!d3d_utils::CreateTemporaryRenderTargetTexture(
-            present_thread_->device(),
-            dst_size,
-            resized_as_texture.Receive(),
-            resized.Receive())) {
-      return false;
-    }
+  base::win::ScopedComPtr<IDirect3DTexture9> resized_as_texture;
+  if (!gpu_ops->GetIntermediateTexture(dst_size,
+                                       resized_as_texture.Receive(),
+                                       resized.Receive())) {
+    return false;
   }
 
   // Shrink the source to fit entirely in the destination while preserving
@@ -592,11 +561,11 @@ bool AcceleratedPresenter::DoCopyToYUV(
     }
   }
 
-  if (!LockAndCopyPlane(y, frame, media::VideoFrame::kYPlane))
+  if (!CopyPlane(gpu_ops, y, frame, media::VideoFrame::kYPlane))
     return false;
-  if (!LockAndCopyPlane(u, frame, media::VideoFrame::kUPlane))
+  if (!CopyPlane(gpu_ops, u, frame, media::VideoFrame::kUPlane))
     return false;
-  if (!LockAndCopyPlane(v, frame, media::VideoFrame::kVPlane))
+  if (!CopyPlane(gpu_ops, v, frame, media::VideoFrame::kVPlane))
     return false;
   return true;
 }
@@ -812,7 +781,8 @@ void AcceleratedPresenter::DoPresentAndAcknowledge(
     hr = swap_chain_->Present(&rect, &rect, window_, NULL, 0);
 
     // For latency_tests.cc:
-    UNSHIPPED_TRACE_EVENT_INSTANT0("test_gpu", "CompositorSwapBuffersComplete");
+    UNSHIPPED_TRACE_EVENT_INSTANT0("test_gpu", "CompositorSwapBuffersComplete",
+                                   TRACE_EVENT_SCOPE_THREAD);
 
     if (FAILED(hr)) {
       if (present_thread_->IsDeviceLost())
@@ -947,7 +917,7 @@ void AcceleratedPresenter::PresentWithGDI(HDC dc) {
       if (present_thread_->IsDeviceLost()) {
         present_thread_->message_loop()->PostTask(
             FROM_HERE,
-            base::Bind(&PresentThread::ResetDevice, present_thread_));
+            base::Bind(&PresentThread::LockAndResetDevice, present_thread_));
       }
       return;
     }
@@ -991,7 +961,8 @@ void AcceleratedPresenter::PresentWithGDI(HDC dc) {
   system_surface->UnlockRect();
 
   // For latency_tests.cc:
-  UNSHIPPED_TRACE_EVENT_INSTANT0("test_gpu", "CompositorSwapBuffersComplete");
+  UNSHIPPED_TRACE_EVENT_INSTANT0("test_gpu", "CompositorSwapBuffersComplete",
+                                 TRACE_EVENT_SCOPE_THREAD);
 }
 
 gfx::Size AcceleratedPresenter::GetWindowSize() {

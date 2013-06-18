@@ -4,21 +4,26 @@
 
 #include "chrome/test/chromedriver/commands.h"
 
-#include "base/callback.h"
-#include "base/file_util.h"
+#include <list>
+
 #include "base/stringprintf.h"
 #include "base/sys_info.h"
 #include "base/values.h"
-#include "chrome/test/chromedriver/chrome.h"
-#include "chrome/test/chromedriver/chrome_android_impl.h"
-#include "chrome/test/chromedriver/chrome_desktop_impl.h"
+#include "chrome/test/chromedriver/capabilities.h"
+#include "chrome/test/chromedriver/chrome/chrome.h"
+#include "chrome/test/chromedriver/chrome/chrome_android_impl.h"
+#include "chrome/test/chromedriver/chrome/chrome_desktop_impl.h"
+#include "chrome/test/chromedriver/chrome/devtools_event_logger.h"
+#include "chrome/test/chromedriver/chrome/status.h"
+#include "chrome/test/chromedriver/chrome/version.h"
+#include "chrome/test/chromedriver/chrome/web_view.h"
+#include "chrome/test/chromedriver/chrome_launcher.h"
+#include "chrome/test/chromedriver/logging.h"
+#include "chrome/test/chromedriver/net/net_util.h"
 #include "chrome/test/chromedriver/net/url_request_context_getter.h"
 #include "chrome/test/chromedriver/session.h"
 #include "chrome/test/chromedriver/session_map.h"
-#include "chrome/test/chromedriver/status.h"
 #include "chrome/test/chromedriver/util.h"
-#include "chrome/test/chromedriver/version.h"
-#include "chrome/test/chromedriver/web_view.h"
 
 Status ExecuteGetStatus(
     const base::DictionaryValue& params,
@@ -48,61 +53,52 @@ Status ExecuteNewSession(
     const std::string& session_id,
     scoped_ptr<base::Value>* out_value,
     std::string* out_session_id) {
-  scoped_ptr<Chrome> chrome;
-  Status status(kOk);
-  int port = 33081;
-  std::string android_package;
+  int port;
+  if (!FindOpenPort(&port))
+    return Status(kUnknownError, "failed to find an open port for Chrome");
 
-  if (params.GetString("desiredCapabilities.chromeOptions.android_package",
-                       &android_package)) {
-    scoped_ptr<ChromeAndroidImpl> chrome_android(new ChromeAndroidImpl(
-        context_getter, port, socket_factory));
-    status = chrome_android->Launch(android_package);
-    chrome.reset(chrome_android.release());
-  } else {
-    base::FilePath::StringType path_str;
-    base::FilePath chrome_exe;
-    if (params.GetString("desiredCapabilities.chromeOptions.binary",
-                         &path_str)) {
-      chrome_exe = base::FilePath(path_str);
-      if (!file_util::PathExists(chrome_exe)) {
-        std::string message = base::StringPrintf(
-            "no chrome binary at %" PRFilePath,
-            path_str.c_str());
-        return Status(kUnknownError, message);
-      }
-    }
+  const base::DictionaryValue* desired_caps;
+  if (!params.GetDictionary("desiredCapabilities", &desired_caps))
+    return Status(kUnknownError, "cannot find dict 'desiredCapabilities'");
 
-    const base::Value* args = NULL;
-    const base::ListValue* args_list = NULL;
-    if (params.Get("desiredCapabilities.chromeOptions.args", &args) &&
-        !args->GetAsList(&args_list)) {
-        return Status(kUnknownError,
-                      "command line arguments for chrome must be a list");
-    }
-
-    scoped_ptr<ChromeDesktopImpl> chrome_desktop(new ChromeDesktopImpl(
-        context_getter, port, socket_factory));
-    status = chrome_desktop->Launch(chrome_exe, args_list);
-    chrome.reset(chrome_desktop.release());
-  }
+  Capabilities capabilities;
+  Status status = capabilities.Parse(*desired_caps);
   if (status.IsError())
-    return Status(kSessionNotCreatedException, status.message());
+    return status;
 
-  std::list<WebView*> web_views;
-  status = chrome->GetWebViews(&web_views);
-  if (status.IsError() || web_views.empty()) {
+  // Create DevToolsEventLoggers, fail if log levels are invalid.
+  ScopedVector<DevToolsEventLogger> devtools_event_loggers;
+  status = CreateLoggers(capabilities, &devtools_event_loggers);
+  if (status.IsError())
+    return status;
+
+  scoped_ptr<Chrome> chrome;
+  std::list<DevToolsEventLogger*> devtools_event_logger_list(
+      devtools_event_loggers.begin(), devtools_event_loggers.end());
+  status = LaunchChrome(context_getter, port, socket_factory,
+                        capabilities, devtools_event_logger_list, &chrome);
+  if (status.IsError())
+    return status;
+
+  std::list<std::string> web_view_ids;
+  status = chrome->GetWebViewIds(&web_view_ids);
+  if (status.IsError() || web_view_ids.empty()) {
     chrome->Quit();
     return status.IsError() ? status :
         Status(kUnknownError, "unable to discover open window in chrome");
   }
-  WebView* default_web_view = web_views.front();
 
   std::string new_id = session_id;
   if (new_id.empty())
     new_id = GenerateId();
   scoped_ptr<Session> session(new Session(new_id, chrome.Pass()));
-  session->window = default_web_view->GetId();
+  session->devtools_event_loggers.swap(devtools_event_loggers);
+  if (!session->thread.Start()) {
+    chrome->Quit();
+    return Status(kUnknownError,
+                  "failed to start a thread for the new session");
+  }
+  session->window = web_view_ids.front();
   out_value->reset(session->capabilities->DeepCopy());
   *out_session_id = new_id;
 

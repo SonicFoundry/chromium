@@ -38,7 +38,7 @@ class ExtensionSyncEventObserver
   // sync_file_system::SyncEventObserver interface implementation.
   virtual void OnSyncStateUpdated(
       const GURL& app_origin,
-      sync_file_system::SyncEventObserver::SyncServiceState state,
+      sync_file_system::SyncServiceState state,
       const std::string& description) OVERRIDE;
 
   virtual void OnFileSynced(
@@ -48,19 +48,21 @@ class ExtensionSyncEventObserver
       sync_file_system::SyncDirection direction) OVERRIDE;
 
  private:
-   const std::string& GetExtensionId(const GURL& app_origin);
+  // Returns an empty string if the extension |app_origin| cannot be found
+  // in the installed extension list.
+  std::string GetExtensionId(const GURL& app_origin);
 
-   Profile* profile_;
+  Profile* profile_;
 
-   // Not owned. If not null, then this is registered to SyncFileSystemService.
-   sync_file_system::SyncFileSystemService* sync_service_;
-   std::string service_name_;
+  // Not owned. If not null, then this is registered to SyncFileSystemService.
+  sync_file_system::SyncFileSystemService* sync_service_;
+  std::string service_name_;
 
-   void BroadcastOrDispatchEvent(const GURL& app_origin,
-                                 const std::string& event_name,
-                                 scoped_ptr<base::ListValue> value);
+  void BroadcastOrDispatchEvent(const GURL& app_origin,
+                                const std::string& event_name,
+                                scoped_ptr<base::ListValue> value);
 
-   DISALLOW_COPY_AND_ASSIGN(ExtensionSyncEventObserver);
+  DISALLOW_COPY_AND_ASSIGN(ExtensionSyncEventObserver);
 };
 
 }  // namespace extensions

@@ -84,9 +84,12 @@ void LoadDefaults(FontRenderParams* params, bool renderer) {
   params->antialiasing = true;
   params->autohinter = true;
   params->use_bitmaps = true;
+  params->hinting = FontRenderParams::HINTING_SLIGHT;
 
   // Fetch default subpixel rendering settings from FontConfig.
   FcPattern* pattern = FcPatternCreate();
+  FcConfigSubstitute(NULL, pattern, FcMatchPattern);
+  FcDefaultSubstitute(pattern);
   FcResult result;
   FcPattern* match = FcFontMatch(0, pattern, &result);
   DCHECK(match);
@@ -118,8 +121,6 @@ void LoadDefaults(FontRenderParams* params, bool renderer) {
   // To enable subpixel positioning, we need to disable hinting.
   if (params->subpixel_positioning)
     params->hinting = FontRenderParams::HINTING_NONE;
-  else
-    params->hinting = FontRenderParams::HINTING_SLIGHT;
 }
 
 }  // namespace

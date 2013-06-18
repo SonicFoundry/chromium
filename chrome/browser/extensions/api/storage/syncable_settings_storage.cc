@@ -157,7 +157,7 @@ syncer::SyncError SyncableSettingsStorage::SendLocalSettingsToSync(
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE));
 
   ValueStoreChangeList changes;
-  for (DictionaryValue::Iterator i(settings); i.HasNext(); i.Advance()) {
+  for (DictionaryValue::Iterator i(settings); !i.IsAtEnd(); i.Advance()) {
     changes.push_back(ValueStoreChange(i.key(), NULL, i.value().DeepCopy()));
   }
 
@@ -179,7 +179,7 @@ syncer::SyncError SyncableSettingsStorage::OverwriteLocalSettingsWithSync(
   scoped_ptr<DictionaryValue> new_sync_state(sync_state.DeepCopy());
 
   SettingSyncDataList changes;
-  for (DictionaryValue::Iterator it(settings); it.HasNext(); it.Advance()) {
+  for (DictionaryValue::Iterator it(settings); !it.IsAtEnd(); it.Advance()) {
     Value* orphaned_sync_value = NULL;
     if (new_sync_state->RemoveWithoutPathExpansion(
           it.key(), &orphaned_sync_value)) {
@@ -208,7 +208,8 @@ syncer::SyncError SyncableSettingsStorage::OverwriteLocalSettingsWithSync(
 
   // Add all new settings to local settings.
   while (!new_sync_state->empty()) {
-    std::string key = *new_sync_state->begin_keys();
+    DictionaryValue::Iterator first_entry(*new_sync_state);
+    std::string key = first_entry.key();
     Value* value = NULL;
     CHECK(new_sync_state->RemoveWithoutPathExpansion(key, &value));
     changes.push_back(
@@ -216,7 +217,7 @@ syncer::SyncError SyncableSettingsStorage::OverwriteLocalSettingsWithSync(
             syncer::SyncChange::ACTION_ADD,
             extension_id_,
             key,
-            scoped_ptr<Value>(value)));
+            make_scoped_ptr(value)));
   }
 
   if (changes.empty())

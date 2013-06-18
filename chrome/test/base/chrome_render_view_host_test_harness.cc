@@ -4,6 +4,8 @@
 
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 
+#include "chrome/browser/signin/fake_signin_manager.h"
+#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/test/base/testing_profile.h"
 
 #if defined(USE_ASH)
@@ -33,9 +35,24 @@ RenderViewHostTester* ChromeRenderViewHostTestHarness::rvh_tester() {
   return RenderViewHostTester::For(rvh());
 }
 
+static ProfileKeyedService* BuildSigninManagerFake(
+    content::BrowserContext* context) {
+  Profile* profile = static_cast<Profile*>(context);
+#if defined (OS_CHROMEOS)
+  return new FakeSigninManagerBase(profile);
+#else
+  return new FakeSigninManager(profile);
+#endif
+}
+
 void ChromeRenderViewHostTestHarness::SetUp() {
-  if (!browser_context_.get())
-    browser_context_.reset(new TestingProfile());
+  Profile* profile = Profile::FromBrowserContext(browser_context_.get());
+  if (!profile) {
+    profile = new TestingProfile();
+    browser_context_.reset(profile);
+  }
+  SigninManagerFactory::GetInstance()->SetTestingFactory(
+          profile, BuildSigninManagerFake);
   RenderViewHostTestHarness::SetUp();
 }
 

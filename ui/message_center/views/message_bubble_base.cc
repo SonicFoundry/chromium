@@ -5,8 +5,8 @@
 #include "ui/message_center/views/message_bubble_base.h"
 
 #include "base/bind.h"
+#include "ui/message_center/message_center_constants.h"
 #include "ui/message_center/message_center_util.h"
-#include "ui/message_center/views/message_view.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
 
@@ -21,15 +21,11 @@ namespace message_center {
 
 const SkColor MessageBubbleBase::kBackgroundColor =
     SkColorSetRGB(0xfe, 0xfe, 0xfe);
-const SkColor MessageBubbleBase::kHeaderBackgroundColorLight =
-    SkColorSetRGB(0xf1, 0xf1, 0xf1);
-const SkColor MessageBubbleBase::kHeaderBackgroundColorDark =
-    SkColorSetRGB(0xe7, 0xe7, 0xe7);
 
-MessageBubbleBase::MessageBubbleBase(NotificationList::Delegate* list_delegate)
-    : list_delegate_(list_delegate),
+MessageBubbleBase::MessageBubbleBase(MessageCenter* message_center)
+    : message_center_(message_center),
       bubble_view_(NULL),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_(this)),
+      weak_ptr_factory_(this),
       max_height_(kMessageBubbleBaseDefaultMaxHeight) {
 }
 
@@ -45,7 +41,7 @@ void MessageBubbleBase::BubbleViewDestroyed() {
 
 void MessageBubbleBase::ScheduleUpdate() {
   weak_ptr_factory_.InvalidateWeakPtrs();  // Cancel any pending update.
-  MessageLoop::current()->PostDelayedTask(
+  base::MessageLoop::current()->PostDelayedTask(
       FROM_HERE,
       base::Bind(&MessageBubbleBase::UpdateBubbleView,
                  weak_ptr_factory_.GetWeakPtr()),
@@ -76,9 +72,9 @@ views::TrayBubbleView::InitParams MessageBubbleBase::GetDefaultInitParams(
   views::TrayBubbleView::InitParams init_params(
       views::TrayBubbleView::ANCHOR_TYPE_TRAY,
       anchor_alignment,
-      kWebNotificationWidth,
-      kWebNotificationWidth);
-  init_params.arrow_color = kHeaderBackgroundColorDark;
+      kNotificationWidth,
+      kNotificationWidth);
+  init_params.arrow_color = kBackgroundDarkColor;
   return init_params;
 }
 

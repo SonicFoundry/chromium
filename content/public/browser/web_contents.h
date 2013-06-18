@@ -174,14 +174,17 @@ class WebContents : public PageNavigator,
   virtual WebUI* CreateWebUI(const GURL& url) = 0;
 
   // Returns the committed WebUI if one exists, otherwise the pending one.
-  // Callers who want to use the pending WebUI for the pending navigation entry
-  // should use GetWebUIForCurrentState instead.
   virtual WebUI* GetWebUI() const = 0;
   virtual WebUI* GetCommittedWebUI() const = 0;
 
   // Allows overriding the user agent used for NavigationEntries it owns.
   virtual void SetUserAgentOverride(const std::string& override) = 0;
   virtual const std::string& GetUserAgentOverride() const = 0;
+
+#if defined(OS_WIN) && defined(USE_AURA)
+  virtual void SetParentNativeViewAccessible(
+      gfx::NativeViewAccessible accessible_parent) = 0;
+#endif
 
   // Tab navigation state ------------------------------------------------------
 
@@ -346,9 +349,6 @@ class WebContents : public PageNavigator,
   // times, subsequent calls are ignored.
   virtual void OnCloseStarted() = 0;
 
-  // Returns true if underlying WebContentsView should accept drag-n-drop.
-  virtual bool ShouldAcceptDragAndDrop() const = 0;
-
   // A render view-originated drag has ended. Informs the render view host and
   // WebContentsDelegate.
   virtual void SystemDragEnded() = 0;
@@ -388,13 +388,6 @@ class WebContents : public PageNavigator,
   // Get the content restrictions (see content::ContentRestriction).
   virtual int GetContentRestrictions() const = 0;
 
-  // Query the WebUIFactory for the TypeID for the current URL.
-  virtual WebUI::TypeID GetWebUITypeForCurrentState() = 0;
-
-  // Returns the WebUI for the current state of the tab. This will either be
-  // the pending WebUI, the committed WebUI, or NULL.
-  virtual WebUI* GetWebUIForCurrentState()= 0;
-
   // Called when the reponse to a pending mouse lock request has arrived.
   // Returns true if |allowed| is true and the mouse has been successfully
   // locked.
@@ -419,20 +412,26 @@ class WebContents : public PageNavigator,
                               const GURL&, /* image_url */
                               int,  /* requested_size */
                               const std::vector<SkBitmap>& /* bitmaps*/)>
-      FaviconDownloadCallback;
+      ImageDownloadCallback;
 
-  // Sends a request to download the given favicon |url| and returns the unique
+  // Sends a request to download the given image |url| and returns the unique
   // id of the download request. When the download is finished, |callback| will
-  // be called with the bitmaps received from the renderer. Note that
+  // be called with the bitmaps received from the renderer. If |is_favicon| is
+  // true, the cookies are not sent and not accepted during download. Note that
   // |image_size| is a hint for images with multiple sizes. The downloaded image
   // is not resized to the given image_size. If 0 is passed, the first frame of
   // the image is returned.
-  virtual int DownloadFavicon(const GURL& url, int image_size,
-                              const FaviconDownloadCallback& callback) = 0;
-
-
+  virtual int DownloadImage(const GURL& url,
+                            bool is_favicon,
+                            int image_size,
+                            const ImageDownloadCallback& callback) = 0;
   // Return the window features
   virtual WebKit::WebWindowFeatures GetWindowFeatures() const = 0;
+
+ private:
+  // This interface should only be implemented inside content.
+  friend class WebContentsImpl;
+  WebContents() {}
 };
 
 }  // namespace content

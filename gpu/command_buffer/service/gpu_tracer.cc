@@ -90,7 +90,7 @@ class GLARBTimerTrace : public Trace {
   virtual void Process() OVERRIDE;
 
  private:
-  ~GLARBTimerTrace();
+  virtual ~GLARBTimerTrace();
 
   void Output();
 
@@ -118,7 +118,7 @@ class NoopTrace : public Trace {
   virtual void Process() OVERRIDE {}
 
  private:
-  ~NoopTrace() {}
+  virtual ~NoopTrace() {}
 
   DISALLOW_COPY_AND_ASSIGN(NoopTrace);
 };
@@ -128,7 +128,8 @@ class GPUTracerImpl
       public base::SupportsWeakPtr<GPUTracerImpl> {
  public:
   GPUTracerImpl()
-      : gpu_category_enabled_(TRACE_EVENT_API_GET_CATEGORY_ENABLED("gpu")),
+      : gpu_category_enabled_(
+        TRACE_EVENT_API_GET_CATEGORY_GROUP_ENABLED("gpu")),
         process_posted_(false) {
   }
   virtual ~GPUTracerImpl() {}
@@ -283,7 +284,8 @@ void GPUTracerImpl::IssueProcessTask() {
     return;
 
   process_posted_ = true;
-  MessageLoop::current()->PostDelayedTask(FROM_HERE,
+  base::MessageLoop::current()->PostDelayedTask(
+      FROM_HERE,
       base::Bind(&GPUTracerImpl::Process, base::AsWeakPtr(this)),
       base::TimeDelta::FromMilliseconds(kProcessInterval));
 }

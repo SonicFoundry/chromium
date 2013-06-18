@@ -5,7 +5,7 @@
 #include "chrome/common/chrome_content_client.h"
 
 #include "base/logging.h"
-#include "base/string_piece.h"
+#include "base/strings/string_piece.h"
 #include "chrome/common/chrome_version_info.h"
 #include "chrome/common/url_constants.h"
 #include "googleurl/src/gurl.h"
@@ -78,6 +78,11 @@ base::RefCountedStaticMemory* ChromeContentClient::GetDataResourceBytes(
 
 gfx::Image& ChromeContentClient::GetNativeImageNamed(int resource_id) const {
   return ResourceBundle::GetSharedInstance().GetNativeImageNamed(resource_id);
+}
+
+std::string ChromeContentClient::GetProcessTypeNameInEnglish(int type) {
+  DCHECK(false) << "Unknown child process type!";
+  return "Unknown"; 
 }
 
 }  // namespace chrome

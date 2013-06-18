@@ -11,12 +11,14 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop.h"
 #include "base/run_loop.h"
+#include "remoting/base/auto_thread.h"
 #include "remoting/base/auto_thread_task_runner.h"
-#include "remoting/host/basic_desktop_environment.h"
 #include "remoting/host/desktop_process.h"
 #include "remoting/host/host_exit_codes.h"
 #include "remoting/host/host_main.h"
 #include "remoting/host/ipc_constants.h"
+#include "remoting/host/me2me_desktop_environment.h"
+#include "remoting/host/ui_strings.h"
 #include "remoting/host/win/session_desktop_environment.h"
 
 namespace remoting {
@@ -29,24 +31,41 @@ int DesktopProcessMain() {
   if (channel_name.empty())
     return kUsageExitCode;
 
-  MessageLoop message_loop(MessageLoop::TYPE_UI);
+  base::MessageLoop message_loop(base::MessageLoop::TYPE_UI);
   base::RunLoop run_loop;
   scoped_refptr<AutoThreadTaskRunner> ui_task_runner =
       new AutoThreadTaskRunner(message_loop.message_loop_proxy(),
                                run_loop.QuitClosure());
 
-  DesktopProcess desktop_process(ui_task_runner, channel_name);
+  // Launch the input thread.
+  scoped_refptr<AutoThreadTaskRunner> input_task_runner =
+      AutoThread::CreateWithType(
+          "Input thread", ui_task_runner, base::MessageLoop::TYPE_IO);
+
+  DesktopProcess desktop_process(ui_task_runner,
+                                 input_task_runner,
+                                 channel_name);
+
+  // TODO(alexeypa): Localize the UI strings. See http://crbug.com/155204.
+  UiStrings ui_string;
 
   // Create a platform-dependent environment factory.
   scoped_ptr<DesktopEnvironmentFactory> desktop_environment_factory;
 #if defined(OS_WIN)
   desktop_environment_factory.reset(
       new SessionDesktopEnvironmentFactory(
+          ui_task_runner,
+          input_task_runner,
+          ui_task_runner,
+          ui_string,
           base::Bind(&DesktopProcess::InjectSas,
                      desktop_process.AsWeakPtr())));
 #else  // !defined(OS_WIN)
-  desktop_environment_factory.reset(
-      new BasicDesktopEnvironmentFactory(true));
+  desktop_environment_factory.reset(new Me2MeDesktopEnvironmentFactory(
+      ui_task_runner,
+      input_task_runner,
+      ui_task_runner,
+      ui_string));
 #endif  // !defined(OS_WIN)
 
   if (!desktop_process.Start(desktop_environment_factory.Pass()))

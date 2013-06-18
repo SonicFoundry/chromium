@@ -7,16 +7,21 @@
 #include <list>
 
 #include "base/callback.h"
-#include "base/string_number_conversions.h"
 #include "base/stringprintf.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/threading/platform_thread.h"
+#include "base/time.h"
 #include "base/values.h"
 #include "chrome/test/chromedriver/basic_types.h"
-#include "chrome/test/chromedriver/chrome.h"
+#include "chrome/test/chromedriver/chrome/chrome.h"
+#include "chrome/test/chromedriver/chrome/geoposition.h"
+#include "chrome/test/chromedriver/chrome/js.h"
+#include "chrome/test/chromedriver/chrome/status.h"
+#include "chrome/test/chromedriver/chrome/ui_events.h"
+#include "chrome/test/chromedriver/chrome/web_view.h"
 #include "chrome/test/chromedriver/element_util.h"
 #include "chrome/test/chromedriver/session.h"
-#include "chrome/test/chromedriver/status.h"
-#include "chrome/test/chromedriver/ui_events.h"
-#include "chrome/test/chromedriver/web_view.h"
+#include "chrome/test/chromedriver/util.h"
 
 namespace {
 
@@ -33,10 +38,91 @@ Status GetMouseButton(const base::DictionaryValue& params,
   return Status(kOk);
 }
 
+Status GetUrl(WebView* web_view, const std::string& frame, std::string* url) {
+  scoped_ptr<base::Value> value;
+  base::ListValue args;
+  Status status = web_view->CallFunction(
+      frame, "function() { return document.URL; }", args, &value);
+  if (status.IsError())
+    return status;
+  if (!value->GetAsString(url))
+    return Status(kUnknownError, "javascript failed to return the url");
+  return Status(kOk);
+}
+
+struct Cookie {
+  Cookie(const std::string& name,
+         const std::string& value,
+         const std::string& domain,
+         const std::string& path,
+         int expiry,
+         bool secure,
+         bool session)
+      : name(name), value(value), domain(domain), path(path), expiry(expiry),
+        secure(secure), session(session) {}
+
+  std::string name;
+  std::string value;
+  std::string domain;
+  std::string path;
+  int expiry;
+  bool secure;
+  bool session;
+};
+
+base::DictionaryValue* CreateDictionaryFrom(const Cookie& cookie) {
+  base::DictionaryValue* dict = new base::DictionaryValue();
+  dict->SetString("name", cookie.name);
+  dict->SetString("value", cookie.value);
+  if (!cookie.domain.empty())
+    dict->SetString("domain", cookie.domain);
+  if (!cookie.path.empty())
+    dict->SetString("path", cookie.path);
+  if (!cookie.session)
+    dict->SetInteger("expiry", cookie.expiry);
+  dict->SetBoolean("secure", cookie.secure);
+  return dict;
+}
+
+Status GetVisibleCookies(WebView* web_view,
+                         std::list<Cookie>* cookies) {
+  scoped_ptr<base::ListValue> internal_cookies;
+  Status status = web_view->GetCookies(&internal_cookies);
+  if (status.IsError())
+    return status;
+  std::list<Cookie> cookies_tmp;
+  for (size_t i = 0; i < internal_cookies->GetSize(); ++i) {
+    base::DictionaryValue* cookie_dict;
+    if (!internal_cookies->GetDictionary(i, &cookie_dict))
+      return Status(kUnknownError, "DevTools returns a non-dictionary cookie");
+
+    std::string name;
+    cookie_dict->GetString("name", &name);
+    std::string value;
+    cookie_dict->GetString("value", &value);
+    std::string domain;
+    cookie_dict->GetString("domain", &domain);
+    std::string path;
+    cookie_dict->GetString("path", &path);
+    double expiry_tmp = 0;
+    cookie_dict->GetDouble("expires", &expiry_tmp);
+    int expiry = static_cast<int>(expiry_tmp/1000);
+    bool session = false;
+    cookie_dict->GetBoolean("session", &session);
+    bool secure = false;
+    cookie_dict->GetBoolean("secure", &secure);
+
+    cookies_tmp.push_back(
+        Cookie(name, value, domain, path, expiry, secure, session));
+  }
+  cookies->swap(cookies_tmp);
+  return Status(kOk);
+}
+
 }  // namespace
 
 Status ExecuteWindowCommand(
-    WindowCommand command,
+    const WindowCommand& command,
     Session* session,
     const base::DictionaryValue& params,
     scoped_ptr<base::Value>* value) {
@@ -52,19 +138,26 @@ Status ExecuteWindowCommand(
   if (status.IsError())
     return status;
 
-  Status nav_status = web_view->WaitForPendingNavigations(session->frame);
+  status = web_view->ConnectIfNecessary();
+  if (status.IsError())
+    return status;
+
+  Status nav_status =
+      web_view->WaitForPendingNavigations(session->GetCurrentFrameId());
   if (nav_status.IsError())
     return nav_status;
   status = command.Run(session, web_view, params, value);
   // Switch to main frame and retry command if subframe no longer exists.
-  if (status.code() == kNoSuchFrame) {
-    session->frame = "";
-    nav_status = web_view->WaitForPendingNavigations(session->frame);
+  if (status.code() == kNoSuchExecutionContext) {
+    session->SwitchToTopFrame();
+    nav_status =
+        web_view->WaitForPendingNavigations(session->GetCurrentFrameId());
     if (nav_status.IsError())
       return nav_status;
     status = command.Run(session, web_view, params, value);
   }
-  nav_status = web_view->WaitForPendingNavigations(session->frame);
+  nav_status =
+      web_view->WaitForPendingNavigations(session->GetCurrentFrameId());
   if (status.IsOk() && nav_status.IsError() &&
       nav_status.code() != kDisconnected)
     return nav_status;
@@ -95,7 +188,24 @@ Status ExecuteExecuteScript(
     return Status(kUnknownError, "'args' must be a list");
 
   return web_view->CallFunction(
-      session->frame, "function(){" + script + "}", *args, value);
+      session->GetCurrentFrameId(), "function(){" + script + "}", *args, value);
+}
+
+Status ExecuteExecuteAsyncScript(
+    Session* session,
+    WebView* web_view,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value) {
+  std::string script;
+  if (!params.GetString("script", &script))
+    return Status(kUnknownError, "'script' must be a string");
+  const base::ListValue* args;
+  if (!params.GetList("args", &args))
+    return Status(kUnknownError, "'args' must be a list");
+
+  return web_view->CallUserAsyncFunction(
+      session->GetCurrentFrameId(), "function(){" + script + "}", *args,
+      base::TimeDelta::FromMilliseconds(session->script_timeout), value);
 }
 
 Status ExecuteSwitchToFrame(
@@ -108,7 +218,7 @@ Status ExecuteSwitchToFrame(
     return Status(kUnknownError, "missing 'id'");
 
   if (id->IsType(base::Value::TYPE_NULL)) {
-    session->frame = "";
+    session->SwitchToTopFrame();
     return Status(kOk);
   }
 
@@ -139,10 +249,33 @@ Status ExecuteSwitchToFrame(
   }
   std::string frame;
   Status status = web_view->GetFrameByFunction(
-      session->frame, script, args, &frame);
+      session->GetCurrentFrameId(), script, args, &frame);
   if (status.IsError())
     return status;
-  session->frame = frame;
+
+  scoped_ptr<base::Value> result;
+  status = web_view->CallFunction(
+      session->GetCurrentFrameId(), script, args, &result);
+  if (status.IsError())
+    return status;
+  const base::DictionaryValue* element;
+  if (!result->GetAsDictionary(&element))
+    return Status(kUnknownError, "fail to locate the sub frame element");
+
+  std::string chrome_driver_id = GenerateId();
+  const char* kSetFrameIdentifier =
+      "function(frame, id) {"
+      "  frame.setAttribute('cd_frame_id_', id);"
+      "}";
+  base::ListValue new_args;
+  new_args.Append(element->DeepCopy());
+  new_args.AppendString(chrome_driver_id);
+  result.reset(NULL);
+  status = web_view->CallFunction(
+      session->GetCurrentFrameId(), kSetFrameIdentifier, new_args, &result);
+  if (status.IsError())
+    return status;
+  session->SwitchToSubFrame(frame, chrome_driver_id);
   return Status(kOk);
 }
 
@@ -159,7 +292,7 @@ Status ExecuteGetTitle(
       "    return document.URL;"
       "}";
   base::ListValue args;
-  return web_view->CallFunction(session->frame, kGetTitleScript, args, value);
+  return web_view->CallFunction(std::string(), kGetTitleScript, args, value);
 }
 
 Status ExecuteGetPageSource(
@@ -172,7 +305,8 @@ Status ExecuteGetPageSource(
       "  return new XMLSerializer().serializeToString(document);"
       "}";
   base::ListValue args;
-  return web_view->CallFunction(session->frame, kGetPageSource, args, value);
+  return web_view->CallFunction(
+      session->GetCurrentFrameId(), kGetPageSource, args, value);
 }
 
 Status ExecuteFindElement(
@@ -199,9 +333,12 @@ Status ExecuteGetCurrentUrl(
     WebView* web_view,
     const base::DictionaryValue& params,
     scoped_ptr<base::Value>* value) {
-  base::ListValue args;
-  return web_view->CallFunction(
-      "", "function() { return document.URL; }", args, value);
+  std::string url;
+  Status status = GetUrl(web_view, session->GetCurrentFrameId(), &url);
+  if (status.IsError())
+    return status;
+  value->reset(new base::StringValue(url));
+  return Status(kOk);
 }
 
 Status ExecuteGoBack(
@@ -209,7 +346,8 @@ Status ExecuteGoBack(
     WebView* web_view,
     const base::DictionaryValue& params,
     scoped_ptr<base::Value>* value) {
-  return web_view->EvaluateScript("", "window.history.back();", value);
+  return web_view->EvaluateScript(
+      std::string(), "window.history.back();", value);
 }
 
 Status ExecuteGoForward(
@@ -217,7 +355,8 @@ Status ExecuteGoForward(
     WebView* web_view,
     const base::DictionaryValue& params,
     scoped_ptr<base::Value>* value) {
-  return web_view->EvaluateScript("", "window.history.forward();", value);
+  return web_view->EvaluateScript(
+      std::string(), "window.history.forward();", value);
 }
 
 Status ExecuteRefresh(
@@ -253,19 +392,19 @@ Status ExecuteMouseMoveTo(
   }
 
   if (has_offset) {
-    location.offset(x_offset, y_offset);
+    location.Offset(x_offset, y_offset);
   } else {
     WebSize size;
     Status status = GetElementSize(session, web_view, element_id, &size);
     if (status.IsError())
       return status;
-    location.offset(size.width / 2, size.height / 2);
+    location.Offset(size.width / 2, size.height / 2);
   }
 
   std::list<MouseEvent> events;
   events.push_back(
       MouseEvent(kMovedMouseEventType, kNoneMouseButton,
-                 location.x, location.y, 0));
+                 location.x, location.y, session->sticky_modifiers, 0));
   Status status = web_view->DispatchMouseEvents(events);
   if (status.IsOk())
     session->mouse_position = location;
@@ -284,10 +423,12 @@ Status ExecuteMouseClick(
   std::list<MouseEvent> events;
   events.push_back(
       MouseEvent(kPressedMouseEventType, button,
-                 session->mouse_position.x, session->mouse_position.y, 1));
+                 session->mouse_position.x, session->mouse_position.y,
+                 session->sticky_modifiers, 1));
   events.push_back(
       MouseEvent(kReleasedMouseEventType, button,
-                 session->mouse_position.x, session->mouse_position.y, 1));
+                 session->mouse_position.x, session->mouse_position.y,
+                 session->sticky_modifiers, 1));
   return web_view->DispatchMouseEvents(events);
 }
 
@@ -303,7 +444,8 @@ Status ExecuteMouseButtonDown(
   std::list<MouseEvent> events;
   events.push_back(
       MouseEvent(kPressedMouseEventType, button,
-                 session->mouse_position.x, session->mouse_position.y, 1));
+                 session->mouse_position.x, session->mouse_position.y,
+                 session->sticky_modifiers, 1));
   return web_view->DispatchMouseEvents(events);
 }
 
@@ -319,7 +461,8 @@ Status ExecuteMouseButtonUp(
   std::list<MouseEvent> events;
   events.push_back(
       MouseEvent(kReleasedMouseEventType, button,
-                 session->mouse_position.x, session->mouse_position.y, 1));
+                 session->mouse_position.x, session->mouse_position.y,
+                 session->sticky_modifiers, 1));
   return web_view->DispatchMouseEvents(events);
 }
 
@@ -335,10 +478,12 @@ Status ExecuteMouseDoubleClick(
   std::list<MouseEvent> events;
   events.push_back(
       MouseEvent(kPressedMouseEventType, button,
-                 session->mouse_position.x, session->mouse_position.y, 2));
+                 session->mouse_position.x, session->mouse_position.y,
+                 session->sticky_modifiers, 2));
   events.push_back(
       MouseEvent(kReleasedMouseEventType, button,
-                 session->mouse_position.x, session->mouse_position.y, 2));
+                 session->mouse_position.x, session->mouse_position.y,
+                 session->sticky_modifiers, 2));
   return web_view->DispatchMouseEvents(events);
 }
 
@@ -349,10 +494,22 @@ Status ExecuteGetActiveElement(
     scoped_ptr<base::Value>* value) {
   base::ListValue args;
   return web_view->CallFunction(
-      session->frame,
+      session->GetCurrentFrameId(),
       "function() { return document.activeElement || document.body }",
       args,
       value);
+}
+
+Status ExecuteSendKeysToActiveElement(
+    Session* session,
+    WebView* web_view,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value) {
+  const base::ListValue* key_list;
+  if (!params.GetList("value", &key_list))
+    return Status(kUnknownError, "'value' must be a list");
+  return SendKeysOnWindow(
+      web_view, key_list, false, &session->sticky_modifiers);
 }
 
 Status ExecuteGetAppCacheStatus(
@@ -361,7 +518,7 @@ Status ExecuteGetAppCacheStatus(
     const base::DictionaryValue& params,
     scoped_ptr<base::Value>* value) {
   return web_view->EvaluateScript(
-      session->frame,
+      session->GetCurrentFrameId(),
       "applicationCache.status",
       value);
 }
@@ -372,7 +529,7 @@ Status ExecuteIsBrowserOnline(
     const base::DictionaryValue& params,
     scoped_ptr<base::Value>* value) {
   return web_view->EvaluateScript(
-      session->frame,
+      session->GetCurrentFrameId(),
       "navigator.onLine",
       value);
 }
@@ -389,7 +546,7 @@ Status ExecuteGetStorageItem(
   base::ListValue args;
   args.Append(new base::StringValue(key));
   return web_view->CallFunction(
-      session->frame,
+      session->GetCurrentFrameId(),
       base::StringPrintf("function(key) { return %s[key]; }", storage),
       args,
       value);
@@ -408,7 +565,7 @@ Status ExecuteGetStorageKeys(
       "}"
       "keys";
   return web_view->EvaluateScript(
-      session->frame,
+      session->GetCurrentFrameId(),
       base::StringPrintf(script, storage),
       value);
 }
@@ -429,7 +586,7 @@ Status ExecuteSetStorageItem(
   args.Append(new base::StringValue(key));
   args.Append(new base::StringValue(storage_value));
   return web_view->CallFunction(
-      session->frame,
+      session->GetCurrentFrameId(),
       base::StringPrintf("function(key, value) { %s[key] = value; }", storage),
       args,
       value);
@@ -447,7 +604,7 @@ Status ExecuteRemoveStorageItem(
   base::ListValue args;
   args.Append(new base::StringValue(key));
   return web_view->CallFunction(
-      session->frame,
+      session->GetCurrentFrameId(),
       base::StringPrintf("function(key) { %s.removeItem(key) }", storage),
       args,
       value);
@@ -460,7 +617,7 @@ Status ExecuteClearStorage(
     const base::DictionaryValue& params,
     scoped_ptr<base::Value>* value) {
   return web_view->EvaluateScript(
-      session->frame,
+      session->GetCurrentFrameId(),
       base::StringPrintf("%s.clear()", storage),
       value);
 }
@@ -472,7 +629,7 @@ Status ExecuteGetStorageSize(
     const base::DictionaryValue& params,
     scoped_ptr<base::Value>* value) {
   return web_view->EvaluateScript(
-      session->frame,
+      session->GetCurrentFrameId(),
       base::StringPrintf("%s.length", storage),
       value);
 }
@@ -488,4 +645,108 @@ Status ExecuteScreenshot(
     return status;
   value->reset(new base::StringValue(screenshot));
   return Status(kOk);
+}
+
+Status ExecuteGetCookies(
+    Session* session,
+    WebView* web_view,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value) {
+  std::list<Cookie> cookies;
+  Status status = GetVisibleCookies(web_view, &cookies);
+  if (status.IsError())
+    return status;
+  scoped_ptr<base::ListValue> cookie_list(new base::ListValue());
+  for (std::list<Cookie>::const_iterator it = cookies.begin();
+       it != cookies.end(); ++it) {
+    cookie_list->Append(CreateDictionaryFrom(*it));
+  }
+  value->reset(cookie_list.release());
+  return Status(kOk);
+}
+
+Status ExecuteAddCookie(
+    Session* session,
+    WebView* web_view,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value) {
+  const base::DictionaryValue* cookie;
+  if (!params.GetDictionary("cookie", &cookie))
+    return Status(kUnknownError, "missing 'cookie'");
+  base::ListValue args;
+  args.Append(cookie->DeepCopy());
+  scoped_ptr<base::Value> result;
+  return web_view->CallFunction(
+      session->GetCurrentFrameId(), kAddCookieScript, args, &result);
+}
+
+Status ExecuteDeleteCookie(
+    Session* session,
+    WebView* web_view,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value) {
+  std::string name;
+  if (!params.GetString("name", &name))
+    return Status(kUnknownError, "missing 'name'");
+  base::DictionaryValue params_url;
+  scoped_ptr<base::Value> value_url;
+  std::string url;
+  Status status = GetUrl(web_view, session->GetCurrentFrameId(), &url);
+  if (status.IsError())
+    return status;
+  return web_view->DeleteCookie(name, url);
+}
+
+Status ExecuteDeleteAllCookies(
+    Session* session,
+    WebView* web_view,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value) {
+  std::list<Cookie> cookies;
+  Status status = GetVisibleCookies(web_view, &cookies);
+  if (status.IsError())
+    return status;
+
+  if (!cookies.empty()) {
+    base::DictionaryValue params_url;
+    scoped_ptr<base::Value> value_url;
+    std::string url;
+    status = GetUrl(web_view, session->GetCurrentFrameId(), &url);
+    if (status.IsError())
+      return status;
+    for (std::list<Cookie>::const_iterator it = cookies.begin();
+         it != cookies.end(); ++it) {
+      status = web_view->DeleteCookie(it->name, url);
+      if (status.IsError())
+        return status;
+    }
+  }
+
+  return Status(kOk);
+}
+
+Status ExecuteSetLocation(
+    Session* session,
+    WebView* web_view,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value) {
+  const base::DictionaryValue* location = NULL;
+  Geoposition geoposition;
+  if (!params.GetDictionary("location", &location) ||
+      !location->GetDouble("latitude", &geoposition.latitude) ||
+      !location->GetDouble("longitude", &geoposition.longitude))
+    return Status(kUnknownError, "missing or invalid 'location'");
+  if (location->HasKey("accuracy") &&
+      !location->GetDouble("accuracy", &geoposition.accuracy)) {
+    return Status(kUnknownError, "invalid 'accuracy'");
+  } else {
+    // |accuracy| is not part of the WebDriver spec yet, so if it is not given
+    // default to 100 meters accuracy.
+    geoposition.accuracy = 100;
+  }
+
+  Status status = web_view->OverrideGeolocation(geoposition);
+  if (status.IsOk())
+    session->overridden_geoposition.reset(new Geoposition(geoposition));
+  return status;
 }

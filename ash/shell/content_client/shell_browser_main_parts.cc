@@ -12,7 +12,7 @@
 #include "base/command_line.h"
 #include "base/i18n/icu_util.h"
 #include "base/message_loop.h"
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
 #include "content/public/common/content_switches.h"
@@ -31,8 +31,12 @@
 #include "ui/views/focus/accelerator_handler.h"
 #include "ui/views/test/test_views_delegate.h"
 
-#if defined(OS_LINUX)
-#include "ui/base/touch/touch_factory.h"
+#if defined(ENABLE_MESSAGE_CENTER)
+#include "ui/message_center/message_center.h"
+#endif
+
+#if defined(USE_X11)
+#include "ui/base/touch/touch_factory_x11.h"
 #endif
 
 #if defined(OS_CHROMEOS)
@@ -85,7 +89,7 @@ ShellBrowserMainParts::~ShellBrowserMainParts() {
 
 #if !defined(OS_MACOSX)
 void ShellBrowserMainParts::PreMainMessageLoopStart() {
-#if defined(OS_LINUX)
+#if defined(USE_X11)
   ui::TouchFactory::SetTouchDeviceListFromCommandLine();
 #endif
 }
@@ -105,6 +109,11 @@ void ShellBrowserMainParts::PreMainMessageLoopRun() {
     views::ViewsDelegate::views_delegate = new ShellViewsDelegate;
 
   delegate_ = new ash::shell::ShellDelegateImpl;
+#if defined(ENABLE_MESSAGE_CENTER)
+  // The global message center state must be initialized absent
+  // g_browser_process.
+  message_center::MessageCenter::Initialize();
+#endif
   ash::Shell::CreateInstance(delegate_);
   ash::Shell::GetInstance()->set_browser_context(browser_context_.get());
 
@@ -126,7 +135,6 @@ void ShellBrowserMainParts::PreMainMessageLoopRun() {
 }
 
 void ShellBrowserMainParts::PostMainMessageLoopRun() {
-  browser_context_.reset();
   gfx::Screen* screen = Shell::GetInstance()->GetScreen();
   screen->RemoveObserver(window_watcher_.get());
 
@@ -134,11 +142,22 @@ void ShellBrowserMainParts::PostMainMessageLoopRun() {
   delegate_->SetWatcher(NULL);
   delegate_ = NULL;
   ash::Shell::DeleteInstance();
+#if defined(ENABLE_MESSAGE_CENTER)
+  // The global message center state must be shutdown absent
+  // g_browser_process.
+  message_center::MessageCenter::Shutdown();
+#endif
   aura::Env::DeleteInstance();
+
+  // The keyboard may have created a WebContents. The WebContents is destroyed
+  // with the UI, and it needs the BrowserContext to be alive during its
+  // destruction. So destroy all of the UI elements before destroying the
+  // browser context.
+  browser_context_.reset();
 }
 
 bool ShellBrowserMainParts::MainMessageLoopRun(int* result_code) {
-  MessageLoopForUI::current()->Run();
+  base::MessageLoopForUI::current()->Run();
   return true;
 }
 

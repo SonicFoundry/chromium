@@ -6,7 +6,7 @@
 
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/ui/autofill/autofill_popup_controller.h"
 #include "chrome/browser/ui/cocoa/autofill/autofill_popup_view_bridge.h"
 #include "grit/ui_resources.h"
@@ -15,6 +15,8 @@
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/point.h"
 #include "ui/gfx/rect.h"
+
+using autofill::AutofillPopupView;
 
 namespace {
 
@@ -38,7 +40,7 @@ NSColor* SubtextColor() {
   return [NSColor grayColor];
 }
 
-}  // anonymous namespace
+}  // namespace
 
 #pragma mark -
 #pragma mark Private methods
@@ -51,14 +53,12 @@ NSColor* SubtextColor() {
 // Draws an Autofill suggestion in the given |bounds|, labeled with the given
 // |name| and |subtext| hint.  If the suggestion |isSelected|, then it is drawn
 // with a highlight.  |index| determines the font to use, as well as the icon,
-// if the row requires it -- such as for credit cards. Finally, if |canDelete|
-// is true, a delete icon is also drawn.
+// if the row requires it -- such as for credit cards.
 - (void)drawSuggestionWithName:(NSString*)name
                        subtext:(NSString*)subtext
                          index:(size_t)index
                         bounds:(NSRect)bounds
-                      selected:(BOOL)isSelected
-                     canDelete:(BOOL)canDelete;
+                      selected:(BOOL)isSelected;
 
 // Returns the icon for the row with the given |index|, or |nil| if there is
 // none.
@@ -76,7 +76,7 @@ NSColor* SubtextColor() {
   return [self initWithController:NULL frame:frame];
 }
 
-- (id)initWithController:(AutofillPopupController*)controller
+- (id)initWithController:(autofill::AutofillPopupController*)controller
                    frame:(NSRect)frame {
   self = [super initWithFrame:frame];
   if (self)
@@ -125,8 +125,7 @@ NSColor* SubtextColor() {
                            subtext:subtext
                              index:i
                             bounds:rowBounds
-                          selected:isSelected
-                         canDelete:controller_->CanDelete(i)];
+                          selected:isSelected];
     }
   }
 }
@@ -190,8 +189,7 @@ NSColor* SubtextColor() {
                        subtext:(NSString*)subtext
                          index:(size_t)index
                         bounds:(NSRect)bounds
-                      selected:(BOOL)isSelected
-                     canDelete:(BOOL)canDelete {
+                      selected:(BOOL)isSelected {
   // If this row is selected, highlight it.
   if (isSelected) {
     [HighlightColor() set];
@@ -208,47 +206,17 @@ NSColor* SubtextColor() {
   NSSize nameSize = [name sizeWithAttributes:nameAttributes];
   CGFloat x = bounds.origin.x +
       (isRTL ?
-       bounds.size.width - AutofillPopupView::kEndPadding - nameSize.width:
+       bounds.size.width - AutofillPopupView::kEndPadding - nameSize.width :
        AutofillPopupView::kEndPadding);
   CGFloat y = bounds.origin.y + (bounds.size.height - nameSize.height) / 2;
 
   [name drawAtPoint:NSMakePoint(x, y) withAttributes:nameAttributes];
-
-  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
 
   // The x-coordinate will be updated as each element is drawn.
   x = bounds.origin.x +
       (isRTL ?
        AutofillPopupView::kEndPadding :
        bounds.size.width - AutofillPopupView::kEndPadding);
-
-  // Draw the delete icon, if one is needed.
-  if (canDelete) {
-    // TODO(isherman): Refactor the cross-platform code so that the delete icon
-    // is a button implemented as a subview, rather than having all its logic be
-    // custom handled by the controller.
-    // TODO(csharp): Create a custom resource for the delete icon.
-    // http://crbug.com/131801
-    NSImage* deleteIcon;
-    if (isSelected && controller_->delete_icon_hovered())
-      deleteIcon = rb.GetNativeImageNamed(IDR_CLOSE_BAR_H).ToNSImage();
-    else
-      deleteIcon = rb.GetNativeImageNamed(IDR_CLOSE_BAR).ToNSImage();
-
-    NSSize iconSize = [deleteIcon size];
-    x += isRTL ? 0 : -iconSize.width;
-    y = bounds.origin.y + (bounds.size.height - iconSize.height) / 2;
-    [deleteIcon drawInRect:NSMakeRect(x, y, iconSize.width, iconSize.height)
-                  fromRect:NSZeroRect
-                 operation:NSCompositeSourceOver
-                  fraction:1.0
-            respectFlipped:YES
-                     hints:nil];
-
-    x += isRTL ?
-        iconSize.width + AutofillPopupView::kIconPadding :
-        -AutofillPopupView::kIconPadding;
-  }
 
   // Draw the Autofill icon, if one exists.
   NSImage* icon = [self iconAtIndex:index];

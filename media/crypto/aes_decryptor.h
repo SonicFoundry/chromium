@@ -11,7 +11,7 @@
 #include "base/hash_tables.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/string_piece.h"
+#include "base/strings/string_piece.h"
 #include "base/synchronization/lock.h"
 #include "media/base/decryptor.h"
 #include "media/base/media_export.h"
@@ -51,9 +51,9 @@ class MEDIA_EXPORT AesDecryptor : public Decryptor {
                        const scoped_refptr<DecoderBuffer>& encrypted,
                        const DecryptCB& decrypt_cb) OVERRIDE;
   virtual void CancelDecrypt(StreamType stream_type) OVERRIDE;
-  virtual void InitializeAudioDecoder(scoped_ptr<AudioDecoderConfig> config,
+  virtual void InitializeAudioDecoder(const AudioDecoderConfig& config,
                                       const DecoderInitCB& init_cb) OVERRIDE;
-  virtual void InitializeVideoDecoder(scoped_ptr<VideoDecoderConfig> config,
+  virtual void InitializeVideoDecoder(const VideoDecoderConfig& config,
                                       const DecoderInitCB& init_cb) OVERRIDE;
   virtual void DecryptAndDecodeAudio(
       const scoped_refptr<DecoderBuffer>& encrypted,

@@ -14,7 +14,6 @@
 #include "chrome/browser/policy/mock_configuration_policy_provider.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/prefs/command_line_pref_store.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/prefs/pref_service_mock_builder.h"
 #include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/common/chrome_paths.h"
@@ -23,6 +22,7 @@
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_pref_service_syncable.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/test/test_browser_thread.h"
 #include "content/public/test/web_contents_tester.h"
 #include "ui/base/test/data/resource.h"
@@ -101,26 +101,29 @@ TEST_F(ChromePrefServiceUserFilePrefsTest, PreserveEmptyValue) {
 
   PrefServiceMockBuilder builder;
   builder.WithUserFilePrefs(pref_file, message_loop_.message_loop_proxy());
-  scoped_refptr<PrefRegistrySyncable> registry(new PrefRegistrySyncable);
+  scoped_refptr<user_prefs::PrefRegistrySyncable> registry(
+      new user_prefs::PrefRegistrySyncable);
   scoped_ptr<PrefServiceSyncable> prefs(builder.CreateSyncable(registry));
 
   // Register testing prefs.
   registry->RegisterListPref("list",
-                             PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterDictionaryPref("dict",
-                                   PrefRegistrySyncable::UNSYNCABLE_PREF);
+                             user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterDictionaryPref(
+      "dict",
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 
   base::ListValue* non_empty_list = new base::ListValue;
   non_empty_list->Append(base::Value::CreateStringValue("test"));
   registry->RegisterListPref("list_needs_empty_value",
                              non_empty_list,
-                             PrefRegistrySyncable::UNSYNCABLE_PREF);
+                             user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 
   base::DictionaryValue* non_empty_dict = new base::DictionaryValue;
   non_empty_dict->SetString("dummy", "whatever");
-  registry->RegisterDictionaryPref("dict_needs_empty_value",
-                                   non_empty_dict,
-                                   PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterDictionaryPref(
+      "dict_needs_empty_value",
+      non_empty_dict,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 
   // Set all testing prefs to empty.
   ClearListValue(prefs.get(), "list");
@@ -177,7 +180,7 @@ class ChromePrefServiceWebKitPrefs : public ChromeRenderViewHostTestHarness {
 // Tests to see that webkit preferences are properly loaded and copied over
 // to a WebPreferences object.
 TEST_F(ChromePrefServiceWebKitPrefs, PrefsCopied) {
-  webkit_glue::WebPreferences webkit_prefs =
+  WebPreferences webkit_prefs =
       WebContentsTester::For(web_contents())->TestGetWebkitPrefs();
 
   // These values have been overridden by the profile preferences.

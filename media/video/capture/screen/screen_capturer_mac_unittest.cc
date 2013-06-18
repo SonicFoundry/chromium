@@ -11,6 +11,7 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/memory/scoped_ptr.h"
+#include "media/video/capture/screen/mac/desktop_configuration.h"
 #include "media/video/capture/screen/screen_capture_data.h"
 #include "media/video/capture/screen/screen_capturer_mock_objects.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -20,15 +21,6 @@ using ::testing::AnyNumber;
 using ::testing::Return;
 
 namespace media {
-
-// Verify that the OS is at least Snow Leopard (10.6).
-// Chromoting doesn't support 10.5 or earlier.
-bool CheckSnowLeopard() {
-  long minorVersion, majorVersion;
-  Gestalt(gestaltSystemVersionMajor, &majorVersion);
-  Gestalt(gestaltSystemVersionMinor, &minorVersion);
-  return majorVersion == 10 && minorVersion > 5;
-}
 
 class ScreenCapturerMacTest : public testing::Test {
  public:
@@ -44,32 +36,28 @@ class ScreenCapturerMacTest : public testing::Test {
     capturer_ = ScreenCapturer::Create();
   }
 
-  void AddDirtyRect() {
-    SkIRect rect = SkIRect::MakeXYWH(0, 0, 10, 10);
-    region_.op(rect, SkRegion::kUnion_Op);
-  }
-
   scoped_ptr<ScreenCapturer> capturer_;
   MockScreenCapturerDelegate delegate_;
-  SkRegion region_;
 };
 
 void ScreenCapturerMacTest::CaptureDoneCallback1(
     scoped_refptr<ScreenCaptureData> capture_data) {
-  CGDirectDisplayID mainDevice = CGMainDisplayID();
-  int width = CGDisplayPixelsWide(mainDevice);
-  int height = CGDisplayPixelsHigh(mainDevice);
+  MacDesktopConfiguration config = MacDesktopConfiguration::GetCurrent(
+      MacDesktopConfiguration::BottomLeftOrigin);
+  int width = config.pixel_bounds.width();
+  int height = config.pixel_bounds.height();
   SkRegion initial_region(SkIRect::MakeXYWH(0, 0, width, height));
+
   EXPECT_EQ(initial_region, capture_data->dirty_region());
 }
 
 void ScreenCapturerMacTest::CaptureDoneCallback2(
     scoped_refptr<ScreenCaptureData> capture_data) {
-  CGDirectDisplayID mainDevice = CGMainDisplayID();
-  int width = CGDisplayPixelsWide(mainDevice);
-  int height = CGDisplayPixelsHigh(mainDevice);
+  MacDesktopConfiguration config = MacDesktopConfiguration::GetCurrent(
+      MacDesktopConfiguration::BottomLeftOrigin);
+  int width = config.pixel_bounds.width();
+  int height = config.pixel_bounds.height();
 
-  EXPECT_EQ(region_, capture_data->dirty_region());
   EXPECT_EQ(width, capture_data->size().width());
   EXPECT_EQ(height, capture_data->size().height());
   EXPECT_TRUE(capture_data->data() != NULL);
@@ -80,10 +68,6 @@ void ScreenCapturerMacTest::CaptureDoneCallback2(
 }
 
 TEST_F(ScreenCapturerMacTest, Capture) {
-  if (!CheckSnowLeopard()) {
-    return;
-  }
-
   EXPECT_CALL(delegate_, OnCaptureCompleted(_))
       .Times(2)
       .WillOnce(Invoke(this, &ScreenCapturerMacTest::CaptureDoneCallback1))
@@ -102,10 +86,7 @@ TEST_F(ScreenCapturerMacTest, Capture) {
   capturer_->CaptureFrame();
 
   // Check that subsequent dirty rects are propagated correctly.
-  AddDirtyRect();
-  capturer_->InvalidateRegion(region_);
   capturer_->CaptureFrame();
-  capturer_->Stop();
 }
 
 }  // namespace media

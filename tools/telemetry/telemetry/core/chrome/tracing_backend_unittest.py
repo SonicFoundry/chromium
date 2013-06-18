@@ -16,7 +16,7 @@ from telemetry.test import tab_test_case
 class TracingBackendTest(tab_test_case.TabTestCase):
   def _StartServer(self):
     base_dir = os.path.dirname(__file__)
-    self._browser.SetHTTPServerDirectory(
+    self._browser.SetHTTPServerDirectories(
         os.path.join(base_dir, '..', '..', '..', 'unittest_data'))
 
   def _WaitForAnimationFrame(self):
@@ -32,9 +32,9 @@ class TracingBackendTest(tab_test_case.TabTestCase):
     self._StartServer()
     self._browser.StartTracing()
     self._browser.StopTracing()
-    model = self._browser.GetTraceResultAndReset().AsTimelineModel()
-    events = model.GetAllEvents()
-    assert len(events) > 0
+
+    # TODO(tengs): check model for correctness after trace_event_importer
+    # is implemented (crbug.com/173327).
 
 class TracingResultImplTest(unittest.TestCase):
   def testWrite1(self):

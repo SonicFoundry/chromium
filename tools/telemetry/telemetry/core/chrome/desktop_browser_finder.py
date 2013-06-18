@@ -11,7 +11,9 @@ import sys
 from telemetry.core import browser
 from telemetry.core import possible_browser
 from telemetry.core.chrome import desktop_browser_backend
-from telemetry.core.chrome import platform
+from telemetry.core.platform import linux_platform_backend
+from telemetry.core.platform import mac_platform_backend
+from telemetry.core.platform import win_platform_backend
 
 ALL_BROWSER_TYPES = ','.join([
     'exact',
@@ -20,23 +22,36 @@ ALL_BROWSER_TYPES = ','.join([
     'canary',
     'content-shell-debug',
     'content-shell-release',
+    'debug-cros',
+    'release-cros',
     'system'])
 
 class PossibleDesktopBrowser(possible_browser.PossibleBrowser):
   """A desktop browser that can be controlled."""
 
-  def __init__(self, browser_type, options, executable, is_content_shell):
+  def __init__(self, browser_type, options, executable, is_content_shell,
+               use_login=False):
     super(PossibleDesktopBrowser, self).__init__(browser_type, options)
     self._local_executable = executable
     self._is_content_shell = is_content_shell
+    self._use_login = use_login
 
   def __repr__(self):
     return 'PossibleDesktopBrowser(browser_type=%s)' % self.browser_type
 
   def Create(self):
     backend = desktop_browser_backend.DesktopBrowserBackend(
-        self._options, self._local_executable, self._is_content_shell)
-    b = browser.Browser(backend, platform.EmptyPlatform())
+        self._options, self._local_executable,
+        self._is_content_shell, self._use_login)
+    if sys.platform.startswith('linux'):
+      p = linux_platform_backend.LinuxPlatformBackend()
+    elif sys.platform == 'darwin':
+      p = mac_platform_backend.MacPlatformBackend()
+    elif sys.platform == 'win32':
+      p = win_platform_backend.WinPlatformBackend()
+    else:
+      raise NotImplementedError()
+    b = browser.Browser(backend, p)
     backend.SetBrowser(b)
     return b
 
@@ -102,6 +117,25 @@ def FindAllAvailableBrowsers(options):
   AddIfFound('content-shell-debug', 'Debug', content_shell_app_name, True)
   AddIfFound('release', 'Release', chromium_app_name, False)
   AddIfFound('content-shell-release', 'Release', content_shell_app_name, True)
+
+  # Add local chrome for CrOS builds.
+  def AddCrOSIfFound(browser_type, type_dir):
+    """Adds local chrome for ChromeOS builds on linux"""
+    app = os.path.join(chrome_root, 'out', type_dir, chromium_app_name)
+    ldd_path = '/usr/bin/ldd'
+    if not os.path.exists(app) or not os.path.exists(ldd_path):
+      return
+    # Look for libchromeos.so in ldd output.
+    ldd_out = subprocess.Popen([ldd_path, app],
+                               stdout=subprocess.PIPE).communicate()[0]
+    if ldd_out.count('libchromeos.so'):
+      browsers.append(PossibleDesktopBrowser(browser_type, options, app,
+                                             is_content_shell=False,
+                                             use_login=True))
+
+  if sys.platform.startswith('linux'):
+    AddCrOSIfFound('debug-cros', 'Debug')
+    AddCrOSIfFound('release-cros', 'Release')
 
   # Mac-specific options.
   if sys.platform == 'darwin':

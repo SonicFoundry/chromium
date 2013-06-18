@@ -10,12 +10,9 @@
 #include "base/files/file_path.h"
 #include "base/thread_task_runner_handle.h"
 #include "base/threading/worker_pool.h"
-#include "net/base/cert_verifier.h"
-#include "net/base/default_server_bound_cert_store.h"
-#include "net/base/host_resolver.h"
-#include "net/base/server_bound_cert_service.h"
-#include "net/base/ssl_config_service_defaults.h"
+#include "net/cert/cert_verifier.h"
 #include "net/cookies/cookie_monster.h"
+#include "net/dns/host_resolver.h"
 #include "net/ftp/ftp_network_layer.h"
 #include "net/http/http_auth_handler_factory.h"
 #include "net/http/http_network_session.h"
@@ -23,6 +20,9 @@
 #include "net/proxy/proxy_config_service.h"
 #include "net/proxy/proxy_config_service_fixed.h"
 #include "net/proxy/proxy_service.h"
+#include "net/ssl/default_server_bound_cert_store.h"
+#include "net/ssl/server_bound_cert_service.h"
+#include "net/ssl/ssl_config_service_defaults.h"
 #include "net/url_request/http_user_agent_settings.h"
 #include "net/url_request/url_request_job_factory_impl.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/Platform.h"
@@ -40,12 +40,9 @@ class TestShellHttpUserAgentSettings : public net::HttpUserAgentSettings {
   TestShellHttpUserAgentSettings() {}
   virtual ~TestShellHttpUserAgentSettings() {}
 
-  // hard-code A-L and A-C for test shells
+  // Hard-code Accept-Language for test shells.
   virtual std::string GetAcceptLanguage() const OVERRIDE {
     return "en-us,en";
-  }
-  virtual std::string GetAcceptCharset() const OVERRIDE {
-    return "iso-8859-1,*,utf-8";
   }
 
   virtual std::string GetUserAgent(const GURL& url) const OVERRIDE {
@@ -57,7 +54,7 @@ class TestShellHttpUserAgentSettings : public net::HttpUserAgentSettings {
 };
 
 TestShellRequestContext::TestShellRequestContext()
-    : ALLOW_THIS_IN_INITIALIZER_LIST(storage_(this)) {
+    : storage_(this) {
   Init(base::FilePath(), net::HttpCache::NORMAL, false);
 }
 
@@ -65,7 +62,7 @@ TestShellRequestContext::TestShellRequestContext(
     const base::FilePath& cache_path,
     net::HttpCache::Mode cache_mode,
     bool no_proxy)
-    : ALLOW_THIS_IN_INITIALIZER_LIST(storage_(this)) {
+    : storage_(this) {
   Init(cache_path, cache_mode, no_proxy);
 }
 

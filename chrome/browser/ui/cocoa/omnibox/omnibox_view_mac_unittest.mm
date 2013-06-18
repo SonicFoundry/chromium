@@ -4,14 +4,15 @@
 
 #import "chrome/browser/ui/cocoa/omnibox/omnibox_view_mac.h"
 
+#include "chrome/browser/search/search.h"
 #include "chrome/browser/ui/cocoa/cocoa_profile_test.h"
 #include "chrome/browser/ui/omnibox/omnibox_edit_controller.h"
 #include "chrome/browser/ui/omnibox/omnibox_popup_model.h"
 #include "chrome/browser/ui/omnibox/omnibox_popup_view.h"
-#include "chrome/browser/ui/search/search.h"
 #include "chrome/browser/ui/toolbar/toolbar_model_delegate.h"
 #include "chrome/browser/ui/toolbar/toolbar_model_impl.h"
 #include "testing/platform_test.h"
+#include "ui/gfx/image/image.h"
 
 namespace {
 
@@ -115,7 +116,7 @@ TEST_F(OmniboxViewMacTest, GetFieldFont) {
 }
 
 TEST_F(OmniboxViewMacTest, TabToAutocomplete) {
-  chrome::search::EnableInstantExtendedAPIForTesting();
+  chrome::EnableInstantExtendedAPIForTesting();
   OmniboxViewMac view(NULL, NULL, profile(), NULL, NULL);
 
   // This is deleted by the omnibox view.

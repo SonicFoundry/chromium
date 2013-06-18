@@ -15,7 +15,7 @@
 #include "base/mac/scoped_nsautorelease_pool.h"
 #include "base/metrics/histogram.h"
 #include "base/prefs/pref_service.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/autocomplete/autocomplete_classifier.h"
 #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
@@ -37,6 +37,7 @@
 #import "chrome/browser/ui/cocoa/new_tab_button.h"
 #import "chrome/browser/ui/cocoa/tab_contents/favicon_util_mac.h"
 #import "chrome/browser/ui/cocoa/tab_contents/tab_contents_controller.h"
+#import "chrome/browser/ui/cocoa/tabs/tab_audio_indicator_view_mac.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_controller.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_projecting_image_view.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_strip_drag_controller.h"
@@ -45,7 +46,6 @@
 #import "chrome/browser/ui/cocoa/tabs/tab_view.h"
 #import "chrome/browser/ui/cocoa/tabs/throbber_view.h"
 #import "chrome/browser/ui/cocoa/tabs/throbbing_image_view.h"
-#import "chrome/browser/ui/cocoa/tracking_area.h"
 #include "chrome/browser/ui/find_bar/find_bar.h"
 #include "chrome/browser/ui/find_bar/find_bar_controller.h"
 #include "chrome/browser/ui/find_bar/find_tab_helper.h"
@@ -65,6 +65,8 @@
 #include "grit/ui_resources.h"
 #include "skia/ext/skia_utils_mac.h"
 #import "third_party/GTM/AppKit/GTMNSAnimation+Duration.h"
+#import "ui/base/animation/animation_container.h"
+#import "ui/base/cocoa/tracking_area.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/list_selection_model.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -110,9 +112,6 @@ const CGFloat kProjectingIconWidthAndHeight = 32.0;
 
 // Throbbing duration on webrtc "this web page is watching you" favicon overlay.
 const int kRecordingDurationMs = 1000;
-
-// Throbbing duration on audio playing animation.
-const int kAudioPlayingDurationMs = 2000;
 
 // Helper class for doing NSAnimationContext calls that takes a bool to disable
 // all the work.  Useful for code that wants to conditionally animate.
@@ -220,6 +219,39 @@ NSImage* ApplyMask(NSImage* image, NSImage* mask) {
                fromRect:NSMakeRect(0, 0, width, height)
               operation:NSCompositeDestinationIn
                fraction:1.0];
+  }) autorelease];
+}
+
+// Creates a modified favicon used for the recording case. The mask is used for
+// making part of the favicon transparent. (The part where the recording dot
+// later is drawn.)
+NSImage* CreateMaskedFaviconForRecording(NSImage* image,
+                                         NSImage* mask,
+                                         NSImage* recImage) {
+  return [CreateImageWithSize([image size], ^(NSSize size) {
+      CGFloat width = size.width;
+      CGFloat height = size.height;
+
+      [image drawAtPoint:NSZeroPoint
+                fromRect:NSMakeRect(0, 0, width, height)
+               operation:NSCompositeCopy
+                fraction:1.0];
+
+      NSSize maskSize = [mask size];
+      NSSize recImageSize = [recImage size];
+      CGFloat offsetFromRight = recImageSize.width +
+          (maskSize.width - recImageSize.width) / 2;
+      CGFloat offsetFromBottom = (maskSize.height - recImageSize.height) / 2;
+
+      NSRect maskBounds;
+      maskBounds.origin.x = width - offsetFromRight;
+      maskBounds.origin.y = -offsetFromBottom;
+      maskBounds.size = maskSize;
+
+      [mask drawInRect:maskBounds
+              fromRect:NSZeroRect
+             operation:NSCompositeDestinationOut
+              fraction:1.0];
   }) autorelease];
 }
 
@@ -469,6 +501,7 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
         [[TabStripDragController alloc] initWithTabStripController:self]);
     tabContentsArray_.reset([[NSMutableArray alloc] init]);
     tabArray_.reset([[NSMutableArray alloc] init]);
+    animationContainer_ = new ui::AnimationContainer;
     NSWindow* browserWindow = [view window];
 
     // Important note: any non-tab subviews not added to |permanentSubviews_|
@@ -570,10 +603,11 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
       if (selection == currentContents) {
         // Must manually force a selection since the model won't send
         // selection messages in this scenario.
-        [self activateTabWithContents:currentContents
-                     previousContents:NULL
-                              atIndex:i
-                          userGesture:NO];
+        [self
+            activateTabWithContents:currentContents
+                   previousContents:NULL
+                            atIndex:i
+                             reason:TabStripModelObserver::CHANGE_REASON_NONE];
       }
     }
     // Don't lay out the tabs until after the controller has been fully
@@ -1277,6 +1311,7 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
                                  0, -[[self class] defaultTabHeight])];
 
   [self setTabTitle:newController withContents:contents];
+  [newController setProjecting:chrome::ShouldShowProjectingIndicator(contents)];
 
   // If a tab is being inserted, we can again use the entire tab strip width
   // for layout.
@@ -1307,7 +1342,7 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
 - (void)activateTabWithContents:(content::WebContents*)newContents
                previousContents:(content::WebContents*)oldContents
                         atIndex:(NSInteger)modelIndex
-                    userGesture:(bool)wasUserGesture {
+                         reason:(int)reason {
   // Take closing tabs into account.
   NSInteger activeIndex = [self indexFromModelIndex:modelIndex];
 
@@ -1575,6 +1610,9 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
     if (newHasIcon) {
       if (newState == kTabDone) {
         NSImageView* imageView = [self iconImageViewForContents:contents];
+        TabAudioIndicatorViewMac* tabAudioIndicatorViewMac =
+            base::mac::ObjCCast<TabAudioIndicatorViewMac>(
+                [tabController iconView]);
 
         ui::ThemeProvider* theme = [[tabStripView_ window] themeProvider];
         if (theme && [tabController projecting]) {
@@ -1587,40 +1625,48 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
                                     kProjectingIconWidthAndHeight,
                                     kProjectingIconWidthAndHeight);
           TabProjectingImageView* projectingView =
-              [[[TabProjectingImageView alloc] initWithFrame:frame
-                                         backgroundImage:[imageView image]
-                                          projectorImage:projector
-                                              throbImage:projectorGlow
-                                              durationMS:kRecordingDurationMs]
-                  autorelease];
+              [[[TabProjectingImageView alloc]
+                  initWithFrame:frame
+                backgroundImage:[imageView image]
+                 projectorImage:projector
+                     throbImage:projectorGlow
+                     durationMS:kRecordingDurationMs
+             animationContainer:animationContainer_] autorelease];
 
           iconView = projectingView;
         } else if (theme && chrome::ShouldShowRecordingIndicator(contents)) {
+          // Create a masked favicon.
+          NSImage* mask = theme->GetNSImageNamed(IDR_TAB_RECORDING_MASK, true);
           NSImage* recording = theme->GetNSImageNamed(IDR_TAB_RECORDING, true);
+          NSImage* favIconMasked = CreateMaskedFaviconForRecording(
+                                       [imageView image], mask, recording);
+
           NSRect frame =
               NSMakeRect(0, 0, kIconWidthAndHeight, kIconWidthAndHeight);
           ThrobbingImageView* recordingView =
-              [[[ThrobbingImageView alloc] initWithFrame:frame
-                                         backgroundImage:[imageView image]
-                                              throbImage:recording
-                                              durationMS:kRecordingDurationMs]
-                  autorelease];
-
-          iconView = recordingView;
-        } else if (theme && chrome::IsPlayingAudio(contents)) {
-          NSImage* audioImage =
-              theme->GetNSImageNamed(IDR_AUDIO_ANIMATION, true);
-          NSRect frame =
-              NSMakeRect(0, 0, kIconWidthAndHeight, kIconWidthAndHeight);
-          ThrobbingImageView* equalizerFaviconView =
               [[[ThrobbingImageView alloc]
                   initWithFrame:frame
-                backgroundImage:[imageView image]
-                     throbImage:audioImage
-                     durationMS:kAudioPlayingDurationMs] autorelease];
-          [equalizerFaviconView setTweenType:ui::Tween::LINEAR];
+                backgroundImage:favIconMasked
+                     throbImage:recording
+                     durationMS:kRecordingDurationMs
+                  throbPosition:kThrobPositionBottomRight
+             animationContainer:animationContainer_] autorelease];
 
-          iconView = equalizerFaviconView;
+          iconView = recordingView;
+        } else if (chrome::IsPlayingAudio(contents) ||
+                   [tabAudioIndicatorViewMac isAnimating]) {
+          if (!tabAudioIndicatorViewMac) {
+            NSRect frame =
+                NSMakeRect(0, 0, kIconWidthAndHeight, kIconWidthAndHeight);
+            tabAudioIndicatorViewMac = [[[TabAudioIndicatorViewMac alloc]
+                initWithFrame:frame] autorelease];
+            [tabAudioIndicatorViewMac
+                setAnimationContainer:animationContainer_];
+          }
+          [tabAudioIndicatorViewMac
+              setIsPlayingAudio:chrome::IsPlayingAudio(contents)];
+          [tabAudioIndicatorViewMac setBackgroundImage:[imageView image]];
+          iconView = tabAudioIndicatorViewMac;
         } else {
           iconView = imageView;
         }
@@ -1670,10 +1716,10 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
   }
 
   TabController* tabController = [tabArray_ objectAtIndex:index];
-  [tabController setProjecting:chrome::ShouldShowProjectingIndicator(contents)];
 
   if (change != TabStripModelObserver::LOADING_ONLY)
     [self setTabTitle:tabController withContents:contents];
+  [tabController setProjecting:chrome::ShouldShowProjectingIndicator(contents)];
 
   [self updateFaviconForContents:contents atIndex:modelIndex];
 
@@ -2112,7 +2158,7 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
   // If the input is plain text, classify the input and make the URL.
   AutocompleteMatch match;
   AutocompleteClassifierFactory::GetForProfile(browser_->profile())->Classify(
-      base::SysNSStringToUTF16(text), string16(), false, false, &match, NULL);
+      base::SysNSStringToUTF16(text), false, false, &match, NULL);
   GURL url(match.destination_url);
 
   [self openURL:&url inView:view at:point];

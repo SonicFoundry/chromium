@@ -6,13 +6,14 @@
 #define NET_QUIC_QUIC_CRYPTO_STREAM_H_
 
 #include "net/quic/crypto/crypto_framer.h"
+#include "net/quic/crypto/crypto_utils.h"
 #include "net/quic/quic_protocol.h"
 #include "net/quic/reliable_quic_stream.h"
 
 namespace net {
 
+class CryptoHandshakeMessage;
 class QuicSession;
-struct CryptoHandshakeMessage;
 
 // Crypto handshake messages in QUIC take place over a reserved
 // reliable stream with the id 1.  Each endpoint (client and server)
@@ -27,7 +28,6 @@ struct CryptoHandshakeMessage;
 class NET_EXPORT_PRIVATE QuicCryptoStream
     : public ReliableQuicStream,
       public CryptoFramerVisitorInterface {
-
  public:
   explicit QuicCryptoStream(QuicSession* session);
 
@@ -42,18 +42,19 @@ class NET_EXPORT_PRIVATE QuicCryptoStream
   // TODO(wtc): return a success/failure status.
   void SendHandshakeMessage(const CryptoHandshakeMessage& message);
 
-  bool handshake_complete() { return handshake_complete_; }
+  bool encryption_established() { return encryption_established_; }
+  bool handshake_confirmed() { return handshake_confirmed_; }
 
  protected:
   // Closes the connection
   void CloseConnection(QuicErrorCode error);
   void CloseConnectionWithDetails(QuicErrorCode error, const string& details);
 
-  void SetHandshakeComplete(QuicErrorCode error);
+  bool encryption_established_;
+  bool handshake_confirmed_;
 
  private:
   CryptoFramer crypto_framer_;
-  bool handshake_complete_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicCryptoStream);
 };

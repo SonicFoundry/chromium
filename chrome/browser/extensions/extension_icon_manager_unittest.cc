@@ -9,9 +9,9 @@
 #include "chrome/browser/extensions/extension_icon_manager.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_resource.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/test_browser_thread.h"
+#include "extensions/common/id_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/skia_util.h"
 
@@ -93,8 +93,7 @@ class TestIconManager : public ExtensionIconManager {
 // Returns the default icon that ExtensionIconManager gives when an extension
 // doesn't have an icon.
 SkBitmap GetDefaultIcon() {
-  std::string dummy_id;
-  EXPECT_TRUE(Extension::GenerateId(std::string("whatever"), &dummy_id));
+  std::string dummy_id = extensions::id_util::GenerateId("whatever");
   ExtensionIconManager manager;
   return manager.GetIcon(dummy_id);
 }
@@ -143,6 +142,7 @@ TEST_F(ExtensionIconManagerTest, LoadRemoveLoad) {
 #if defined(FILE_MANAGER_EXTENSION)
 // Tests loading an icon for a component extension.
 TEST_F(ExtensionIconManagerTest, LoadComponentExtensionResource) {
+  scoped_ptr<Profile> profile(new TestingProfile());
   SkBitmap default_icon = GetDefaultIcon();
 
   base::FilePath test_dir;
@@ -161,7 +161,6 @@ TEST_F(ExtensionIconManagerTest, LoadComponentExtensionResource) {
       Extension::NO_FLAGS, &error));
   ASSERT_TRUE(extension.get());
 
-  scoped_ptr<Profile> profile(new TestingProfile());
   TestIconManager icon_manager(this);
   // Load the icon and grab the bitmap.
   icon_manager.LoadIcon(profile.get(), extension.get());

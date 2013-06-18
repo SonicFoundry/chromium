@@ -6,13 +6,16 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/file_util.h"
+#include "base/files/file_path.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/values.h"
+#include "chrome/test/chromedriver/chrome/status.h"
+#include "chrome/test/chromedriver/chrome/stub_chrome.h"
 #include "chrome/test/chromedriver/fake_session_accessor.h"
 #include "chrome/test/chromedriver/session.h"
 #include "chrome/test/chromedriver/session_commands.h"
 #include "chrome/test/chromedriver/session_map.h"
-#include "chrome/test/chromedriver/status.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -34,7 +37,8 @@ Status ExecuteSimpleCommand(
 
 TEST(SessionCommandTest, SimpleCommand) {
   SessionMap map;
-  Session session("session");
+  Session session("session", scoped_ptr<Chrome>(new StubChrome()));
+  ASSERT_TRUE(session.thread.Start());
   scoped_refptr<SessionAccessor> accessor(new FakeSessionAccessor(&session));
   map.Set(session.id, accessor);
 
@@ -93,4 +97,25 @@ TEST(SessionCommandTest, SessionDeletedWhileWaiting) {
   ASSERT_EQ(kNoSuchSession, status.code());
   ASSERT_FALSE(value.get());
   ASSERT_STREQ("session", session_id.c_str());
+}
+
+TEST(SessionCommandTest, FileUpload) {
+  Session session("id");
+  base::DictionaryValue params;
+  scoped_ptr<base::Value> value;
+  // Zip file entry that contains a single file with contents 'COW\n', base64
+  // encoded following RFC 1521.
+  const char* kBase64ZipEntry =
+      "UEsDBBQAAAAAAMROi0K/wAzGBAAAAAQAAAADAAAAbW9vQ09XClBLAQIUAxQAAAAAAMROi0K/"
+      "wAzG\nBAAAAAQAAAADAAAAAAAAAAAAAACggQAAAABtb29QSwUGAAAAAAEAAQAxAAAAJQAAAA"
+      "AA\n";
+  params.SetString("file", kBase64ZipEntry);
+  Status status = ExecuteUploadFile(&session, params, &value);
+  ASSERT_EQ(kOk, status.code()) << status.message();
+  base::FilePath::StringType path;
+  ASSERT_TRUE(value->GetAsString(&path));
+  ASSERT_TRUE(file_util::PathExists(base::FilePath(path)));
+  std::string data;
+  ASSERT_TRUE(file_util::ReadFileToString(base::FilePath(path), &data));
+  ASSERT_STREQ("COW\n", data.c_str());
 }

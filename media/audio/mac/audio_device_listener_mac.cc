@@ -12,6 +12,7 @@
 #include "base/mac/mac_util.h"
 #include "base/message_loop.h"
 #include "base/pending_task.h"
+#include "media/audio/mac/audio_low_latency_output_mac.h"
 
 namespace media {
 
@@ -19,13 +20,14 @@ namespace media {
 // listener callbacks are mutually exclusive to operations on the audio thread.
 // TODO(dalecurtis): Instead we should replace the main thread with a dispatch
 // queue.  See http://crbug.com/158170.
-class ExclusiveDispatchQueueTaskObserver : public MessageLoop::TaskObserver {
+class ExclusiveDispatchQueueTaskObserver
+    : public base::MessageLoop::TaskObserver {
  public:
   ExclusiveDispatchQueueTaskObserver()
       : property_listener_queue_(new base::mac::LibDispatchTaskRunner(
             "com.google.chrome.AudioPropertyListenerQueue")),
         queue_(property_listener_queue_->GetDispatchQueue()),
-        message_loop_(MessageLoop::current()) {
+        message_loop_(base::MessageLoop::current()) {
     // If we're currently on the thread, fire the suspend operation so we don't
     // end up with an unbalanced resume.
     if (message_loop_->message_loop_proxy()->BelongsToCurrentThread())
@@ -77,7 +79,7 @@ class ExclusiveDispatchQueueTaskObserver : public MessageLoop::TaskObserver {
 
   scoped_refptr<base::mac::LibDispatchTaskRunner> property_listener_queue_;
   const dispatch_queue_t queue_;
-  MessageLoop* message_loop_;
+  base::MessageLoop* message_loop_;
 
   DISALLOW_COPY_AND_ASSIGN(ExclusiveDispatchQueueTaskObserver);
 };
@@ -125,8 +127,8 @@ AudioDeviceListenerMac::AudioDeviceListenerMac(const base::Closure& listener_cb)
   // by pausing and resuming the dispatch queue before and after each pumped
   // task.  This is not ideal and long term we should replace the audio thread
   // on OSX with a dispatch queue.  See http://crbug.com/158170 for discussion.
-  // TODO(dalecurtis): Does not fix the cases where GetAudioHardwareSampleRate()
-  // and GetAudioInputHardwareSampleRate() are called by the browser process.
+  // TODO(dalecurtis): Does not fix the cases where
+  // GetDefaultOutputStreamParameters() are called by the browser process.
   // These are one time events due to renderer side cache and thus unlikely to
   // occur at the same time as a device callback.  Should be fixed along with
   // http://crbug.com/137326 using a forced PostTask.

@@ -10,7 +10,6 @@
 
 #include "base/callback_forward.h"
 #include "base/memory/ref_counted.h"
-#include "base/platform_file.h"
 #include "base/supports_user_data.h"
 #include "base/task_runner.h"
 #include "net/base/net_export.h"
@@ -136,10 +135,14 @@ class NET_EXPORT URLFetcher {
   // |upload_content_type| is the MIME type of the content, while
   // |file_path| is the path to the file containing the data to be sent (the
   // Content-Length header value will be set to the length of this file).
+  // |range_offset| and |range_length| specify the range of the part
+  // to be uploaded. To upload the whole file, (0, kuint64max) can be used.
   // |file_task_runner| will be used for all file operations.
   virtual void SetUploadFilePath(
       const std::string& upload_content_type,
       const base::FilePath& file_path,
+      uint64 range_offset,
+      uint64 range_length,
       scoped_refptr<base::TaskRunner> file_task_runner) = 0;
 
   // Indicates that the POST data is sent via chunked transfer encoding.
@@ -271,10 +274,9 @@ class NET_EXPORT URLFetcher {
   virtual const ResponseCookies& GetCookies() const = 0;
 
   // Return true if any file system operation failed.  If so, set |error_code|
-  // to the error code. File system errors are only possible if user called
+  // to the net error code. File system errors are only possible if user called
   // SaveResponseToTemporaryFile().
-  virtual bool FileErrorOccurred(
-      base::PlatformFileError* out_error_code) const = 0;
+  virtual bool FileErrorOccurred(int* out_error_code) const = 0;
 
   // Reports that the received content was malformed.
   virtual void ReceivedContentWasMalformed() = 0;

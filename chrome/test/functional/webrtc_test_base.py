@@ -4,6 +4,8 @@
 # found in the LICENSE file.
 
 import os
+import platform
+import re
 import subprocess
 
 import pyauto
@@ -99,16 +101,31 @@ class WebrtcTestBase(pyauto.PyUITest):
         tab_index=tab_index))
     self.AssertNoFailures(tab_index)
 
+  def CreatePeerConnection(self, tab_index):
+    self.assertEquals('ok-peerconnection-created', self.ExecuteJavascript(
+        'preparePeerConnection()', tab_index=tab_index))
+
+  def AddUserMediaLocalStream(self, tab_index):
+    self.assertEquals('ok-added', self.ExecuteJavascript(
+        'addLocalStream()', tab_index=tab_index))
+
+  def AddWebAudioFile(self, tab_index, input_relative_path):
+    """The path must be relative to where the javascript is.
+
+    This call just loads and adds a file to a peer connection, but it doesn't
+    start to play it until you call PlayWebAudioFile.
+    """
+    self.assertEquals('ok-added', self.ExecuteJavascript(
+        'addAudioFile("%s")' % re.escape(input_relative_path),
+        tab_index=tab_index))
+
+  def PlayWebAudioFile(self, tab_index):
+    """Plays a web audio file which was added earlier."""
+    self.assertEquals('ok-playing', self.ExecuteJavascript(
+        'playAudioFile()', tab_index=tab_index))
+
   def EstablishCall(self, from_tab_with_index, to_tab_with_index):
     self.WaitUntilPeerConnects(tab_index=from_tab_with_index)
-
-    self.assertEquals('ok-peerconnection-created', self.ExecuteJavascript(
-        'preparePeerConnection()', tab_index=from_tab_with_index))
-    self.AssertNoFailures(from_tab_with_index)
-
-    self.assertEquals('ok-added', self.ExecuteJavascript(
-        'addLocalStream()', tab_index=from_tab_with_index))
-    self.AssertNoFailures(from_tab_with_index)
 
     self.assertEquals('ok-negotiating', self.ExecuteJavascript(
         'negotiateCall()', tab_index=from_tab_with_index))
@@ -163,6 +180,14 @@ class WebrtcTestBase(pyauto.PyUITest):
     if self.IsWin():
       path += '.exe'
     return path
+
+  def PlatformIsWinXP(self):
+    """Check if the executing platform is Windows XP.
+
+    Return:
+      True if the platform is Windows XP.
+    """
+    return platform.system() == 'Windows' and platform.release() == 'XP'
 
   def StartPeerConnectionServer(self):
     """Starts peerconnection_server.

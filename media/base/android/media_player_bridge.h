@@ -15,13 +15,16 @@
 #include "base/memory/weak_ptr.h"
 #include "base/time.h"
 #include "base/timer.h"
+#include "googleurl/src/gurl.h"
 #include "media/base/media_export.h"
+#if defined(GOOGLE_TV)
+#include "media/base/android/demuxer_stream_player_params.h"
+#endif
 #include "media/base/android/media_player_listener.h"
 
 namespace media {
 
-class CookieGetter;
-class MediaPlayerBridgeManager;
+class MediaPlayerManager;
 
 // This class serves as a bridge for native code to call java functions inside
 // android mediaplayer class. For more information on android mediaplayer, check
@@ -51,7 +54,8 @@ class MEDIA_EXPORT MediaPlayerBridge {
   typedef base::Callback<void(int, int)> BufferingUpdateCB;
 
   // Callback when player got prepared. Args: player ID, duration of the media.
-  typedef base::Callback<void(int, base::TimeDelta)> MediaPreparedCB;
+  typedef base::Callback<void(int, base::TimeDelta, int, int, bool)>
+      MediaMetadataChangedCB;
 
   // Callbacks when seek completed. Args: player ID, current time.
   typedef base::Callback<void(int, base::TimeDelta)> SeekCompleteCB;
@@ -66,7 +70,32 @@ class MEDIA_EXPORT MediaPlayerBridge {
   // current time.
   typedef base::Callback<void(int, base::TimeDelta)> TimeUpdateCB;
 
+#if defined(GOOGLE_TV)
+  // Callback when DemuxerStreamPlayer wants to read data from the demuxer.
+  typedef base::Callback<void(int, DemuxerStream::Type, bool)>
+      ReadFromDemuxerCB;
+#endif
+
   static bool RegisterMediaPlayerBridge(JNIEnv* env);
+
+  static MediaPlayerBridge* Create(
+      int player_id,
+      const GURL& url,
+      bool is_media_source,
+      const GURL& first_party_for_cookies,
+      bool hide_url_log,
+      MediaPlayerManager* manager,
+#if defined(GOOGLE_TV)
+      const ReadFromDemuxerCB read_from_demuxer_cb,
+#endif
+      const MediaErrorCB& media_error_cb,
+      const VideoSizeChangedCB& video_size_changed_cb,
+      const BufferingUpdateCB& buffering_update_cb,
+      const MediaMetadataChangedCB& media_prepared_cb,
+      const PlaybackCompleteCB& playback_complete_cb,
+      const SeekCompleteCB& seek_complete_cb,
+      const TimeUpdateCB& time_update_cb,
+      const MediaInterruptedCB& media_interrupted_cb);
 
   // Construct a MediaPlayerBridge object with all the needed media player
   // callbacks. This object needs to call |manager|'s RequestMediaResources()
@@ -74,20 +103,19 @@ class MEDIA_EXPORT MediaPlayerBridge {
   // unused resources and free them when needed. On the other hand, it needs
   // to call ReleaseMediaResources() when it is done with decoding.
   MediaPlayerBridge(int player_id,
-                    const std::string& url,
-                    const std::string& first_party_for_cookies,
-                    CookieGetter* cookie_getter,
+                    const GURL& url,
+                    const GURL& first_party_for_cookies,
                     bool hide_url_log,
-                    MediaPlayerBridgeManager* manager,
+                    MediaPlayerManager* manager,
                     const MediaErrorCB& media_error_cb,
                     const VideoSizeChangedCB& video_size_changed_cb,
                     const BufferingUpdateCB& buffering_update_cb,
-                    const MediaPreparedCB& media_prepared_cb,
+                    const MediaMetadataChangedCB& media_prepared_cb,
                     const PlaybackCompleteCB& playback_complete_cb,
                     const SeekCompleteCB& seek_complete_cb,
                     const TimeUpdateCB& time_update_cb,
                     const MediaInterruptedCB& media_interrupted_cb);
-  ~MediaPlayerBridge();
+  virtual ~MediaPlayerBridge();
 
   typedef std::map<std::string, std::string> HeadersMap;
 
@@ -104,7 +132,7 @@ class MEDIA_EXPORT MediaPlayerBridge {
   void SeekTo(base::TimeDelta time);
 
   // Release the player resources.
-  void Release();
+  virtual void Release();
 
   // Set the player volume.
   void SetVolume(float leftVolume, float rightVolume);
@@ -116,8 +144,18 @@ class MEDIA_EXPORT MediaPlayerBridge {
   base::TimeDelta GetDuration();
   bool IsPlaying();
 
-  // Get metadata from the media.
-  void GetMetadata();
+  // Get allowed operations from the player.
+  void GetAllowedOperations();
+
+#if defined(GOOGLE_TV)
+  // Methods for DeumxerStreamPlayer.
+  // Informs DemuxerStreamPlayer that the demuxer is ready.
+  virtual void DemuxerReady(
+      const MediaPlayerHostMsg_DemuxerReady_Params& params);
+  // Called when the requested data is received from the demuxer.
+  virtual void ReadFromDemuxerAck(
+      const MediaPlayerHostMsg_ReadFromDemuxerAck_Params& params);
+#endif
 
   // Called by the timer to check for current time routinely and generates
   // time update events.
@@ -136,10 +174,11 @@ class MEDIA_EXPORT MediaPlayerBridge {
   // Prepare the player for playback, asynchronously. When succeeds,
   // OnMediaPrepared() will be called. Otherwise, OnMediaError() will
   // be called with an error type.
-  void Prepare();
+  virtual void Prepare();
 
-  // Callback function passed to |cookies_retriever_|.
-  void GetCookiesCallback(const std::string& cookies);
+  // Callback function passed to |resource_getter_|. Called when the cookies
+  // are retrieved.
+  void OnCookiesRetrieved(const std::string& cookies);
 
   int player_id() { return player_id_; }
   bool can_pause() { return can_pause_; }
@@ -147,20 +186,39 @@ class MEDIA_EXPORT MediaPlayerBridge {
   bool can_seek_backward() { return can_seek_backward_; }
   bool prepared() { return prepared_; }
 
+ protected:
+  void SetMediaPlayer(jobject j_media_player);
+  void SetMediaPlayerListener();
+  void RequestMediaResourcesFromManager();
+
+  virtual void PendingSeekInternal(base::TimeDelta time);
+
  private:
+  // Initialize this object and extract the metadata from the media.
+  void Initialize();
+
   // Create the actual android media player.
-  void InitializePlayer();
+  void CreateMediaPlayer();
+
+  // Set the data source for the media player.
+  void SetDataSource(const std::string& url);
 
   // Functions that implements media player control.
   void StartInternal();
   void PauseInternal();
   void SeekInternal(base::TimeDelta time);
 
+  // Extract the media metadata from a url, asynchronously.
+  // OnMediaMetadataExtracted() will be called when this call finishes.
+  void ExtractMediaMetadata(const std::string& url);
+  void OnMediaMetadataExtracted(base::TimeDelta duration, int width, int height,
+                                bool success);
+
   // Callbacks when events are received.
   MediaErrorCB media_error_cb_;
   VideoSizeChangedCB video_size_changed_cb_;
   BufferingUpdateCB buffering_update_cb_;
-  MediaPreparedCB media_prepared_cb_;
+  MediaMetadataChangedCB media_metadata_changed_cb_;
   PlaybackCompleteCB playback_complete_cb_;
   SeekCompleteCB seek_complete_cb_;
   MediaInterruptedCB media_interrupted_cb_;
@@ -181,13 +239,10 @@ class MEDIA_EXPORT MediaPlayerBridge {
   base::TimeDelta pending_seek_;
 
   // Url for playback.
-  std::string url_;
+  GURL url_;
 
   // First party url for cookies.
-  std::string first_party_for_cookies_;
-
-  // Whether cookies are available.
-  bool has_cookies_;
+  GURL first_party_for_cookies_;
 
   // Hide url log from media player.
   bool hide_url_log_;
@@ -202,14 +257,11 @@ class MEDIA_EXPORT MediaPlayerBridge {
   bool can_seek_forward_;
   bool can_seek_backward_;
 
-  // Cookies for |url_|
+  // Cookies for |url_|.
   std::string cookies_;
 
   // Resource manager for all the media players.
-  MediaPlayerBridgeManager* manager_;
-
-  // Object for retrieving cookies for this media player.
-  scoped_ptr<CookieGetter> cookie_getter_;
+  MediaPlayerManager* manager_;
 
   // Java MediaPlayer instance.
   base::android::ScopedJavaGlobalRef<jobject> j_media_player_;

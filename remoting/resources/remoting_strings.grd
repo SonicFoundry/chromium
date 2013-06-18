@@ -142,6 +142,9 @@
         <message desc="Text shown when the app first starts, or if the access token is invalidated, explaining the need to authorize the Chrome Remote Desktop app before use." name="IDR_DESCRIPTION_AUTHORIZE">
           To use Chrome Remote Desktop you must grant extended access permissions to your computer. You only have to do this once.
         </message>
+        <message desc="Confirmation prompt shown when a user needs to authenticate against a third party, explaining the need to authorize the Chrome Remote Desktop app to access the authentication URL." name="IDR_DESCRIPTION_THIRD_PARTY_AUTH">
+          The remote host requires you to authenticate to a third-party website. To continue, you must grant Chrome Remote Desktop additional permissions to access this address:
+        </message>
         <message desc="Description for the home screen. This is shown when the app starts up, above buttons to share or connect." name="IDR_DESCRIPTION_HOME">
           Chrome Remote Desktop allows you to securely share your computer over the Web. Both users must be running the Chrome Remote Desktop app, which can be found at <ph name="URL">$1<ex>&lt;a href=http://chrome.google.com/remotedesktop&gt;chrome.google.com/remotedesktop&lt;/a&gt;</ex></ph>.
         </message>
@@ -193,6 +196,9 @@
 	<message desc="Error message displayed if the user tries to connect to a computer running out-of-date Me2Me host software." name="IDR_HOST_NEEDS_UPDATE_TITLE">
 	  Chrome Remote Desktop on <ph name="HOSTNAME">$1<ex>My Linux desktop</ex></ph> is out-of-date and needs to be updated.
 	</message>
+	<message desc="Invitation to the user to participate in a user survey for Chrome Remote Desktop" name="IDR_SURVEY_INVITATION">
+	  Want to help improve Chrome Remote Desktop?
+	</message>
       </if>
 
       <if expr="not pp_ifdef('_google_chrome')">
@@ -201,6 +207,9 @@
         </message>
         <message desc="Text shown when the app first starts, or if the access token is invalidated, explaining the need to authorize the Chromoting app before use." name="IDR_DESCRIPTION_AUTHORIZE">
           To use Chromoting you must grant extended access permissions to your computer. You only have to do this once.
+        </message>
+        <message desc="Confirmation prompt shown when a user needs to authenticate against a third party, explaining the need to authorize the Chromoting app to access the authentication URL." name="IDR_DESCRIPTION_THIRD_PARTY_AUTH">
+          The remote host requires you to authenticate to a third-party website. To continue, you must grant Chromoting additional permissions to access this address:
         </message>
         <message desc="Description for the home screen. This is shown when the app starts up, above buttons to share or connect." name="IDR_DESCRIPTION_HOME">
           Chromoting allows you to securely share your computer over the Web. Both users must be running the Chromoting app, which can be found at <ph name="URL">$1<ex>&lt;a href=http://chrome.google.com/remotedesktop&gt;chrome.google.com/remotedesktop&lt;/a&gt;</ex></ph>.
@@ -252,6 +261,9 @@
 	</message>
 	<message desc="Error message displayed if the user tries to connect to a computer running out-of-date Me2Me host software." name="IDR_HOST_NEEDS_UPDATE_TITLE">
 	  Chromoting on <ph name="HOSTNAME">$1<ex>My Linux desktop</ex></ph> is out-of-date and needs to be updated.
+	</message>
+	<message desc="Invitation to the user to participate in a user survey for Chromoting" name="IDR_SURVEY_INVITATION">
+	  Want to help improve Chromoting?
 	</message>
       </if>
 
@@ -536,6 +548,9 @@
       </message>
       <message desc="Help link displayed when the user enables the host on this computer. Clicking this link opens a page that explains why this operation is safe. This string appears in a UI with limited horizontal space. Please try to keep translations no more than about 30 characters." name="IDR_WHY_IS_THIS_SAFE">
         Why is this safe?
+      </message>
+      <message desc="Survey link for users that want to take part." name="IDR_SIGN_ME_UP">
+        Take the survey
       </message>
     </messages>
   </release>

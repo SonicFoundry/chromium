@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Tests for the CookieManager.
  */
-public class CookieManagerTest extends AndroidWebViewTestBase {
+public class CookieManagerTest extends AwTestBase {
 
     private AwCookieManager mCookieManager;
     private TestAwContentsClient mContentsClient;
@@ -44,7 +44,7 @@ public class CookieManagerTest extends AndroidWebViewTestBase {
         final AwTestContainerView testContainerView =
                 createAwTestContainerViewOnMainSync(mContentsClient);
         mAwContents = testContainerView.getAwContents();
-        mAwContents.getContentViewCore().getContentSettings().setJavaScriptEnabled(true);
+        mAwContents.getSettings().setJavaScriptEnabled(true);
         assertNotNull(mCookieManager);
     }
 

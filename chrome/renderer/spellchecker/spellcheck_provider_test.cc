@@ -22,7 +22,6 @@ FakeTextCheckingCompletion::~FakeTextCheckingCompletion() {}
 void FakeTextCheckingCompletion::didFinishCheckingText(
     const WebKit::WebVector<WebKit::WebTextCheckingResult>& results) {
   ++completion_count_;
-  last_results_ = results;
 }
 
 void FakeTextCheckingCompletion::didCancelCheckingText() {
@@ -32,11 +31,10 @@ void FakeTextCheckingCompletion::didCancelCheckingText() {
 
 TestingSpellCheckProvider::TestingSpellCheckProvider()
       : SpellCheckProvider(NULL, new MockSpellcheck),
-        offset_(-1) {
+        spelling_service_call_count_(0) {
 }
 
 TestingSpellCheckProvider::~TestingSpellCheckProvider() {
-  STLDeleteContainerPointers(messages_.begin(), messages_.end());
   delete spellcheck_;
 }
 
@@ -62,28 +60,30 @@ bool TestingSpellCheckProvider::Send(IPC::Message* message)  {
 
 void TestingSpellCheckProvider::OnCallSpellingService(int route_id,
                            int identifier,
-                           int offset,
                            const string16& text) {
 #if defined (OS_MACOSX)
   NOTREACHED();
 #else
+  ++spelling_service_call_count_;
   WebKit::WebTextCheckingCompletion* completion =
       text_check_completions_.Lookup(identifier);
   if (!completion) {
     ResetResult();
     return;
   }
-  offset_ = offset;
   text_.assign(text);
   text_check_completions_.Remove(identifier);
-  completion->didFinishCheckingText(
-      std::vector<WebKit::WebTextCheckingResult>());
+  std::vector<WebKit::WebTextCheckingResult> results;
+  results.push_back(WebKit::WebTextCheckingResult(
+      WebKit::WebTextCheckingTypeSpelling,
+      0, 5, WebKit::WebString("hello")));
+  completion->didFinishCheckingText(results);
   last_request_ = text;
+  last_results_ = results;
 #endif
 }
 
 void TestingSpellCheckProvider::ResetResult() {
-  offset_ = -1;
   text_.clear();
 }
 

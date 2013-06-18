@@ -14,7 +14,6 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
-#include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "ui/base/keycodes/keyboard_codes.h"
 
@@ -47,7 +46,7 @@ class WebViewInteractiveTest
   }
 
   gfx::NativeWindow GetPlatformAppWindow() {
-    extensions::ShellWindowRegistry::ShellWindowSet shell_windows =
+    const extensions::ShellWindowRegistry::ShellWindowSet& shell_windows =
         extensions::ShellWindowRegistry::Get(
             browser()->profile())->shell_windows();
     return (*shell_windows.begin())->GetNativeWindow();
@@ -57,6 +56,19 @@ class WebViewInteractiveTest
     ASSERT_EQ(1U, GetShellWindowCount());
     ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(
         GetPlatformAppWindow(), key, false, false, false, false));
+  }
+
+  void SendCopyKeyPressToPlatformApp() {
+    ASSERT_EQ(1U, GetShellWindowCount());
+#if defined(OS_MACOSX)
+    // Send Cmd+C on MacOSX.
+    ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(
+        GetPlatformAppWindow(), ui::VKEY_C, false, false, false, true));
+#else
+    // Send Ctrl+C on Windows and Linux/ChromeOS.
+    ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(
+        GetPlatformAppWindow(), ui::VKEY_C, true, false, false, false));
+#endif
   }
 
   void SendMouseEvent(ui_controls::MouseButton button,
@@ -116,12 +128,6 @@ class WebViewInteractiveTest
     return corner_;
   }
 
- protected:
-  virtual void SetUpCommandLine(CommandLine* command_line) {
-    command_line->AppendSwitch(switches::kEnableBrowserPluginPointerLock);
-    extensions::PlatformAppBrowserTest::SetUpCommandLine(command_line);
-  }
-
  private:
   content::WebContents* guest_web_contents_;
   content::WebContents* embedder_web_contents_;
@@ -139,16 +145,16 @@ IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, PointerLock) {
   SetupTest("web_view/pointer_lock",
             "files/extensions/platform_apps/web_view/pointer_lock/guest.html");
 
-  ExtensionTestMessageListener guest_clicked_listener("clicked", false);
-  // We need to simulate a mouse click in the window or else SendMouseMoveSync
-  // will cause the browser to crash (not sure why exactly...)
-  SimulateMouseClickAt(guest_web_contents(), 0,
-      WebKit::WebMouseEvent::ButtonLeft, gfx::Point(75, 75));
-  ASSERT_TRUE(guest_clicked_listener.WaitUntilSatisfied());
-
   // Move the mouse over the Lock Pointer button.
   ASSERT_TRUE(ui_test_utils::SendMouseMoveSync(
       gfx::Point(corner().x() + 75, corner().y() + 25)));
+
+  // Click the Lock Pointer button. The first two times the button is clicked
+  // the permission API will deny the request (intentional).
+  ExtensionTestMessageListener exception_listener("request exception", false);
+  SendMouseClickWithListener(ui_controls::LEFT, "lock error");
+  ASSERT_TRUE(exception_listener.WaitUntilSatisfied());
+  SendMouseClickWithListener(ui_controls::LEFT, "lock error");
 
   // Click the Lock Pointer button, locking the mouse to lockTarget1.
   SendMouseClickWithListener(ui_controls::LEFT, "locked");
@@ -208,3 +214,33 @@ IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, PointerLock) {
 }
 
 #endif  // (defined(OS_WIN) || defined(OS_LINUX))
+
+// Tests that setting focus on the <webview> sets focus on the guest.
+IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, DISABLED_Focus) {
+  ASSERT_TRUE(StartTestServer());  // For serving guest pages.
+  ASSERT_TRUE(RunPlatformAppTest("platform_apps/web_view/focus"))
+      << message_;
+}
+
+// Tests that guests receive edit commands and respond appropriately.
+IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, EditCommands) {
+  SetupTest("web_view/edit_commands",
+            "files/extensions/platform_apps/web_view/edit_commands/guest.html");
+
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(
+      GetPlatformAppWindow()));
+
+  // Flush any pending events to make sure we start with a clean slate.
+  content::RunAllPendingInMessageLoop();
+
+  ExtensionTestMessageListener copy_listener("copy", false);
+  SendCopyKeyPressToPlatformApp();
+  // Wait for the guest to receive a 'copy' edit command.
+  ASSERT_TRUE(copy_listener.WaitUntilSatisfied());
+}
+
+IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, NewWindow) {
+  ASSERT_TRUE(StartTestServer());  // For serving guest pages.
+  ASSERT_TRUE(RunPlatformAppTest("platform_apps/web_view/newwindow"))
+      << message_;
+}

@@ -8,13 +8,16 @@
 #include "base/debug/stack_trace.h"
 #include "base/logging.h"
 #include "base/string_util.h"
+#include "base/win/metro.h"
 #include "ui/base/events/event.h"
 #include "ui/base/events/event_constants.h"
 #include "ui/base/events/event_utils.h"
 #include "ui/base/ime/composition_text.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/text_input_client.h"
+#include "ui/base/ime/win/tsf_bridge.h"
 #include "ui/base/keycodes/keyboard_codes.h"
+#include "ui/base/win/hwnd_util.h"
 
 // Extra number of chars before and after selection (or composition) range which
 // is returned to IME for improving conversion accuracy.
@@ -53,13 +56,13 @@ void InputMethodWin::OnBlur() {
   InputMethodBase::OnBlur();
 }
 
-void InputMethodWin::DispatchKeyEvent(
+bool InputMethodWin::DispatchKeyEvent(
     const base::NativeEvent& native_key_event) {
   if (native_key_event.message == WM_CHAR) {
     BOOL handled;
     OnChar(native_key_event.message, native_key_event.wParam,
            native_key_event.lParam, &handled);
-    return;  // Don't send WM_CHAR for post event processing.
+    return !!handled;  // Don't send WM_CHAR for post event processing.
   }
   // Handles ctrl-shift key to change text direction and layout alignment.
   if (ui::ImeInput::IsRTLKeyboardLayoutInstalled() && !IsTextInputTypeNone()) {
@@ -84,10 +87,10 @@ void InputMethodWin::DispatchKeyEvent(
     }
   }
 
-  DispatchKeyEventPostIME(native_key_event);
+  return DispatchKeyEventPostIME(native_key_event);
 }
 
-void InputMethodWin::DispatchFabricatedKeyEvent(const ui::KeyEvent& event) {
+bool InputMethodWin::DispatchFabricatedKeyEvent(const ui::KeyEvent& event) {
   // TODO(ananta)
   // Support IMEs and RTL layout in Windows 8 metro Ash. The code below won't
   // work with IMEs.
@@ -96,15 +99,21 @@ void InputMethodWin::DispatchFabricatedKeyEvent(const ui::KeyEvent& event) {
     if (GetTextInputClient()) {
       GetTextInputClient()->InsertChar(event.key_code(),
                                        ui::GetModifiersFromKeyState());
-      return;
+      return true;
     }
   }
-  DispatchFabricatedKeyEventPostIME(event.type(),
-                                    event.key_code(),
-                                    event.flags());
+  return DispatchFabricatedKeyEventPostIME(event.type(),
+                                           event.key_code(),
+                                           event.flags());
 }
 
 void InputMethodWin::OnTextInputTypeChanged(const TextInputClient* client) {
+  if (base::win::IsTSFAwareRequired()) {
+    UpdateIMEState();
+    ui::TSFBridge::GetInstance()->OnTextInputTypeChanged(
+        const_cast<TextInputClient*>(client));
+    return;
+  }
   if (IsTextInputClientFocused(client)) {
     ime_input_.CancelIME(hwnd_);
     UpdateIMEState();
@@ -115,7 +124,6 @@ void InputMethodWin::OnTextInputTypeChanged(const TextInputClient* client) {
 void InputMethodWin::OnCaretBoundsChanged(const TextInputClient* client) {
   if (!enabled_ || !IsTextInputClientFocused(client))
     return;
-
   // The current text input type should not be NONE if |client| is focused.
   DCHECK(!IsTextInputTypeNone());
   gfx::Rect screen_bounds(GetTextInputClient()->GetCaretBounds());
@@ -148,10 +156,38 @@ bool InputMethodWin::IsActive() {
   return active_;
 }
 
+void InputMethodWin::SetFocusedTextInputClient(TextInputClient* client) {
+  if (base::win::IsTSFAwareRequired()) {
+    if (client) {
+      ui::TSFBridge::GetInstance()->SetFocusedClient(hwnd_, client);
+    } else {
+      ui::TSFBridge::GetInstance()->RemoveFocusedClient(
+          ui::TSFBridge::GetInstance()->GetFocusedTextInputClient());
+      return;
+    }
+  }
+  InputMethodBase::SetFocusedTextInputClient(client);
+}
+
+TextInputClient* InputMethodWin::GetTextInputClient() const {
+  if (base::win::IsTSFAwareRequired())
+    return ui::TSFBridge::GetInstance()->GetFocusedTextInputClient();
+  return InputMethodBase::GetTextInputClient();
+}
+
 LRESULT InputMethodWin::OnImeMessages(UINT message,
                                       WPARAM w_param,
                                       LPARAM l_param,
                                       BOOL* handled) {
+  // Don't do traditional IME in Text services mode.
+  if (base::win::IsTSFAwareRequired() &&
+      message != WM_CHAR &&
+      message != WM_SYSCHAR &&
+      message != WM_DEADCHAR &&
+      message != WM_SYSDEADCHAR &&
+      message != WM_IME_SETCONTEXT) {
+    return false;
+  }
   LRESULT result = 0;
   switch (message) {
     case WM_IME_SETCONTEXT:
@@ -325,11 +361,17 @@ LRESULT InputMethodWin::OnChar(UINT message,
 
   // We need to send character events to the focused text input client event if
   // its text input type is ui::TEXT_INPUT_TYPE_NONE.
-  if (!GetTextInputClient())
-    return 0;
+  if (GetTextInputClient()) {
+    GetTextInputClient()->InsertChar(static_cast<char16>(wparam),
+                                     ui::GetModifiersFromKeyState());
+  }
 
-  GetTextInputClient()->InsertChar(static_cast<char16>(wparam),
-                                   ui::GetModifiersFromKeyState());
+  // Explicitly show the system menu at a good location on [Alt]+[Space].
+  // Note: Setting |handled| to FALSE for DefWindowProc triggering of the system
+  //       menu causes undesirable titlebar artifacts in the classic theme.
+  if (message == WM_SYSCHAR && wparam == VK_SPACE)
+    ui::ShowSystemMenu(hwnd_);
+
   return 0;
 }
 

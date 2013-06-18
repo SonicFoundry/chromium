@@ -18,7 +18,6 @@ using ppapi::HostResource;
 using ppapi::TrackedCallback;
 using ppapi::thunk::EnterResourceNoLock;
 using ppapi::thunk::PPB_Buffer_API;
-using ppapi::thunk::PPB_BufferTrusted_API;
 using webkit::ppapi::HostGlobals;
 using webkit::ppapi::PPB_Buffer_Impl;
 
@@ -38,8 +37,7 @@ PepperVideoCaptureHost::PepperVideoCaptureHost(RendererPpapiHost* host,
       renderer_ppapi_host_(host),
       buffer_count_hint_(0),
       status_(PP_VIDEO_CAPTURE_STATUS_STOPPED),
-      ALLOW_THIS_IN_INITIALIZER_LIST(
-          enumeration_helper_(this, this, PP_DEVICETYPE_DEV_VIDEOCAPTURE)) {
+      enumeration_helper_(this, this, PP_DEVICETYPE_DEV_VIDEOCAPTURE) {
 }
 
 PepperVideoCaptureHost::~PepperVideoCaptureHost() {
@@ -203,7 +201,7 @@ void PepperVideoCaptureHost::OnDeviceInfoReceived(
     // Add the serialized shared memory handle to params. FileDescriptor is
     // treated in special case.
     {
-      EnterResourceNoLock<PPB_BufferTrusted_API> enter(res, true);
+      EnterResourceNoLock<PPB_Buffer_API> enter(res, true);
       DCHECK(enter.succeeded());
       int handle;
       int32_t result = enter.object()->GetSharedMemory(&handle);
@@ -252,7 +250,7 @@ int32_t PepperVideoCaptureHost::OnOpen(
     const std::string& device_id,
     const PP_VideoCaptureDeviceInfo_Dev& requested_info,
     uint32_t buffer_count) {
-  if (platform_video_capture_.get())
+  if (platform_video_capture_)
     return PP_ERROR_FAILED;
 
   webkit::ppapi::PluginDelegate* plugin_delegate = GetPluginDelegate();
@@ -324,7 +322,7 @@ int32_t PepperVideoCaptureHost::StopCapture() {
 }
 
 int32_t PepperVideoCaptureHost::Close() {
-  if (!platform_video_capture_.get())
+  if (!platform_video_capture_)
     return PP_OK;
 
   StopCapture();
@@ -362,7 +360,7 @@ void PepperVideoCaptureHost::SetRequestedInfo(
 }
 
 void PepperVideoCaptureHost::DetachPlatformVideoCapture() {
-  if (platform_video_capture_.get()) {
+  if (platform_video_capture_) {
     platform_video_capture_->DetachEventHandler();
     platform_video_capture_ = NULL;
   }

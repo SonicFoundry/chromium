@@ -24,7 +24,7 @@
 #include "base/threading/non_thread_safe.h"
 #include "ui/gfx/native_widget_types.h"
 
-#if defined(OS_LINUX) || defined(OS_OPENBSD)
+#if defined(OS_LINUX) || defined(OS_OPENBSD) || defined(OS_MACOSX)
 #include "base/files/scoped_temp_dir.h"
 #endif  // defined(OS_LINUX) || defined(OS_OPENBSD)
 
@@ -60,61 +60,35 @@ class ProcessSingleton : public base::NonThreadSafe {
       const CommandLine& command_line,
       const base::FilePath& current_directory)> NotificationCallback;
 
-  explicit ProcessSingleton(const base::FilePath& user_data_dir);
+  ProcessSingleton(const base::FilePath& user_data_dir,
+                   const NotificationCallback& notification_callback);
   ~ProcessSingleton();
 
   // Notify another process, if available. Otherwise sets ourselves as the
-  // singleton instance and stores the provided callback for notification from
-  // future processes. Returns PROCESS_NONE if we became the singleton
+  // singleton instance. Returns PROCESS_NONE if we became the singleton
   // instance. Callers are guaranteed to either have notified an existing
   // process or have grabbed the singleton (unless the profile is locked by an
   // unreachable process).
   // TODO(brettw): Make the implementation of this method non-platform-specific
   // by making Linux re-use the Windows implementation.
-  NotifyResult NotifyOtherProcessOrCreate(
-      const NotificationCallback& notification_callback);
+  NotifyResult NotifyOtherProcessOrCreate();
 
   // Sets ourself up as the singleton instance.  Returns true on success.  If
   // false is returned, we are not the singleton instance and the caller must
-  // exit. Otherwise, stores the provided callback for notification from
-  // future processes.
+  // exit.
   // NOTE: Most callers should generally prefer NotifyOtherProcessOrCreate() to
   // this method, only callers for whom failure is prefered to notifying another
   // process should call this directly.
-  bool Create(const NotificationCallback& notification_callback);
+  bool Create();
 
   // Clear any lock state during shutdown.
   void Cleanup();
-
-  // Blocks the dispatch of CopyData messages. foreground_window refers
-  // to the window that should be set to the foreground if a CopyData message
-  // is received while the ProcessSingleton is locked.
-  void Lock(gfx::NativeWindow foreground_window) {
-    DCHECK(CalledOnValidThread());
-    locked_ = true;
-    foreground_window_ = foreground_window;
-  }
-
-  // Changes the foreground window without changing the locked state.
-  void SetForegroundWindow(gfx::NativeWindow foreground_window) {
-    DCHECK(CalledOnValidThread());
-    foreground_window_ = foreground_window;
-  }
-
-  // Allows the dispatch of CopyData messages and replays the messages which
-  // were received when the ProcessSingleton was locked.
-  void Unlock();
-
-  bool locked() {
-    DCHECK(CalledOnValidThread());
-    return locked_;
-  }
 
 #if defined(OS_WIN)
   LRESULT WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
 #endif
 
-#if defined(OS_LINUX) || defined(OS_OPENBSD)
+#if defined(OS_LINUX) || defined(OS_OPENBSD) || defined(OS_MACOSX)
   static void DisablePromptForTesting();
 #endif  // defined(OS_LINUX) || defined(OS_OPENBSD)
 
@@ -125,7 +99,7 @@ class ProcessSingleton : public base::NonThreadSafe {
   // On Windows, Create() has to be called before this.
   NotifyResult NotifyOtherProcess();
 
-#if defined(OS_LINUX) || defined(OS_OPENBSD)
+#if defined(OS_LINUX) || defined(OS_OPENBSD) || defined(OS_MACOSX)
   // Exposed for testing.  We use a timeout on Linux, and in tests we want
   // this timeout to be short.
   NotifyResult NotifyOtherProcessWithTimeout(const CommandLine& command_line,
@@ -133,7 +107,6 @@ class ProcessSingleton : public base::NonThreadSafe {
                                              bool kill_unresponsive);
   NotifyResult NotifyOtherProcessWithTimeoutOrCreate(
       const CommandLine& command_line,
-      const NotificationCallback& notification_callback,
       int timeout_seconds);
   void OverrideCurrentPidForTesting(base::ProcessId pid);
   void OverrideKillCallbackForTesting(
@@ -141,17 +114,12 @@ class ProcessSingleton : public base::NonThreadSafe {
 #endif  // defined(OS_LINUX) || defined(OS_OPENBSD)
 
  private:
-  typedef std::pair<CommandLine::StringVector,
-                    base::FilePath> DelayedStartupMessage;
-
-#if !defined(OS_MACOSX)
+//#if !defined(OS_MACOSX)
   // Timeout for the current browser process to respond. 20 seconds should be
   // enough. It's only used in Windows and Linux implementations.
-  static const int kTimeoutInSeconds = 20;
-#endif
+  static const int kTimeoutInSeconds = 5;
+//#endif
 
-  bool locked_;
-  gfx::NativeWindow foreground_window_;
   NotificationCallback notification_callback_;  // Handler for notifications.
 
 #if defined(OS_WIN)
@@ -165,11 +133,13 @@ class ProcessSingleton : public base::NonThreadSafe {
   bool is_virtualized_;  // Stuck inside Microsoft Softricity VM environment.
   HANDLE lock_file_;
   base::FilePath user_data_dir_;
-#elif defined(OS_LINUX) || defined(OS_OPENBSD)
+#elif defined(OS_LINUX) || defined(OS_OPENBSD) || defined(OS_MACOSX)
   // Return true if the given pid is one of our child processes.
   // Assumes that the current pid is the root of all pids of the current
   // instance.
+#if !defined(OS_MACOSX)
   bool IsSameChromeInstance(pid_t pid);
+#endif
 
   // Extract the process's pid from a symbol link path and if it is on
   // the same host, kill the process, unlink the lock file and return true.
@@ -204,7 +174,7 @@ class ProcessSingleton : public base::NonThreadSafe {
   // because it posts messages between threads.
   class LinuxWatcher;
   scoped_refptr<LinuxWatcher> watcher_;
-#elif defined(OS_MACOSX)
+#elif defined(OS_MACOSX__)
   // Path in file system to the lock.
   base::FilePath lock_path_;
 
@@ -213,10 +183,6 @@ class ProcessSingleton : public base::NonThreadSafe {
   // the same file at the same time.
   int lock_fd_;
 #endif
-
-  // If messages are received in the locked state, the corresponding command
-  // lines are saved here to be replayed later.
-  std::vector<DelayedStartupMessage> saved_startup_messages_;
 
   DISALLOW_COPY_AND_ASSIGN(ProcessSingleton);
 };

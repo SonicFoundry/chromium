@@ -15,8 +15,12 @@
 #include "base/i18n/time_formatting.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/string16.h"
-#include "base/time.h"
 #include "ui/gfx/image/image_skia.h"
+
+namespace base {
+class TimeDelta;
+class TimeTicks;
+}
 
 namespace ash {
 
@@ -30,8 +34,8 @@ struct ASH_EXPORT NetworkIconInfo {
   bool connected;
   bool tray_icon_visible;
   gfx::ImageSkia image;
-  string16 name;
-  string16 description;
+  base::string16 name;
+  base::string16 description;
   std::string service_path;
   bool is_cellular;
 };
@@ -41,10 +45,10 @@ struct ASH_EXPORT BluetoothDeviceInfo {
   ~BluetoothDeviceInfo();
 
   std::string address;
-  string16 display_name;
+  base::string16 display_name;
   bool connected;
+  bool connecting;
   bool paired;
-  bool visible;
 };
 
 typedef std::vector<BluetoothDeviceInfo> BluetoothDeviceList;
@@ -53,21 +57,21 @@ typedef std::vector<BluetoothDeviceInfo> BluetoothDeviceList;
 struct ASH_EXPORT DriveOperationStatus {
   enum OperationType {
     OPERATION_UPLOAD,
-    OPERATION_DOWNLOAD,
-    OPERATION_OTHER,
+    OPERATION_DOWNLOAD
   };
 
   enum OperationState {
     OPERATION_NOT_STARTED,
-    OPERATION_STARTED,
     OPERATION_IN_PROGRESS,
     OPERATION_COMPLETED,
     OPERATION_FAILED,
-    OPERATION_SUSPENDED,
   };
 
   DriveOperationStatus();
   ~DriveOperationStatus();
+
+  // Unique ID for the operation.
+  int32 id;
 
   // File path.
   base::FilePath file_path;
@@ -86,7 +90,7 @@ struct ASH_EXPORT IMEPropertyInfo {
 
   bool selected;
   std::string key;
-  string16 name;
+  base::string16 name;
 };
 
 typedef std::vector<IMEPropertyInfo> IMEPropertyInfoList;
@@ -98,14 +102,16 @@ struct ASH_EXPORT IMEInfo {
   bool selected;
   bool third_party;
   std::string id;
-  string16 name;
-  string16 medium_name;
-  string16 short_name;
+  base::string16 name;
+  base::string16 medium_name;
+  base::string16 short_name;
 };
 
 typedef std::vector<IMEInfo> IMEInfoList;
 
 class VolumeControlDelegate;
+
+typedef std::vector<std::string> UserEmailList;
 
 class SystemTrayDelegate {
  public:
@@ -114,14 +120,24 @@ class SystemTrayDelegate {
   // Called after SystemTray has been instantiated.
   virtual void Initialize() = 0;
 
+  // Called before SystemTray is destroyed.
+  virtual void Shutdown() = 0;
+
   // Returns true if system tray should be visible on startup.
   virtual bool GetTrayVisibilityOnStartup() = 0;
 
-  // Gets information about the logged in user.
-  virtual const string16 GetUserDisplayName() const = 0;
+  // Gets information about the active user.
+  virtual const base::string16 GetUserDisplayName() const = 0;
   virtual const std::string GetUserEmail() const = 0;
   virtual const gfx::ImageSkia& GetUserImage() const = 0;
   virtual user::LoginStatus GetUserLoginStatus() const = 0;
+  virtual bool IsOobeCompleted() const = 0;
+
+  // Returns a list of all logged in users.
+  virtual void GetLoggedInUsers(UserEmailList* users) = 0;
+
+  // Switches to another active user (if that user has already signed in).
+  virtual void SwitchActiveUser(const std::string& email) = 0;
 
   // Shows UI for changing user's profile picture.
   virtual void ChangeProfilePicture() = 0;
@@ -130,7 +146,13 @@ class SystemTrayDelegate {
   virtual const std::string GetEnterpriseDomain() const = 0;
 
   // Returns notification for enterprise enrolled devices.
-  virtual const string16 GetEnterpriseMessage() const = 0;
+  virtual const base::string16 GetEnterpriseMessage() const = 0;
+
+  // Returns the email of user that manages current locally managed user.
+  virtual const std::string GetLocallyManagedUserManager() const = 0;
+
+  // Returns notification for locally managed users.
+  virtual const base::string16 GetLocallyManagedUserMessage() const = 0;
 
   // Returns whether a system upgrade is available.
   virtual bool SystemShouldUpgrade() const = 0;
@@ -177,6 +199,12 @@ class SystemTrayDelegate {
   // Shows information about enterprise enrolled devices.
   virtual void ShowEnterpriseInfo() = 0;
 
+  // Shows information about locally managed users.
+  virtual void ShowLocallyManagedUserInfo() = 0;
+
+  // Shows login UI to add other users to this session.
+  virtual void ShowUserLogin() = 0;
+
   // Attempts to shut down the system.
   virtual void ShutDown() = 0;
 
@@ -198,8 +226,8 @@ class SystemTrayDelegate {
   // Requests bluetooth stop discovering devices.
   virtual void BluetoothStopDiscovering() = 0;
 
-  // Toggles connection to a specific bluetooth device.
-  virtual void ToggleBluetoothConnection(const std::string& address) = 0;
+  // Connect to a specific bluetooth device.
+  virtual void ConnectToBluetoothDevice(const std::string& address) = 0;
 
   // Returns true if bluetooth adapter is discovering bluetooth devices.
   virtual bool IsBluetoothDiscovering() = 0;
@@ -220,7 +248,7 @@ class SystemTrayDelegate {
   virtual void ActivateIMEProperty(const std::string& key) = 0;
 
   // Cancels ongoing drive operation.
-  virtual void CancelDriveOperation(const base::FilePath& file_path) = 0;
+  virtual void CancelDriveOperation(int32 operation_id) = 0;
 
   // Returns information about the ongoing drive operations.
   virtual void GetDriveOperationStatusList(
@@ -326,13 +354,23 @@ class SystemTrayDelegate {
   virtual void SetVolumeControlDelegate(
       scoped_ptr<VolumeControlDelegate> delegate) = 0;
 
-  // Returns the session start time, or a zero base::Time if no session start
-  // time is set.
-  virtual base::Time GetSessionStartTime() = 0;
+  // Retrieves the session start time. Returns |false| if the time is not set.
+  virtual bool GetSessionStartTime(base::TimeTicks* session_start_time) = 0;
 
-  // Returns the session length limit, or a zero base::TimeDelta if no session
-  // length limit is set.
-  virtual base::TimeDelta GetSessionLengthLimit() = 0;
+  // Retrieves the session length limit. Returns |false| if no limit is set.
+  virtual bool GetSessionLengthLimit(base::TimeDelta* session_length_limit) = 0;
+
+  // Get the system tray menu size in pixels (dependent on the language).
+  virtual int GetSystemTrayMenuWidth() = 0;
+
+  // Returns the duration formatted as a localized string.
+  // TODO(stevenjb): Move TimeFormat from src/chrome to src/ui so that it can be
+  // accessed without going through the delegate. crbug.com/222697
+  virtual base::string16 FormatTimeDuration(
+      const base::TimeDelta& delta) const = 0;
+
+  // Speaks the given text if spoken feedback is enabled.
+  virtual void MaybeSpeak(const std::string& utterance) const = 0;
 
   // Creates a dummy delegate for testing.
   static SystemTrayDelegate* CreateDummyDelegate();

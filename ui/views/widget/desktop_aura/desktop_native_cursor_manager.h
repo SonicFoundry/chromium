@@ -19,6 +19,7 @@ class CursorLoader;
 }
 
 namespace views {
+class DesktopCursorLoaderUpdater;
 
 namespace corewm {
 class NativeCursorManagerDelegate;
@@ -29,13 +30,15 @@ class NativeCursorManagerDelegate;
 class VIEWS_EXPORT DesktopNativeCursorManager
     : public views::corewm::NativeCursorManager {
  public:
-  explicit DesktopNativeCursorManager(aura::RootWindow* window);
+  DesktopNativeCursorManager(
+      aura::RootWindow* window,
+      scoped_ptr<DesktopCursorLoaderUpdater> cursor_loader_updater);
   virtual ~DesktopNativeCursorManager();
 
  private:
   // Overridden from views::corewm::NativeCursorManager:
-  virtual void SetDeviceScaleFactor(
-      float device_scale_factor,
+  virtual void SetDisplay(
+      const gfx::Display& display,
       views::corewm::NativeCursorManagerDelegate* delegate) OVERRIDE;
   virtual void SetCursor(
       gfx::NativeCursor cursor,
@@ -46,8 +49,10 @@ class VIEWS_EXPORT DesktopNativeCursorManager
   virtual void SetMouseEventsEnabled(
       bool enabled,
       views::corewm::NativeCursorManagerDelegate* delegate) OVERRIDE;
+  virtual void SetCursorResourceModule(const string16& module_name) OVERRIDE;
 
   aura::RootWindow* root_window_;
+  scoped_ptr<DesktopCursorLoaderUpdater> cursor_loader_updater_;
   scoped_ptr<ui::CursorLoader> cursor_loader_;
 
   DISALLOW_COPY_AND_ASSIGN(DesktopNativeCursorManager);

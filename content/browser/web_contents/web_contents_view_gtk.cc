@@ -100,7 +100,7 @@ WebContentsViewGtk::WebContentsViewGtk(
   gtk_widget_show(expanded_.get());
   drag_source_.reset(new WebDragSourceGtk(web_contents));
 
-  if (delegate_.get())
+  if (delegate_)
     delegate_->Initialize(expanded_.get(), &focus_store_);
 }
 
@@ -109,7 +109,7 @@ WebContentsViewGtk::~WebContentsViewGtk() {
 }
 
 gfx::NativeView WebContentsViewGtk::GetNativeView() const {
-  if (delegate_.get())
+  if (delegate_)
     return delegate_->GetNativeView();
 
   return expanded_.get();
@@ -151,7 +151,7 @@ void WebContentsViewGtk::OnTabCrashed(base::TerminationStatus status,
 void WebContentsViewGtk::Focus() {
   if (web_contents_->ShowingInterstitialPage()) {
     web_contents_->GetInterstitialPage()->Focus();
-  } else if (delegate_.get()) {
+  } else if (delegate_) {
     delegate_->Focus();
   } else {
     gtk_widget_grab_focus(GetContentNativeView());
@@ -225,11 +225,13 @@ RenderWidgetHostView* WebContentsViewGtk::CreateViewForWidget(
                         GDK_POINTER_MOTION_MASK);
   InsertIntoContentArea(content_view);
 
-  // Renderer target DnD.
-  drag_dest_.reset(new WebDragDestGtk(web_contents_, content_view));
-
-  if (delegate_.get())
-    drag_dest_->set_delegate(delegate_->GetDragDestDelegate());
+  // We don't want to change any state in this class for swapped out RVHs
+  // because they will not be visible at this time.
+  if (render_widget_host->IsRenderView()) {
+    RenderViewHost* rvh = RenderViewHost::From(render_widget_host);
+    if (!static_cast<RenderViewHostImpl*>(rvh)->is_swapped_out())
+      UpdateDragDest(rvh);
+  }
 
   return view;
 }
@@ -265,6 +267,10 @@ void WebContentsViewGtk::RenderViewCreated(RenderViewHost* host) {
 }
 
 void WebContentsViewGtk::RenderViewSwappedIn(RenderViewHost* host) {
+  UpdateDragDest(host);
+}
+
+void WebContentsViewGtk::SetOverscrollControllerEnabled(bool enabled) {
 }
 
 WebContents* WebContentsViewGtk::web_contents() {
@@ -296,6 +302,24 @@ void WebContentsViewGtk::InsertIntoContentArea(GtkWidget* widget) {
   gtk_container_add(GTK_CONTAINER(expanded_.get()), widget);
 }
 
+void WebContentsViewGtk::UpdateDragDest(RenderViewHost* host) {
+  gfx::NativeView content_view = host->GetView()->GetNativeView();
+
+  // If the host is already used by the drag_dest_, there's no point in deleting
+  // the old one to create an identical copy.
+  if (drag_dest_.get() && drag_dest_->widget() == content_view)
+    return;
+
+  // Clear the currently connected drag drop signals by deleting the old
+  // drag_dest_ before creating the new one.
+  drag_dest_.reset();
+  // Create the new drag_dest_.
+  drag_dest_.reset(new WebDragDestGtk(web_contents_, content_view));
+
+  if (delegate_)
+    drag_dest_->set_delegate(delegate_->GetDragDestDelegate());
+}
+
 // Called when the content view gtk widget is tabbed to, or after the call to
 // gtk_widget_child_focus() in TakeFocus(). We return true
 // and grab focus if we don't have it. The call to
@@ -304,7 +328,7 @@ void WebContentsViewGtk::InsertIntoContentArea(GtkWidget* widget) {
 gboolean WebContentsViewGtk::OnFocus(GtkWidget* widget,
                                      GtkDirectionType focus) {
   // Give our view wrapper first chance at this event.
-  if (delegate_.get()) {
+  if (delegate_) {
     gboolean return_value = FALSE;
     if (delegate_->OnNativeViewFocusEvent(widget, focus, &return_value))
       return return_value;
@@ -325,7 +349,7 @@ gboolean WebContentsViewGtk::OnFocus(GtkWidget* widget,
 void WebContentsViewGtk::ShowContextMenu(
     const ContextMenuParams& params,
     ContextMenuSourceType type) {
-  if (delegate_.get())
+  if (delegate_)
     delegate_->ShowContextMenu(params, type);
   else
     DLOG(ERROR) << "Cannot show context menus without a delegate.";
@@ -353,11 +377,11 @@ void WebContentsViewGtk::StartDragging(const WebDropData& drop_data,
 
   RenderWidgetHostViewGtk* view_gtk = static_cast<RenderWidgetHostViewGtk*>(
       web_contents_->GetRenderWidgetHostView());
-  if (!view_gtk || !view_gtk->GetLastMouseDown())
-    return;
-
-  drag_source_->StartDragging(drop_data, ops, view_gtk->GetLastMouseDown(),
-                              *image.bitmap(), image_offset);
+  if (!view_gtk || !view_gtk->GetLastMouseDown() ||
+      !drag_source_->StartDragging(drop_data, ops, view_gtk->GetLastMouseDown(),
+                                   *image.bitmap(), image_offset)) {
+    web_contents_->SystemDragEnded();
+  }
 }
 
 // -----------------------------------------------------------------------------

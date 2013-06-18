@@ -1,5 +1,7 @@
 include_rules = [
   "+chrome/app",  # The plugins use the theme library to get the sad plugin bitmap.
+  "+components/autofill/common",
+  "+components/autofill/renderer",
   "+components/visitedlink/renderer",
   "+content/public/renderer",
   "+extensions/common",
@@ -22,6 +24,8 @@ include_rules = [
 
   "+third_party/cld/encodings/compact_lang_det/win",
   "+third_party/npapi/bindings",
+  "+third_party/re2",
   "+third_party/smhasher",
   "+third_party/sqlite",
+  "+third_party/widevine",
 ]

@@ -5,8 +5,13 @@
 #ifndef UI_VIEWS_COREWM_NATIVE_CURSOR_MANAGER_H_
 #define UI_VIEWS_COREWM_NATIVE_CURSOR_MANAGER_H_
 
+#include "base/string16.h"
 #include "ui/views/corewm/native_cursor_manager_delegate.h"
 #include "ui/views/views_export.h"
+
+namespace gfx {
+class Display;
+}
 
 namespace views {
 namespace corewm {
@@ -20,8 +25,8 @@ class VIEWS_EXPORT NativeCursorManager {
   virtual ~NativeCursorManager() {}
 
   // A request to set the screen DPI. Can cause changes in the current cursor.
-  virtual void SetDeviceScaleFactor(
-      float device_scale_factor,
+  virtual void SetDisplay(
+      const gfx::Display& display,
       views::corewm::NativeCursorManagerDelegate* delegate) = 0;
 
   // A request to set the cursor to |cursor|. At minimum, implementer should
@@ -44,6 +49,10 @@ class VIEWS_EXPORT NativeCursorManager {
   virtual void SetMouseEventsEnabled(
       bool enabled,
       views::corewm::NativeCursorManagerDelegate* delegate) = 0;
+
+  // Used to pass the cursor resource module name to the cursor loader. This is
+  // typically used to load non system cursors.
+  virtual void SetCursorResourceModule(const string16& module_name) = 0;
 };
 
 }  // namespace corewm

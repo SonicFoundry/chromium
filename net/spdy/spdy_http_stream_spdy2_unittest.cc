@@ -7,18 +7,19 @@
 #include "crypto/ec_private_key.h"
 #include "crypto/ec_signature_creator.h"
 #include "crypto/signature_creator.h"
-#include "net/base/asn1_util.h"
 #include "net/base/capturing_net_log.h"
-#include "net/base/default_server_bound_cert_store.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/load_timing_info_test_util.h"
 #include "net/base/upload_data_stream.h"
 #include "net/base/upload_element_reader.h"
+#include "net/cert/asn1_util.h"
 #include "net/http/http_request_info.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
+#include "net/socket/next_proto.h"
 #include "net/spdy/spdy_session.h"
 #include "net/spdy/spdy_test_util_spdy2.h"
+#include "net/ssl/default_server_bound_cert_store.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using namespace net::test_spdy2;
@@ -58,7 +59,7 @@ void TestLoadTimingNotReused(const HttpStream& stream) {
 
 class SpdyHttpStreamSpdy2Test : public testing::Test {
  public:
-  SpdyHttpStreamSpdy2Test() {
+  SpdyHttpStreamSpdy2Test() : session_deps_(kProtoSPDY2) {
     session_deps_.net_log = &net_log_;
   }
 
@@ -172,7 +173,8 @@ TEST_F(SpdyHttpStreamSpdy2Test, SendRequest) {
 
   ASSERT_EQ(
       OK,
-      http_stream->InitializeStream(&request, net_log, CompletionCallback()));
+      http_stream->InitializeStream(&request, DEFAULT_PRIORITY,
+                                    net_log, CompletionCallback()));
   EXPECT_FALSE(http_stream->GetLoadTimingInfo(&load_timing_info));
 
   EXPECT_EQ(ERR_IO_PENDING, http_stream->SendRequest(headers, &response,
@@ -237,7 +239,8 @@ TEST_F(SpdyHttpStreamSpdy2Test, LoadTimingTwoRequests) {
       new SpdyHttpStream(session_.get(), true));
 
   ASSERT_EQ(OK,
-            http_stream1->InitializeStream(&request1, BoundNetLog(),
+            http_stream1->InitializeStream(&request1, DEFAULT_PRIORITY,
+                                           BoundNetLog(),
                                            CompletionCallback()));
   EXPECT_EQ(ERR_IO_PENDING, http_stream1->SendRequest(headers1, &response1,
                                                       callback1.callback()));
@@ -253,7 +256,8 @@ TEST_F(SpdyHttpStreamSpdy2Test, LoadTimingTwoRequests) {
       new SpdyHttpStream(session_.get(), true));
 
   ASSERT_EQ(OK,
-            http_stream2->InitializeStream(&request2, BoundNetLog(),
+            http_stream2->InitializeStream(&request2, DEFAULT_PRIORITY,
+                                           BoundNetLog(),
                                            CompletionCallback()));
   EXPECT_EQ(ERR_IO_PENDING, http_stream2->SendRequest(headers2, &response2,
                                                       callback2.callback()));
@@ -329,7 +333,8 @@ TEST_F(SpdyHttpStreamSpdy2Test, SendChunkedPost) {
   SpdyHttpStream http_stream(session_.get(), true);
   ASSERT_EQ(
       OK,
-      http_stream.InitializeStream(&request, net_log, CompletionCallback()));
+      http_stream.InitializeStream(&request, DEFAULT_PRIORITY,
+                                   net_log, CompletionCallback()));
 
   EXPECT_EQ(ERR_IO_PENDING, http_stream.SendRequest(
       headers, &response, callback.callback()));
@@ -395,9 +400,8 @@ TEST_F(SpdyHttpStreamSpdy2Test, DelayedSendChunkedPost) {
   BoundNetLog net_log;
   scoped_ptr<SpdyHttpStream> http_stream(
       new SpdyHttpStream(session_.get(), true));
-  ASSERT_EQ(OK, http_stream->InitializeStream(&request,
-                                              net_log,
-                                              CompletionCallback()));
+  ASSERT_EQ(OK, http_stream->InitializeStream(&request, DEFAULT_PRIORITY,
+                                              net_log, CompletionCallback()));
 
   HttpRequestHeaders headers;
   HttpResponseInfo response;
@@ -411,7 +415,7 @@ TEST_F(SpdyHttpStreamSpdy2Test, DelayedSendChunkedPost) {
   // Complete the initial request write and the first chunk.
   deterministic_data()->RunFor(2);
   ASSERT_TRUE(callback.have_result());
-  EXPECT_GT(callback.WaitForResult(), 0);
+  EXPECT_EQ(OK, callback.WaitForResult());
 
   // Now append the final two chunks which will enqueue two more writes.
   upload_stream.AppendChunk(kUploadData1, kUploadData1Size, false);
@@ -488,7 +492,8 @@ TEST_F(SpdyHttpStreamSpdy2Test, SpdyURLTest) {
   scoped_ptr<SpdyHttpStream> http_stream(new SpdyHttpStream(session_, true));
   ASSERT_EQ(
       OK,
-      http_stream->InitializeStream(&request, net_log, CompletionCallback()));
+      http_stream->InitializeStream(&request, DEFAULT_PRIORITY,
+                                    net_log, CompletionCallback()));
 
   EXPECT_EQ(ERR_IO_PENDING, http_stream->SendRequest(headers, &response,
                                                      callback.callback()));

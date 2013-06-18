@@ -4,6 +4,8 @@
 
 #include "content/public/test/render_view_test.h"
 
+#include "base/run_loop.h"
+#include "content/common/input_messages.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/common/renderer_preferences.h"
@@ -75,7 +77,7 @@ RenderViewTest::~RenderViewTest() {
 }
 
 void RenderViewTest::ProcessPendingMessages() {
-  msg_loop_.PostTask(FROM_HERE, MessageLoop::QuitClosure());
+  msg_loop_.PostTask(FROM_HERE, base::MessageLoop::QuitClosure());
   msg_loop_.Run();
 }
 
@@ -125,12 +127,14 @@ void RenderViewTest::GoForward(const WebKit::WebHistoryItem& item) {
 void RenderViewTest::SetUp() {
   // Subclasses can set the ContentClient's renderer before calling
   // RenderViewTest::SetUp().
-  if (!GetContentClient()->renderer())
-    GetContentClient()->set_renderer_for_testing(&content_renderer_client_);
+  ContentRendererClient* old_client =
+      SetRendererClientForTesting(&content_renderer_client_);
+  if (old_client)
+    SetRendererClientForTesting(old_client);
 
   // Subclasses can set render_thread_ with their own implementation before
   // calling RenderViewTest::SetUp().
-  if (!render_thread_.get())
+  if (!render_thread_)
     render_thread_.reset(new MockRenderThread());
   render_thread_->set_routing_id(kRouteId);
   render_thread_->set_surface_id(kSurfaceId);
@@ -163,7 +167,7 @@ void RenderViewTest::SetUp() {
   RenderViewImpl* view = RenderViewImpl::Create(
       kOpenerId,
       RendererPreferences(),
-      webkit_glue::WebPreferences(),
+      WebPreferences(),
       new SharedRenderViewCounter(0),
       kRouteId,
       kSurfaceId,
@@ -173,7 +177,8 @@ void RenderViewTest::SetUp() {
       false,
       1,
       WebKit::WebScreenInfo(),
-      AccessibilityModeOff);
+      AccessibilityModeOff,
+      true);
   view->AddRef();
   view_ = view;
 }
@@ -193,7 +198,7 @@ void RenderViewTest::TearDown() {
   // After telling the view to close and resetting mock_process_ we may get
   // some new tasks which need to be processed before shutting down WebKit
   // (http://crbug.com/21508).
-  msg_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   WebKit::shutdown();
 
@@ -211,13 +216,14 @@ void RenderViewTest::SendNativeKeyEvent(
 void RenderViewTest::SendWebKeyboardEvent(
     const WebKit::WebKeyboardEvent& key_event) {
   RenderViewImpl* impl = static_cast<RenderViewImpl*>(view_);
-  impl->OnMessageReceived(ViewMsg_HandleInputEvent(0, &key_event, false));
+  impl->OnMessageReceived(InputMsg_HandleInputEvent(0, &key_event, false));
 }
 
 void RenderViewTest::SendWebMouseEvent(
     const WebKit::WebMouseEvent& mouse_event) {
   RenderViewImpl* impl = static_cast<RenderViewImpl*>(view_);
-  impl->OnMessageReceived(ViewMsg_HandleInputEvent(0, &mouse_event, false));
+  impl->OnMessageReceived(
+      InputMsg_HandleInputEvent(0, &mouse_event, false));
 }
 
 const char* const kGetCoordinatesScript =
@@ -276,7 +282,7 @@ bool RenderViewTest::SimulateElementClick(const std::string& element_id) {
   mouse_event.y = bounds.CenterPoint().y();
   mouse_event.clickCount = 1;
   scoped_ptr<IPC::Message> input_message(
-      new ViewMsg_HandleInputEvent(0, &mouse_event, false));
+      new InputMsg_HandleInputEvent(0, &mouse_event, false));
   RenderViewImpl* impl = static_cast<RenderViewImpl*>(view_);
   impl->OnMessageReceived(*input_message);
   return true;
@@ -311,7 +317,7 @@ void RenderViewTest::Resize(gfx::Size new_size,
                             gfx::Rect resizer_rect,
                             bool is_fullscreen) {
   scoped_ptr<IPC::Message> resize_message(new ViewMsg_Resize(
-      0, new_size, new_size, resizer_rect, is_fullscreen));
+      0, new_size, new_size, 0.f, resizer_rect, is_fullscreen));
   OnMessageReceived(*resize_message);
 }
 

@@ -5,8 +5,8 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "base/string_number_conversions.h"
 #include "base/string_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/notifications/message_center_notification_manager.h"
@@ -25,13 +25,11 @@ class MessageCenterNotificationsTest : public InProcessBrowserTest {
  public:
   MessageCenterNotificationsTest() {}
 
-  virtual void SetUpCommandLine(CommandLine* command_line) {
+  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
     // This switch enables the new piping of Notifications through Message
     // Center.
-#if defined(ENABLE_MESSAGE_CENTER)
     command_line->AppendSwitch(
-        message_center::switches::kEnableRichNotifications);
-#endif
+      message_center::switches::kEnableRichNotifications);
   }
 
   MessageCenterNotificationManager* manager() {
@@ -49,19 +47,21 @@ class MessageCenterNotificationsTest : public InProcessBrowserTest {
    public:
     explicit TestDelegate(const std::string& id) : id_(id) {}
 
-    void Display() OVERRIDE { log_ += "Display_"; }
-    void Error() OVERRIDE { log_ += "Error_"; }
-    void Close(bool by_user) OVERRIDE {
+    virtual void Display() OVERRIDE { log_ += "Display_"; }
+    virtual void Error() OVERRIDE { log_ += "Error_"; }
+    virtual void Close(bool by_user) OVERRIDE {
       log_ += "Close_";
       log_ += ( by_user ? "by_user_" : "programmatically_");
     }
-    void Click() OVERRIDE { log_ += "Click_"; }
-    void ButtonClick(int button_index) OVERRIDE {
+    virtual void Click() OVERRIDE { log_ += "Click_"; }
+    virtual void ButtonClick(int button_index) OVERRIDE {
       log_ += "ButtonClick_";
       log_ += base::IntToString(button_index) + "_";
     }
-    std::string id() const OVERRIDE { return id_; }
-    content::RenderViewHost* GetRenderViewHost() const OVERRIDE { return NULL; }
+    virtual std::string id() const OVERRIDE { return id_; }
+    virtual content::RenderViewHost* GetRenderViewHost() const OVERRIDE {
+      return NULL;
+    }
 
     const std::string& log() { return log_; }
 
@@ -92,6 +92,10 @@ class MessageCenterNotificationsTest : public InProcessBrowserTest {
   }
 };
 
+// TODO(rsesek): Implement Message Center on Mac and get these tests passing
+// for real. http://crbug.com/179904
+#if !defined(OS_MACOSX)
+
 IN_PROC_BROWSER_TEST_F(MessageCenterNotificationsTest, RetrieveBaseParts) {
   // Make sure comamnd-line switch has an effect.
   EXPECT_TRUE(NotificationUIManager::DelegatesToMessageCenter());
@@ -120,9 +124,10 @@ IN_PROC_BROWSER_TEST_F(MessageCenterNotificationsTest, BasicDelegate) {
 IN_PROC_BROWSER_TEST_F(MessageCenterNotificationsTest, ButtonClickedDelegate) {
   TestDelegate* delegate;
   manager()->Add(CreateTestNotification("n", &delegate), profile());
-  message_center()->OnButtonClicked("n", 1);
+  message_center()->ClickOnNotificationButton("n", 1);
   // Verify that delegate accumulated correct log of events.
   EXPECT_EQ("Display_ButtonClick_1_", delegate->log());
   delegate->Release();
 }
 
+#endif  // !defined(OS_MACOSX)

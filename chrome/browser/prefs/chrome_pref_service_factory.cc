@@ -17,10 +17,9 @@
 #include "chrome/browser/policy/configuration_policy_pref_store.h"
 #include "chrome/browser/prefs/command_line_pref_store.h"
 #include "chrome/browser/prefs/pref_model_associator.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/prefs/pref_service_syncable_builder.h"
-#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/profile_error_dialog.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "grit/chromium_strings.h"
@@ -93,11 +92,6 @@ void PrepareBuilder(
 
 }  // namespace
 
-// TODO(joi): Find a better home for this.
-PrefService* PrefServiceFromBrowserContext(BrowserContext* context) {
-  return static_cast<Profile*>(context)->GetPrefs();
-}
-
 namespace chrome_prefs {
 
 PrefService* CreateLocalState(
@@ -122,7 +116,7 @@ PrefServiceSyncable* CreateProfilePrefs(
     base::SequencedTaskRunner* pref_io_task_runner,
     policy::PolicyService* policy_service,
     const scoped_refptr<PrefStore>& extension_prefs,
-    const scoped_refptr<PrefRegistrySyncable>& pref_registry,
+    const scoped_refptr<user_prefs::PrefRegistrySyncable>& pref_registry,
     bool async) {
   PrefServiceSyncableBuilder builder;
   PrepareBuilder(&builder,

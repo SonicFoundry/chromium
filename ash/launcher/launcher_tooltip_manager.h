@@ -6,8 +6,8 @@
 #define ASH_LAUNCHER_LAUNCHER_TOOLTIP_MANAGER_H_
 
 #include "ash/ash_export.h"
-#include "ash/shelf_types.h"
-#include "ash/wm/shelf_layout_manager.h"
+#include "ash/shelf/shelf_layout_manager.h"
+#include "ash/shelf/shelf_types.h"
 #include "base/basictypes.h"
 #include "base/string16.h"
 #include "ui/base/events/event_handler.h"
@@ -50,17 +50,17 @@ class ASH_EXPORT LauncherTooltipManager : public ui::EventHandler,
   void OnBubbleClosed(views::BubbleDelegateView* view);
 
   // Shows the tooltip after a delay.  It also has the appearing animation.
-  void ShowDelayed(views::View* anchor, const string16& text);
+  void ShowDelayed(views::View* anchor, const base::string16& text);
 
   // Shows the tooltip immediately.  It omits the appearing animation.
-  void ShowImmediately(views::View* anchor, const string16& text);
+  void ShowImmediately(views::View* anchor, const base::string16& text);
 
   // Closes the tooltip.
   void Close();
 
   // Changes the arrow location of the tooltip in case that the launcher
   // arrangement has changed.
-  void UpdateArrowLocation();
+  void UpdateArrow();
 
   // Resets the timer for the delayed showing |view_|.  If the timer isn't
   // running, it starts a new timer.
@@ -93,12 +93,12 @@ protected:
   void CancelHidingAnimation();
   void CloseSoon();
   void ShowInternal();
-  void CreateBubble(views::View* anchor, const string16& text);
+  void CreateBubble(views::View* anchor, const base::string16& text);
 
   LauncherTooltipBubble* view_;
   views::Widget* widget_;
   views::View* anchor_;
-  string16 text_;
+  base::string16 text_;
   scoped_ptr<base::Timer> timer_;
 
   ShelfLayoutManager* shelf_layout_manager_;

@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "ash/ash_export.h"
-#include "ash/shelf_types.h"
+#include "ash/shelf/shelf_types.h"
 #include "ash/system/user/login_status.h"
 #include "ash/wm/system_modal_container_event_filter_delegate.h"
 #include "base/basictypes.h"
@@ -64,10 +64,6 @@ class WindowModalityController;
 }
 }
 
-namespace message_center {
-class MessageCenter;
-}
-
 namespace ash {
 
 class AcceleratorController;
@@ -86,6 +82,7 @@ class PowerButtonController;
 class RootWindowHostFactory;
 class ScreenAsh;
 class SessionStateController;
+class SessionStateDelegate;
 class ShellDelegate;
 class ShellObserver;
 class SystemTray;
@@ -153,6 +150,7 @@ class ASH_EXPORT Shell
 
   // A shell must be explicitly created so that it can call |Init()| with the
   // delegate set. |delegate| can be NULL (if not required for initialization).
+  // Takes ownership of |delegate|.
   static Shell* CreateInstance(ShellDelegate* delegate);
 
   // Should never be called before |CreateInstance()|.
@@ -202,6 +200,10 @@ class ASH_EXPORT Shell
   // True if "launcher per display" feature  is enabled.
   static bool IsLauncherPerDisplayEnabled();
 
+  // True if an experimental maximize mode is enabled which forces browser and
+  // application windows to be maximized only.
+  static bool IsForcedMaximizeMode();
+
   void set_active_root_window(aura::RootWindow* active_root_window) {
     active_root_window_ = active_root_window;
   }
@@ -220,13 +222,6 @@ class ASH_EXPORT Shell
 
   // Returns app list window or NULL if it is not visible.
   aura::Window* GetAppListWindow();
-
-  // Returns true if a user is logged in whose session can be locked (i.e. the
-  // user has a password with which to unlock the session).
-  bool CanLockScreen();
-
-  // Returns true if the screen is locked.
-  bool IsScreenLocked() const;
 
   // Returns true if a system-modal dialog window is currently open.
   bool IsSystemModalWindowOpen() const;
@@ -284,14 +279,14 @@ class ASH_EXPORT Shell
   internal::DisplayManager* display_manager() {
     return display_manager_.get();
   }
+  views::corewm::InputMethodEventFilter* input_method_filter() {
+    return input_method_filter_.get();
+  }
   views::corewm::CompoundEventFilter* env_filter() {
     return env_filter_.get();
   }
   views::corewm::TooltipController* tooltip_controller() {
     return tooltip_controller_.get();
-  }
-  internal::TouchObserverHUD* touch_observer_hud() {
-    return touch_observer_hud_.get();
   }
   internal::EventRewriterEventFilter* event_rewriter_filter() {
     return event_rewriter_filter_.get();
@@ -339,6 +334,10 @@ class ASH_EXPORT Shell
 
   CapsLockDelegate* caps_lock_delegate() {
     return caps_lock_delegate_.get();
+  }
+
+  SessionStateDelegate* session_state_delegate() {
+    return session_state_delegate_.get();
   }
 
   HighContrastController* high_contrast_controller() {
@@ -428,7 +427,8 @@ class ASH_EXPORT Shell
   // Starts the animation that occurs on first login.
   void DoInitialWorkspaceAnimation();
 
-#if defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS) && defined(USE_X11)
+  // TODO(oshima): Move these objects to DisplayController.
   chromeos::OutputConfigurator* output_configurator() {
     return output_configurator_.get();
   }
@@ -438,14 +438,18 @@ class ASH_EXPORT Shell
   internal::DisplayErrorObserver* display_error_observer() {
     return display_error_observer_.get();
   }
-#endif  // defined(OS_CHROMEOS)
+#endif  // defined(OS_CHROMEOS) && defined(USE_X11)
 
   RootWindowHostFactory* root_window_host_factory() {
     return root_window_host_factory_.get();
   }
 
-  // MessageCenter is a global list of currently displayed notifications.
-  message_center::MessageCenter* message_center();
+  LauncherModel* launcher_model() {
+    return launcher_model_.get();
+  }
+
+  // Returns the launcher delegate, creating if necesary.
+  LauncherDelegate* GetLauncherDelegate();
 
  private:
   FRIEND_TEST_ALL_PREFIXES(ExtendedDesktopTest, TestCursor);
@@ -457,26 +461,15 @@ class ASH_EXPORT Shell
 
   typedef std::pair<aura::Window*, gfx::Rect> WindowAndBoundsPair;
 
+  // Takes ownership of |delegate|.
   explicit Shell(ShellDelegate* delegate);
   virtual ~Shell();
 
   void Init();
 
-  LauncherModel* launcher_model() {
-    return launcher_model_.get();
-  }
-
-  // Returns the launcher delegate, creating if necesary.
-  LauncherDelegate* GetLauncherDelegate();
-
   // Initializes the root window and root window controller so that it
   // can host browser windows.
   void InitRootWindowController(internal::RootWindowController* root);
-
-  // Initializes the layout managers and event filters specific for
-  // primary display.
-  void InitLayoutManagersForPrimaryDisplay(
-      internal::RootWindowController* root_window_controller);
 
   // ash::internal::SystemModalContainerEventFilterDelegate overrides:
   virtual bool CanWindowReceiveEvents(aura::Window* window) OVERRIDE;
@@ -517,6 +510,7 @@ class ASH_EXPORT Shell
   scoped_ptr<SystemTrayNotifier> system_tray_notifier_;
   scoped_ptr<UserWallpaperDelegate> user_wallpaper_delegate_;
   scoped_ptr<CapsLockDelegate> caps_lock_delegate_;
+  scoped_ptr<SessionStateDelegate> session_state_delegate_;
   scoped_ptr<LauncherDelegate> launcher_delegate_;
 
   scoped_ptr<LauncherModel> launcher_model_;
@@ -572,13 +566,9 @@ class ASH_EXPORT Shell
   // An event filter that pre-handles all key events to send them to an IME.
   scoped_ptr<views::corewm::InputMethodEventFilter> input_method_filter_;
 
-  // An event filter that silently keeps track of all touch events and controls
-  // a heads-up display. This is enabled only if --ash-touch-hud flag is used.
-  scoped_ptr<internal::TouchObserverHUD> touch_observer_hud_;
-
   scoped_ptr<internal::DisplayManager> display_manager_;
 
-#if defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS) && defined(USE_X11)
   // Controls video output device state.
   scoped_ptr<chromeos::OutputConfigurator> output_configurator_;
   scoped_ptr<internal::OutputConfiguratorAnimation>
@@ -587,9 +577,7 @@ class ASH_EXPORT Shell
 
   // Receives output change events and udpates the display manager.
   scoped_ptr<internal::DisplayChangeObserverX11> display_change_observer_;
-#endif  // defined(OS_CHROMEOS)
-
-  scoped_ptr<message_center::MessageCenter> message_center_;
+#endif  // defined(OS_CHROMEOS) && defined(USE_X11)
 
   // |native_cursor_manager_| is owned by |cursor_manager_|, but we keep a
   // pointer to vend to test code.

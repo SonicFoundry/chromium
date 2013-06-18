@@ -34,7 +34,6 @@
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/link.h"
 #include "ui/views/controls/link_listener.h"
-#include "ui/views/controls/menu/menu_model_adapter.h"
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/controls/table/table_grouper.h"
 #include "ui/views/controls/table/table_view.h"
@@ -43,6 +42,10 @@
 #include "ui/views/layout/layout_constants.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/dialog_delegate.h"
+
+#if defined(USE_ASH)
+#include "ash/wm/window_util.h"
+#endif
 
 #if defined(OS_WIN)
 #include "win8/util/win8_util.h"
@@ -247,7 +250,7 @@ class TaskManagerView : public views::ButtonListener,
   virtual bool GetAcceleratorForCommandId(
       int command_id,
       ui::Accelerator* accelerator) OVERRIDE;
-  virtual void ExecuteCommand(int id) OVERRIDE;
+  virtual void ExecuteCommand(int id, int event_flags) OVERRIDE;
 
  private:
   // Creates the child controls.
@@ -353,6 +356,14 @@ void TaskManagerView::Init() {
   columns_.push_back(ui::TableColumn(IDS_TASK_MANAGER_PROCESS_ID_COLUMN,
                                      ui::TableColumn::RIGHT, -1, 0));
   columns_.back().sortable = true;
+#if defined(OS_WIN)
+  columns_.push_back(ui::TableColumn(IDS_TASK_MANAGER_GDI_HANDLES_COLUMN,
+                                     ui::TableColumn::RIGHT, -1, 0));
+  columns_.back().sortable = true;
+  columns_.push_back(ui::TableColumn(IDS_TASK_MANAGER_USER_HANDLES_COLUMN,
+                                     ui::TableColumn::RIGHT, -1, 0));
+  columns_.back().sortable = true;
+#endif
   columns_.push_back(ui::TableColumn(
       IDS_TASK_MANAGER_WEBCORE_IMAGE_CACHE_COLUMN,
       ui::TableColumn::RIGHT, -1, 0));
@@ -379,7 +390,7 @@ void TaskManagerView::Init() {
   columns_.back().sortable = true;
 
   tab_table_ = new views::TableView(
-      table_model_.get(), columns_, views::ICON_AND_TEXT, false, true, true);
+      table_model_.get(), columns_, views::ICON_AND_TEXT, false);
   tab_table_->SetGrouper(table_model_.get());
   if (highlight_background_resources_) {
     scoped_ptr<BackgroundPainter> painter(
@@ -406,6 +417,8 @@ void TaskManagerView::Init() {
       IDS_TASK_MANAGER_JAVASCRIPT_MEMORY_ALLOCATED_COLUMN, false);
   tab_table_->SetColumnVisibility(IDS_TASK_MANAGER_GOATS_TELEPORTED_COLUMN,
                                   false);
+  tab_table_->SetColumnVisibility(IDS_TASK_MANAGER_GDI_HANDLES_COLUMN, false);
+  tab_table_->SetColumnVisibility(IDS_TASK_MANAGER_USER_HANDLES_COLUMN, false);
 
   UpdateStatsCounters();
   tab_table_->SetObserver(this);
@@ -484,9 +497,12 @@ void TaskManagerView::Layout() {
   bool new_style = views::DialogDelegate::UseNewStyle();
   gfx::Size size = kill_button_->GetPreferredSize();
   gfx::Rect parent_bounds = parent()->GetContentsBounds();
-  int x = width() - size.width() - (new_style ? 0 : views::kPanelHorizMargin);
-  int y_buttons = new_style ? GetLocalBounds().bottom() - size.height() :
-      parent_bounds.bottom() - size.height() - views::kButtonVEdgeMargin;
+  const int horizontal_margin =
+      new_style ? views::kButtonHEdgeMarginNew : views::kPanelHorizMargin;
+  const int vertical_margin =
+      new_style ? views::kButtonVEdgeMarginNew : views::kButtonVEdgeMargin;
+  int x = width() - size.width() - horizontal_margin;
+  int y_buttons = parent_bounds.bottom() - size.height() - vertical_margin;
   kill_button_->SetBounds(x, y_buttons, size.width(), size.height());
 
   if (purge_memory_button_) {
@@ -498,13 +514,13 @@ void TaskManagerView::Layout() {
   }
 
   size = about_memory_link_->GetPreferredSize();
-  about_memory_link_->SetBounds(new_style ? 0 : views::kPanelHorizMargin,
+  about_memory_link_->SetBounds(
+      horizontal_margin,
       y_buttons + (kill_button_->height() - size.height()) / 2,
       size.width(), size.height());
 
   gfx::Rect rect = GetLocalBounds();
-  if (!new_style)
-    rect.Inset(views::kPanelHorizMargin, views::kPanelVertMargin);
+  rect.Inset(horizontal_margin, views::kPanelVertMargin);
   rect.Inset(0, 0, 0,
              kill_button_->height() + views::kUnrelatedControlVerticalSpacing);
   tab_table_parent_->SetBoundsRect(rect);
@@ -521,7 +537,10 @@ void TaskManagerView::Show(bool highlight_background_resources,
   // In Windows Metro it's not good to open this native window.
   DCHECK(!win8::IsSingleWindowMetroMode());
 #endif
-  const chrome::HostDesktopType desktop_type = browser->host_desktop_type();
+  // In ash we can come here through the ChromeShellDelegate. If there is no
+  // browser window at that time of the call, browser could be passed as NULL.
+  const chrome::HostDesktopType desktop_type =
+      browser ? browser->host_desktop_type() : chrome::HOST_DESKTOP_TYPE_ASH;
 
   if (instance_) {
     if (instance_->highlight_background_resources_ !=
@@ -535,8 +554,13 @@ void TaskManagerView::Show(bool highlight_background_resources,
     }
   }
   instance_ = new TaskManagerView(highlight_background_resources, desktop_type);
-  DialogDelegateView::CreateDialogWidget(instance_,
-      browser->window()->GetNativeWindow(), NULL);
+  gfx::NativeWindow window =
+      browser ? browser->window()->GetNativeWindow() : NULL;
+#if defined(USE_ASH)
+  if (!window)
+    window = ash::wm::GetActiveWindow();
+#endif
+  DialogDelegateView::CreateDialogWidget(instance_, window, NULL);
   instance_->InitAlwaysOnTopState();
   instance_->model_->StartUpdating();
   instance_->GetWidget()->Show();
@@ -665,8 +689,7 @@ void TaskManagerView::ShowContextMenuForView(views::View* source,
        i != columns_.end(); ++i) {
     menu_model.AddCheckItem(i->id, l10n_util::GetStringUTF16(i->id));
   }
-  views::MenuModelAdapter menu_adapter(&menu_model);
-  menu_runner_.reset(new views::MenuRunner(menu_adapter.CreateMenu()));
+  menu_runner_.reset(new views::MenuRunner(&menu_model));
   if (menu_runner_->RunMenuAt(GetWidget(), NULL, gfx::Rect(point, gfx::Size()),
                               views::MenuItemView::TOPLEFT,
                               views::MenuRunner::CONTEXT_MENU) ==
@@ -688,7 +711,7 @@ bool TaskManagerView::GetAcceleratorForCommandId(
   return false;
 }
 
-void TaskManagerView::ExecuteCommand(int id) {
+void TaskManagerView::ExecuteCommand(int id, int event_flags) {
   tab_table_->SetColumnVisibility(id, !tab_table_->IsColumnVisible(id));
 }
 
@@ -753,12 +776,8 @@ bool TaskManagerView::GetSavedAlwaysOnTopState(bool* always_on_top) const {
 namespace chrome {
 
 // Declared in browser_dialogs.h so others don't need to depend on our header.
-void ShowTaskManager(Browser* browser) {
-  TaskManagerView::Show(false, browser);
-}
-
-void ShowBackgroundPages(Browser* browser) {
-  TaskManagerView::Show(true, browser);
+void ShowTaskManager(Browser* browser, bool highlight_background_resources) {
+  TaskManagerView::Show(highlight_background_resources, browser);
 }
 
 }  // namespace chrome

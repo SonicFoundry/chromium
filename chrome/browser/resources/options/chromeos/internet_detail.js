@@ -261,11 +261,14 @@ cr.define('options.internet', function() {
       $('auto-proxy').addEventListener('click', this.disableManualProxy_);
       $('proxy-all-protocols').addEventListener('click',
                                                 this.toggleSingleProxy_);
+      $('proxy-use-pac-url').addEventListener('change',
+                                              this.handleAutoConfigProxy_);
 
       observePrefsUI($('direct-proxy'));
       observePrefsUI($('manual-proxy'));
       observePrefsUI($('auto-proxy'));
       observePrefsUI($('proxy-all-protocols'));
+      observePrefsUI($('proxy-use-pac-url'));
 
       $('ip-automatic-configuration-checkbox').addEventListener('click',
         this.handleIpAutoConfig_);
@@ -275,6 +278,18 @@ cr.define('options.internet', function() {
         this.handleNameServerTypeChange_);
       $('user-dns-radio').addEventListener('click',
         this.handleNameServerTypeChange_);
+
+      // We only load this string if we have the string data available
+      // because the proxy settings page on the login screen re-uses the
+      // proxy sub-page from the internet options, and it doesn't ever
+      // show the DNS settings, so we don't need this string there.
+      // The string isn't available because
+      // chrome://settings-frame/strings.js (where the string is
+      // stored) is not accessible from the login screen.
+      if (loadTimeData.data) {
+        $('google-dns-label').innerHTML =
+          loadTimeData.getString('googleNameServers');
+      }
     },
 
     /**
@@ -387,7 +402,7 @@ cr.define('options.internet', function() {
      * @private
      */
     updateProxyBannerVisibility_: function() {
-      var bannerDiv = $('info-banner');
+      var bannerDiv = $('network-proxy-info-banner');
       // Show banner and determine its message if necessary.
       var controlledBy = $('direct-proxy').controlledBy;
       if (!controlledBy || controlledBy == '') {
@@ -418,13 +433,26 @@ cr.define('options.internet', function() {
     },
 
     /**
+     * Handler for when the user clicks on the checkbox to enter
+     * auto configuration URL.
+     * @private
+     * @param {Event} e Click Event.
+     */
+    handleAutoConfigProxy_: function(e) {
+      $('proxy-pac-url').disabled = !$('proxy-use-pac-url').checked;
+    },
+
+    /**
      * Handler for selecting a radio button that will disable the manual
      * controls.
      * @private
      * @param {Event} e Click event.
      */
     disableManualProxy_: function(e) {
-      $('advanced-config').hidden = true;
+      $('ignored-host-list').disabled = true;
+      $('new-host').disabled = true;
+      $('remove-host').disabled = true;
+      $('add-host').disabled = true;
       $('proxy-all-protocols').disabled = true;
       $('proxy-host-name').disabled = true;
       $('proxy-host-port').disabled = true;
@@ -436,8 +464,12 @@ cr.define('options.internet', function() {
       $('ftp-proxy-port').disabled = true;
       $('socks-host').disabled = true;
       $('socks-port').disabled = true;
-      $('proxy-config').disabled = $('auto-proxy').disabled ||
-                                   !$('auto-proxy').checked;
+      $('proxy-use-pac-url').disabled = $('auto-proxy').disabled ||
+                                        !$('auto-proxy').checked;
+      $('proxy-pac-url').disabled = $('proxy-use-pac-url').disabled ||
+                                    !$('proxy-use-pac-url').checked;
+      $('auto-proxy-parms').hidden = !$('auto-proxy').checked;
+      $('manual-proxy-parms').hidden = !$('manual-proxy').checked;
     },
 
     /**
@@ -447,24 +479,27 @@ cr.define('options.internet', function() {
      * @param {Event} e Click event.
      */
     enableManualProxy_: function(e) {
-      $('advanced-config').hidden = false;
       $('ignored-host-list').redraw();
-      var all_disabled = $('manual-proxy').disabled;
-      $('new-host').disabled = all_disabled;
-      $('remove-host').disabled = all_disabled;
-      $('add-host').disabled = all_disabled;
-      $('proxy-all-protocols').disabled = all_disabled;
-      $('proxy-host-name').disabled = all_disabled;
-      $('proxy-host-port').disabled = all_disabled;
-      $('proxy-host-single-name').disabled = all_disabled;
-      $('proxy-host-single-port').disabled = all_disabled;
-      $('secure-proxy-host-name').disabled = all_disabled;
-      $('secure-proxy-port').disabled = all_disabled;
-      $('ftp-proxy').disabled = all_disabled;
-      $('ftp-proxy-port').disabled = all_disabled;
-      $('socks-host').disabled = all_disabled;
-      $('socks-port').disabled = all_disabled;
-      $('proxy-config').disabled = true;
+      var allDisabled = $('manual-proxy').disabled;
+      $('ignored-host-list').disabled = allDisabled;
+      $('new-host').disabled = allDisabled;
+      $('remove-host').disabled = allDisabled;
+      $('add-host').disabled = allDisabled;
+      $('proxy-all-protocols').disabled = allDisabled;
+      $('proxy-host-name').disabled = allDisabled;
+      $('proxy-host-port').disabled = allDisabled;
+      $('proxy-host-single-name').disabled = allDisabled;
+      $('proxy-host-single-port').disabled = allDisabled;
+      $('secure-proxy-host-name').disabled = allDisabled;
+      $('secure-proxy-port').disabled = allDisabled;
+      $('ftp-proxy').disabled = allDisabled;
+      $('ftp-proxy-port').disabled = allDisabled;
+      $('socks-host').disabled = allDisabled;
+      $('socks-port').disabled = allDisabled;
+      $('proxy-use-pac-url').disabled = true;
+      $('proxy-pac-url').disabled = true;
+      $('auto-proxy-parms').hidden = !$('auto-proxy').checked;
+      $('manual-proxy-parms').hidden = !$('manual-proxy').checked;
     },
   };
 
@@ -533,6 +568,13 @@ cr.define('options.internet', function() {
     updateHidden('#details-internet-page .action-area', true);
     detailsPage.updateControls();
     detailsPage.visible = true;
+  };
+
+  /**
+   * Initializes even handling for keyboard driven flow.
+   */
+  DetailsInternetPage.initializeKeyboardFlow = function() {
+    keyboard.initializeKeyboardFlow();
   };
 
   DetailsInternetPage.updateProxySettings = function(type) {
@@ -990,6 +1032,7 @@ cr.define('options.internet', function() {
       $('hardware-revision').textContent = data.hardwareRevision;
       $('prl-version').textContent = data.prlVersion;
       $('meid').textContent = data.meid;
+      $('iccid').textContent = data.iccid;
       $('imei').textContent = data.imei;
       $('mdn').textContent = data.mdn;
       $('esn').textContent = data.esn;

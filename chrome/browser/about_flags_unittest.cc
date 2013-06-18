@@ -135,9 +135,30 @@ class AboutFlagsTest : public ::testing::Test {
   TestingPrefServiceSimple prefs_;
 };
 
+
+TEST_F(AboutFlagsTest, NoChangeNoRestart) {
+  EXPECT_FALSE(IsRestartNeededToCommitChanges());
+  SetExperimentEnabled(&prefs_, kFlags1, false);
+  EXPECT_FALSE(IsRestartNeededToCommitChanges());
+}
+
 TEST_F(AboutFlagsTest, ChangeNeedsRestart) {
   EXPECT_FALSE(IsRestartNeededToCommitChanges());
   SetExperimentEnabled(&prefs_, kFlags1, true);
+  EXPECT_TRUE(IsRestartNeededToCommitChanges());
+}
+
+TEST_F(AboutFlagsTest, MultiFlagChangeNeedsRestart) {
+  const Experiment& experiment = kExperiments[3];
+  ASSERT_EQ(kFlags4, experiment.internal_name);
+  EXPECT_FALSE(IsRestartNeededToCommitChanges());
+  // Enable the 2nd choice of the multi-value.
+  SetExperimentEnabled(&prefs_, experiment.NameForChoice(2), true);
+  EXPECT_TRUE(IsRestartNeededToCommitChanges());
+  testing::ClearState();
+  EXPECT_FALSE(IsRestartNeededToCommitChanges());
+  // Enable the default choice now.
+  SetExperimentEnabled(&prefs_, experiment.NameForChoice(0), true);
   EXPECT_TRUE(IsRestartNeededToCommitChanges());
 }
 
@@ -246,7 +267,8 @@ TEST_F(AboutFlagsTest, PersistAndPrune) {
   EXPECT_FALSE(command_line.HasSwitch(kSwitch3));
 
   // Experiment 3 should show still be persisted in preferences though.
-  scoped_ptr<ListValue> switch_prefs(GetFlagsExperimentsData(&prefs_));
+  scoped_ptr<ListValue> switch_prefs(
+      GetFlagsExperimentsData(&prefs_, kOwnerAccessToFlags));
   ASSERT_TRUE(switch_prefs.get());
   EXPECT_EQ(arraysize(kExperiments), switch_prefs->GetSize());
 }
@@ -264,7 +286,7 @@ TEST_F(AboutFlagsTest, CheckValues) {
   // Convert the flags to switches.
   ConvertFlagsToSwitches(&prefs_, &command_line);
   EXPECT_TRUE(command_line.HasSwitch(kSwitch1));
-  EXPECT_EQ(std::string(""), command_line.GetSwitchValueASCII(kSwitch1));
+  EXPECT_EQ(std::string(), command_line.GetSwitchValueASCII(kSwitch1));
   EXPECT_TRUE(command_line.HasSwitch(kSwitch2));
   EXPECT_EQ(std::string(kValueForSwitch2),
             command_line.GetSwitchValueASCII(kSwitch2));
@@ -296,7 +318,8 @@ TEST_F(AboutFlagsTest, CheckValues) {
 #endif
 
   // And it should persist
-  scoped_ptr<ListValue> switch_prefs(GetFlagsExperimentsData(&prefs_));
+  scoped_ptr<ListValue> switch_prefs(
+      GetFlagsExperimentsData(&prefs_, kOwnerAccessToFlags));
   ASSERT_TRUE(switch_prefs.get());
   EXPECT_EQ(arraysize(kExperiments), switch_prefs->GetSize());
 }

@@ -1054,7 +1054,7 @@ void TabStripGtk::TabDetachedAt(WebContents* contents, int index) {
 void TabStripGtk::ActiveTabChanged(WebContents* old_contents,
                                    WebContents* new_contents,
                                    int index,
-                                   bool user_gesture) {
+                                   int reason) {
   TRACE_EVENT0("ui::gtk", "TabStripGtk::ActiveTabChanged");
   ReStack();
 }
@@ -1782,8 +1782,8 @@ bool TabStripGtk::CompleteDrop(const guchar* data, bool is_plain_text) {
   if (is_plain_text) {
     AutocompleteMatch match;
     AutocompleteClassifierFactory::GetForProfile(model_->profile())->Classify(
-        UTF8ToUTF16(reinterpret_cast<const char*>(data)), string16(),
-        false, false, &match, NULL);
+        UTF8ToUTF16(reinterpret_cast<const char*>(data)), false, false, &match,
+        NULL);
     url = match.destination_url;
   } else {
     std::string url_string(reinterpret_cast<const char*>(data));

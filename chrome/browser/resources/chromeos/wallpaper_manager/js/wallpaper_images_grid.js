@@ -12,10 +12,11 @@ cr.define('wallpapers', function() {
 
   /**
    * Creates a new wallpaper thumbnails grid item.
-   * @param {{baseURL: string, dynamicURL: string, layout: string,
-   *          author: string, authorWebsite: string, availableOffline: boolean}}
-   *     wallpaperInfo Wallpaper baseURL, dynamicURL, layout, author and
-   *     author website.
+   * @param {{baseURL: string, layout: string, source: string,
+   *          availableOffline: boolean, opt_dynamicURL: string,
+   *          opt_author: string, opt_authorWebsite: string}}
+   *     wallpaperInfo Wallpaper data item in WallpaperThumbnailsGrid's data
+   *     model.
    * @constructor
    * @extends {cr.ui.GridItem}
    */
@@ -38,37 +39,78 @@ cr.define('wallpapers', function() {
       cr.defineProperty(imageEl, 'offline', cr.PropertyKind.BOOL_ATTR);
       imageEl.offline = this.dataItem.availableOffline;
       this.appendChild(imageEl);
-
       var self = this;
-      chrome.wallpaperPrivate.getThumbnail(this.dataItem.baseURL, 'ONLINE',
-                                           function(data) {
-        if (data) {
-          var blob = new Blob([new Int8Array(data)], {'type' : 'image\/png'});
-          imageEl.src = window.URL.createObjectURL(blob);
-          imageEl.addEventListener('load', function(e) {
-            window.URL.revokeObjectURL(this.src);
+
+      switch (this.dataItem.source) {
+        case Constants.WallpaperSourceEnum.AddNew:
+          this.id = 'add-new';
+          this.addEventListener('click', function(e) {
+            $('wallpaper-selection-container').hidden = false;
           });
-        } else {
-          var xhr = new XMLHttpRequest();
-          xhr.open('GET', self.dataItem.baseURL + ThumbnailSuffix, true);
-          xhr.responseType = 'arraybuffer';
-          xhr.send(null);
-          xhr.addEventListener('load', function(e) {
-            if (xhr.status === 200) {
-              chrome.wallpaperPrivate.saveThumbnail(self.dataItem.baseURL,
-                                                    xhr.response);
-              var blob = new Blob([new Int8Array(xhr.response)],
-                                  {'type' : 'image\/png'});
+          break;
+        case Constants.WallpaperSourceEnum.Custom:
+          var errorHandler = function(e) {
+            console.error('Can not access file system.');
+          };
+          var wallpaperDirectories = WallpaperDirectories.getInstance();
+          var getThumbnail = function(fileName) {
+            var setURL = function(fileEntry) {
+              imageEl.src = fileEntry.toURL();
+            };
+            var fallback = function() {
+              wallpaperDirectories.getDirectory(WallpaperDirNameEnum.ORIGINAL,
+                                          function(dirEntry) {
+                dirEntry.getFile(fileName, {create: false}, setURL,
+                                 errorHandler);
+              }, errorHandler);
+            };
+            var success = function(dirEntry) {
+              dirEntry.getFile(fileName, {create: false}, setURL, fallback);
+            };
+            wallpaperDirectories.getDirectory(WallpaperDirNameEnum.THUMBNAIL,
+                                              success,
+                                              errorHandler);
+          }
+          getThumbnail(self.dataItem.baseURL);
+          break;
+        case Constants.WallpaperSourceEnum.Online:
+          chrome.wallpaperPrivate.getThumbnail(this.dataItem.baseURL,
+                                               this.dataItem.source,
+                                               function(data) {
+            if (data) {
+              var blob = new Blob([new Int8Array(data)],
+                                  {'type': 'image\/png'});
               imageEl.src = window.URL.createObjectURL(blob);
-              // TODO(bshe): We currently use empty div to reserve space for
-              // thumbnail. Use a placeholder like "loading" image may better.
               imageEl.addEventListener('load', function(e) {
                 window.URL.revokeObjectURL(this.src);
               });
+            } else if (self.dataItem.source ==
+                       Constants.WallpaperSourceEnum.Online) {
+              var xhr = new XMLHttpRequest();
+              xhr.open('GET', self.dataItem.baseURL + ThumbnailSuffix, true);
+              xhr.responseType = 'arraybuffer';
+              xhr.send(null);
+              xhr.addEventListener('load', function(e) {
+                if (xhr.status === 200) {
+                  chrome.wallpaperPrivate.saveThumbnail(self.dataItem.baseURL,
+                                                        xhr.response);
+                  var blob = new Blob([new Int8Array(xhr.response)],
+                                      {'type' : 'image\/png'});
+                  imageEl.src = window.URL.createObjectURL(blob);
+                  // TODO(bshe): We currently use empty div to reserve space for
+                  // thumbnail. Use a placeholder like "loading" image may
+                  // better.
+                  imageEl.addEventListener('load', function(e) {
+                    window.URL.revokeObjectURL(this.src);
+                  });
+                }
+              });
             }
           });
-        }
-      });
+          break;
+        default:
+          console.error('Unsupported image source.');
+      }
     },
   };
 

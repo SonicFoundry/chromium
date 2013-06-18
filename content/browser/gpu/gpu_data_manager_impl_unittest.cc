@@ -2,14 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/command_line.h"
 #include "base/message_loop.h"
 #include "base/run_loop.h"
 #include "base/time.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/public/browser/gpu_data_manager_observer.h"
+#include "content/public/common/gpu_feature_type.h"
 #include "content/public/common/gpu_info.h"
 #include "googleurl/src/gurl.h"
+#include "gpu/command_buffer/service/gpu_switches.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#define LONG_STRING_CONST(...) #__VA_ARGS__
 
 namespace content {
 namespace {
@@ -94,7 +99,7 @@ class GpuDataManagerImplTest : public testing::Test {
   void TestUnblockingDomainFrom3DAPIs(
       GpuDataManagerImpl::DomainGuilt guilt_level);
 
-  MessageLoop message_loop_;
+  base::MessageLoop message_loop_;
 };
 
 // We use new method instead of GetInstance() method because we want
@@ -107,145 +112,158 @@ TEST_F(GpuDataManagerImplTest, GpuSideBlacklisting) {
   // access, to be on the safe side.
   ScopedGpuDataManagerImpl manager;
   ASSERT_TRUE(manager.get());
-  EXPECT_EQ(0, manager->GetBlacklistedFeatures());
-  EXPECT_TRUE(manager->GpuAccessAllowed());
+  EXPECT_EQ(0u, manager->GetBlacklistedFeatureCount());
+  std::string reason;
+  EXPECT_TRUE(manager->GpuAccessAllowed(&reason));
+  EXPECT_TRUE(reason.empty());
 
-  const std::string blacklist_json =
-      "{\n"
-      "  \"name\": \"gpu blacklist\",\n"
-      "  \"version\": \"0.1\",\n"
-      "  \"entries\": [\n"
-      "    {\n"
-      "      \"id\": 1,\n"
-      "      \"blacklist\": [\n"
-      "        \"webgl\"\n"
-      "      ]\n"
-      "    },\n"
-      "    {\n"
-      "      \"id\": 2,\n"
-      "      \"gl_renderer\": {\n"
-      "        \"op\": \"contains\",\n"
-      "        \"value\": \"GeForce\"\n"
-      "      },\n"
-      "      \"blacklist\": [\n"
-      "        \"accelerated_2d_canvas\"\n"
-      "      ]\n"
-      "    }\n"
-      "  ]\n"
-      "}";
+  const std::string blacklist_json = LONG_STRING_CONST(
+      {
+        "name": "gpu blacklist",
+        "version": "0.1",
+        "entries": [
+          {
+            "id": 1,
+            "features": [
+              "webgl"
+            ]
+          },
+          {
+            "id": 2,
+            "gl_renderer": {
+              "op": "contains",
+              "value": "GeForce"
+            },
+            "features": [
+              "accelerated_2d_canvas"
+            ]
+          }
+        ]
+      }
+  );
 
   GPUInfo gpu_info;
   gpu_info.gpu.vendor_id = 0x10de;
   gpu_info.gpu.device_id = 0x0640;
   manager->InitializeForTesting(blacklist_json, gpu_info);
 
-  EXPECT_TRUE(manager->GpuAccessAllowed());
-  EXPECT_EQ(GPU_FEATURE_TYPE_WEBGL, manager->GetBlacklistedFeatures());
+  EXPECT_TRUE(manager->GpuAccessAllowed(&reason));
+  EXPECT_TRUE(reason.empty());
+  EXPECT_EQ(1u, manager->GetBlacklistedFeatureCount());
+  EXPECT_TRUE(manager->IsFeatureBlacklisted(GPU_FEATURE_TYPE_WEBGL));
 
   gpu_info.gl_vendor = "NVIDIA";
   gpu_info.gl_renderer = "NVIDIA GeForce GT 120";
   manager->UpdateGpuInfo(gpu_info);
-  EXPECT_FALSE(manager->GpuAccessAllowed());
-  EXPECT_EQ(GPU_FEATURE_TYPE_WEBGL |
-            GPU_FEATURE_TYPE_ACCELERATED_2D_CANVAS,
-            manager->GetBlacklistedFeatures());
+  EXPECT_FALSE(manager->GpuAccessAllowed(&reason));
+  EXPECT_FALSE(reason.empty());
+  EXPECT_EQ(2u, manager->GetBlacklistedFeatureCount());
+  EXPECT_TRUE(manager->IsFeatureBlacklisted(GPU_FEATURE_TYPE_WEBGL));
+  EXPECT_TRUE(manager->IsFeatureBlacklisted(
+      GPU_FEATURE_TYPE_ACCELERATED_2D_CANVAS));
 }
 
 TEST_F(GpuDataManagerImplTest, GpuSideExceptions) {
   ScopedGpuDataManagerImpl manager;
   ASSERT_TRUE(manager.get());
-  EXPECT_EQ(0, manager->GetBlacklistedFeatures());
-  EXPECT_TRUE(manager->GpuAccessAllowed());
+  EXPECT_EQ(0u, manager->GetBlacklistedFeatureCount());
+  EXPECT_TRUE(manager->GpuAccessAllowed(NULL));
 
-  const std::string blacklist_json =
-      "{\n"
-      "  \"name\": \"gpu blacklist\",\n"
-      "  \"version\": \"0.1\",\n"
-      "  \"entries\": [\n"
-      "    {\n"
-      "      \"id\": 1,\n"
-      "      \"exceptions\": [\n"
-      "        {\n"
-      "          \"gl_renderer\": {\n"
-      "            \"op\": \"contains\",\n"
-      "            \"value\": \"GeForce\"\n"
-      "          }\n"
-      "        }\n"
-      "      ],\n"
-      "      \"blacklist\": [\n"
-      "        \"webgl\"\n"
-      "      ]\n"
-      "    }\n"
-      "  ]\n"
-      "}";
-
+  const std::string blacklist_json = LONG_STRING_CONST(
+      {
+        "name": "gpu blacklist",
+        "version": "0.1",
+        "entries": [
+          {
+            "id": 1,
+            "exceptions": [
+              {
+                "gl_renderer": {
+                  "op": "contains",
+                  "value": "GeForce"
+                }
+              }
+            ],
+            "features": [
+              "webgl"
+            ]
+          }
+        ]
+      }
+  );
   GPUInfo gpu_info;
   gpu_info.gpu.vendor_id = 0x10de;
   gpu_info.gpu.device_id = 0x0640;
   manager->InitializeForTesting(blacklist_json, gpu_info);
 
-  EXPECT_TRUE(manager->GpuAccessAllowed());
-  EXPECT_EQ(0, manager->GetBlacklistedFeatures());
+  EXPECT_TRUE(manager->GpuAccessAllowed(NULL));
+  EXPECT_EQ(0u, manager->GetBlacklistedFeatureCount());
 
   // Now assume gpu process launches and full GPU info is collected.
   gpu_info.gl_renderer = "NVIDIA GeForce GT 120";
   manager->UpdateGpuInfo(gpu_info);
-  EXPECT_TRUE(manager->GpuAccessAllowed());
-  EXPECT_EQ(0, manager->GetBlacklistedFeatures());
+  EXPECT_TRUE(manager->GpuAccessAllowed(NULL));
+  EXPECT_EQ(0u, manager->GetBlacklistedFeatureCount());
 }
 
-TEST_F(GpuDataManagerImplTest, BlacklistCard) {
+TEST_F(GpuDataManagerImplTest, DisableHardwareAcceleration) {
   ScopedGpuDataManagerImpl manager;
   ASSERT_TRUE(manager.get());
-  EXPECT_EQ(0, manager->GetBlacklistedFeatures());
-  EXPECT_TRUE(manager->GpuAccessAllowed());
+  EXPECT_EQ(0u, manager->GetBlacklistedFeatureCount());
+  std::string reason;
+  EXPECT_TRUE(manager->GpuAccessAllowed(&reason));
+  EXPECT_TRUE(reason.empty());
 
-  manager->BlacklistCard();
-  EXPECT_FALSE(manager->GpuAccessAllowed());
-  EXPECT_EQ(GPU_FEATURE_TYPE_ALL, manager->GetBlacklistedFeatures());
+  manager->DisableHardwareAcceleration();
+  EXPECT_FALSE(manager->GpuAccessAllowed(&reason));
+  EXPECT_FALSE(reason.empty());
+  EXPECT_EQ(static_cast<size_t>(NUMBER_OF_GPU_FEATURE_TYPES),
+            manager->GetBlacklistedFeatureCount());
 }
 
-TEST_F(GpuDataManagerImplTest, SoftwareRendering) {
+TEST_F(GpuDataManagerImplTest, SwiftShaderRendering) {
   // Blacklist, then register SwiftShader.
   ScopedGpuDataManagerImpl manager;
   ASSERT_TRUE(manager.get());
-  EXPECT_EQ(0, manager->GetBlacklistedFeatures());
-  EXPECT_TRUE(manager->GpuAccessAllowed());
-  EXPECT_FALSE(manager->ShouldUseSoftwareRendering());
+  EXPECT_EQ(0u, manager->GetBlacklistedFeatureCount());
+  EXPECT_TRUE(manager->GpuAccessAllowed(NULL));
+  EXPECT_FALSE(manager->ShouldUseSwiftShader());
 
-  manager->BlacklistCard();
-  EXPECT_FALSE(manager->GpuAccessAllowed());
-  EXPECT_FALSE(manager->ShouldUseSoftwareRendering());
+  manager->DisableHardwareAcceleration();
+  EXPECT_FALSE(manager->GpuAccessAllowed(NULL));
+  EXPECT_FALSE(manager->ShouldUseSwiftShader());
 
-  // If software rendering is enabled, even if we blacklist GPU,
+  // If SwiftShader is enabled, even if we blacklist GPU,
   // GPU process is still allowed.
   const base::FilePath test_path(FILE_PATH_LITERAL("AnyPath"));
   manager->RegisterSwiftShaderPath(test_path);
-  EXPECT_TRUE(manager->ShouldUseSoftwareRendering());
-  EXPECT_TRUE(manager->GpuAccessAllowed());
-  EXPECT_EQ(GPU_FEATURE_TYPE_ACCELERATED_2D_CANVAS,
-            manager->GetBlacklistedFeatures());
+  EXPECT_TRUE(manager->ShouldUseSwiftShader());
+  EXPECT_TRUE(manager->GpuAccessAllowed(NULL));
+  EXPECT_EQ(1u, manager->GetBlacklistedFeatureCount());
+  EXPECT_TRUE(
+      manager->IsFeatureBlacklisted(GPU_FEATURE_TYPE_ACCELERATED_2D_CANVAS));
 }
 
-TEST_F(GpuDataManagerImplTest, SoftwareRendering2) {
+TEST_F(GpuDataManagerImplTest, SwiftShaderRendering2) {
   // Register SwiftShader, then blacklist.
   ScopedGpuDataManagerImpl manager;
   ASSERT_TRUE(manager.get());
-  EXPECT_EQ(0, manager->GetBlacklistedFeatures());
-  EXPECT_TRUE(manager->GpuAccessAllowed());
-  EXPECT_FALSE(manager->ShouldUseSoftwareRendering());
+  EXPECT_EQ(0u, manager->GetBlacklistedFeatureCount());
+  EXPECT_TRUE(manager->GpuAccessAllowed(NULL));
+  EXPECT_FALSE(manager->ShouldUseSwiftShader());
 
   const base::FilePath test_path(FILE_PATH_LITERAL("AnyPath"));
   manager->RegisterSwiftShaderPath(test_path);
-  EXPECT_EQ(0, manager->GetBlacklistedFeatures());
-  EXPECT_TRUE(manager->GpuAccessAllowed());
-  EXPECT_FALSE(manager->ShouldUseSoftwareRendering());
+  EXPECT_EQ(0u, manager->GetBlacklistedFeatureCount());
+  EXPECT_TRUE(manager->GpuAccessAllowed(NULL));
+  EXPECT_FALSE(manager->ShouldUseSwiftShader());
 
-  manager->BlacklistCard();
-  EXPECT_TRUE(manager->GpuAccessAllowed());
-  EXPECT_TRUE(manager->ShouldUseSoftwareRendering());
-  EXPECT_EQ(GPU_FEATURE_TYPE_ACCELERATED_2D_CANVAS,
-            manager->GetBlacklistedFeatures());
+  manager->DisableHardwareAcceleration();
+  EXPECT_TRUE(manager->GpuAccessAllowed(NULL));
+  EXPECT_TRUE(manager->ShouldUseSwiftShader());
+  EXPECT_EQ(1u, manager->GetBlacklistedFeatureCount());
+  EXPECT_TRUE(
+      manager->IsFeatureBlacklisted(GPU_FEATURE_TYPE_ACCELERATED_2D_CANVAS));
 }
 
 TEST_F(GpuDataManagerImplTest, GpuInfoUpdate) {
@@ -270,15 +288,15 @@ TEST_F(GpuDataManagerImplTest, GpuInfoUpdate) {
   EXPECT_TRUE(observer.gpu_info_updated());
 }
 
-TEST_F(GpuDataManagerImplTest, NoGpuInfoUpdateWithSoftwareRendering) {
+TEST_F(GpuDataManagerImplTest, NoGpuInfoUpdateWithSwiftShader) {
   ScopedGpuDataManagerImpl manager;
   ASSERT_TRUE(manager.get());
 
-  manager->BlacklistCard();
+  manager->DisableHardwareAcceleration();
   const base::FilePath test_path(FILE_PATH_LITERAL("AnyPath"));
   manager->RegisterSwiftShaderPath(test_path);
-  EXPECT_TRUE(manager->ShouldUseSoftwareRendering());
-  EXPECT_TRUE(manager->GpuAccessAllowed());
+  EXPECT_TRUE(manager->ShouldUseSwiftShader());
+  EXPECT_TRUE(manager->GpuAccessAllowed(NULL));
 
   {
     base::RunLoop run_loop;
@@ -459,49 +477,50 @@ TEST_F(GpuDataManagerImplTest, SetGLStrings) {
 
   ScopedGpuDataManagerImpl manager;
   ASSERT_TRUE(manager.get());
-  EXPECT_EQ(0, manager->GetBlacklistedFeatures());
-  EXPECT_TRUE(manager->GpuAccessAllowed());
+  EXPECT_EQ(0u, manager->GetBlacklistedFeatureCount());
+  EXPECT_TRUE(manager->GpuAccessAllowed(NULL));
 
-  const std::string blacklist_json =
-      "{\n"
-      "  \"name\": \"gpu blacklist\",\n"
-      "  \"version\": \"0.1\",\n"
-      "  \"entries\": [\n"
-      "    {\n"
-      "      \"id\": 1,\n"
-      "      \"vendor_id\": \"0x8086\",\n"
-      "      \"exceptions\": [\n"
-      "        {\n"
-      "          \"device_id\": [\"0x0042\"],\n"
-      "          \"driver_version\": {\n"
-      "            \"op\": \">=\",\n"
-      "            \"number\": \"8.0.2\"\n"
-      "          }\n"
-      "        }\n"
-      "      ],\n"
-      "      \"blacklist\": [\n"
-      "        \"webgl\"\n"
-      "      ]\n"
-      "    }\n"
-      "  ]\n"
-      "}";
-
+  const std::string blacklist_json = LONG_STRING_CONST(
+      {
+        "name": "gpu blacklist",
+        "version": "0.1",
+        "entries": [
+          {
+            "id": 1,
+            "vendor_id": "0x8086",
+            "exceptions": [
+              {
+                "device_id": ["0x0042"],
+                "driver_version": {
+                  "op": ">=",
+                  "number": "8.0.2"
+                }
+              }
+            ],
+            "features": [
+              "webgl"
+            ]
+          }
+        ]
+      }
+  );
   GPUInfo gpu_info;
   gpu_info.gpu.vendor_id = 0x8086;
   gpu_info.gpu.device_id = 0x0042;
   manager->InitializeForTesting(blacklist_json, gpu_info);
 
   // Not enough GPUInfo.
-  EXPECT_TRUE(manager->GpuAccessAllowed());
-  EXPECT_EQ(0, manager->GetBlacklistedFeatures());
+  EXPECT_TRUE(manager->GpuAccessAllowed(NULL));
+  EXPECT_EQ(0u, manager->GetBlacklistedFeatureCount());
 
   // Now assume browser gets GL strings from local state.
   // The entry applies, blacklist more features than from the preliminary step.
   // However, GPU process is not blocked because this is all browser side and
   // happens before renderer launching.
   manager->SetGLStrings(kGLVendorMesa, kGLRendererMesa, kGLVersionMesa801);
-  EXPECT_TRUE(manager->GpuAccessAllowed());
-  EXPECT_EQ(GPU_FEATURE_TYPE_WEBGL, manager->GetBlacklistedFeatures());
+  EXPECT_TRUE(manager->GpuAccessAllowed(NULL));
+  EXPECT_EQ(1u, manager->GetBlacklistedFeatureCount());
+  EXPECT_TRUE(manager->IsFeatureBlacklisted(GPU_FEATURE_TYPE_WEBGL));
 }
 
 TEST_F(GpuDataManagerImplTest, SetGLStringsNoEffects) {
@@ -512,33 +531,33 @@ TEST_F(GpuDataManagerImplTest, SetGLStringsNoEffects) {
 
   ScopedGpuDataManagerImpl manager;
   ASSERT_TRUE(manager.get());
-  EXPECT_EQ(0, manager->GetBlacklistedFeatures());
-  EXPECT_TRUE(manager->GpuAccessAllowed());
+  EXPECT_EQ(0u, manager->GetBlacklistedFeatureCount());
+  EXPECT_TRUE(manager->GpuAccessAllowed(NULL));
 
-  const std::string blacklist_json =
-      "{\n"
-      "  \"name\": \"gpu blacklist\",\n"
-      "  \"version\": \"0.1\",\n"
-      "  \"entries\": [\n"
-      "    {\n"
-      "      \"id\": 1,\n"
-      "      \"vendor_id\": \"0x8086\",\n"
-      "      \"exceptions\": [\n"
-      "        {\n"
-      "          \"device_id\": [\"0x0042\"],\n"
-      "          \"driver_version\": {\n"
-      "            \"op\": \">=\",\n"
-      "            \"number\": \"8.0.2\"\n"
-      "          }\n"
-      "        }\n"
-      "      ],\n"
-      "      \"blacklist\": [\n"
-      "        \"webgl\"\n"
-      "      ]\n"
-      "    }\n"
-      "  ]\n"
-      "}";
-
+  const std::string blacklist_json = LONG_STRING_CONST(
+      {
+        "name": "gpu blacklist",
+        "version": "0.1",
+        "entries": [
+          {
+            "id": 1,
+            "vendor_id": "0x8086",
+            "exceptions": [
+              {
+                "device_id": ["0x0042"],
+                "driver_version": {
+                  "op": ">=",
+                  "number": "8.0.2"
+                }
+              }
+            ],
+            "features": [
+              "webgl"
+            ]
+          }
+        ]
+      }
+  );
   GPUInfo gpu_info;
   gpu_info.gpu.vendor_id = 0x8086;
   gpu_info.gpu.device_id = 0x0042;
@@ -550,16 +569,88 @@ TEST_F(GpuDataManagerImplTest, SetGLStringsNoEffects) {
   manager->InitializeForTesting(blacklist_json, gpu_info);
 
   // Full GPUInfo, the entry applies.
-  EXPECT_TRUE(manager->GpuAccessAllowed());
-  EXPECT_EQ(GPU_FEATURE_TYPE_WEBGL, manager->GetBlacklistedFeatures());
+  EXPECT_TRUE(manager->GpuAccessAllowed(NULL));
+  EXPECT_EQ(1u, manager->GetBlacklistedFeatureCount());
+  EXPECT_TRUE(manager->IsFeatureBlacklisted(GPU_FEATURE_TYPE_WEBGL));
 
   // Now assume browser gets GL strings from local state.
   // SetGLStrings() has no effects because GPUInfo already got these strings.
   // (Otherwise the entry should not apply.)
   manager->SetGLStrings(kGLVendorMesa, kGLRendererMesa, kGLVersionMesa802);
-  EXPECT_TRUE(manager->GpuAccessAllowed());
-  EXPECT_EQ(GPU_FEATURE_TYPE_WEBGL, manager->GetBlacklistedFeatures());
+  EXPECT_TRUE(manager->GpuAccessAllowed(NULL));
+  EXPECT_EQ(1u, manager->GetBlacklistedFeatureCount());
+  EXPECT_TRUE(manager->IsFeatureBlacklisted(GPU_FEATURE_TYPE_WEBGL));
 }
 #endif  // OS_LINUX
+
+TEST_F(GpuDataManagerImplTest, GpuDriverBugListSingle) {
+  ScopedGpuDataManagerImpl manager;
+  ASSERT_TRUE(manager.get());
+  manager->gpu_driver_bugs_.insert(5);
+
+  CommandLine command_line(0, NULL);
+  manager->AppendGpuCommandLine(&command_line);
+
+  EXPECT_TRUE(command_line.HasSwitch(switches::kGpuDriverBugWorkarounds));
+  std::string args = command_line.GetSwitchValueASCII(
+      switches::kGpuDriverBugWorkarounds);
+  EXPECT_STREQ("5", args.c_str());
+}
+
+TEST_F(GpuDataManagerImplTest, GpuDriverBugListMultiple) {
+  ScopedGpuDataManagerImpl manager;
+  ASSERT_TRUE(manager.get());
+  manager->gpu_driver_bugs_.insert(5);
+  manager->gpu_driver_bugs_.insert(7);
+
+  CommandLine command_line(0, NULL);
+  manager->AppendGpuCommandLine(&command_line);
+
+  EXPECT_TRUE(command_line.HasSwitch(switches::kGpuDriverBugWorkarounds));
+  std::string args = command_line.GetSwitchValueASCII(
+      switches::kGpuDriverBugWorkarounds);
+  EXPECT_STREQ("5,7", args.c_str());
+}
+
+TEST_F(GpuDataManagerImplTest, BlacklistAllFeatures) {
+  ScopedGpuDataManagerImpl manager;
+  ASSERT_TRUE(manager.get());
+  EXPECT_EQ(0u, manager->GetBlacklistedFeatureCount());
+  std::string reason;
+  EXPECT_TRUE(manager->GpuAccessAllowed(&reason));
+  EXPECT_TRUE(reason.empty());
+
+  const std::string blacklist_json = LONG_STRING_CONST(
+      {
+        "name": "gpu blacklist",
+        "version": "0.1",
+        "entries": [
+          {
+            "id": 1,
+            "features": [
+              "all"
+            ]
+          }
+        ]
+      }
+  );
+
+  GPUInfo gpu_info;
+  gpu_info.gpu.vendor_id = 0x10de;
+  gpu_info.gpu.device_id = 0x0640;
+  manager->InitializeForTesting(blacklist_json, gpu_info);
+
+  EXPECT_EQ(NUMBER_OF_GPU_FEATURE_TYPES,
+            manager->GetBlacklistedFeatureCount());
+  // TODO(zmo): remove the Linux specific behavior once we fix
+  // crbug.com/238466.
+#if defined(OS_LINUX)
+  EXPECT_TRUE(manager->GpuAccessAllowed(&reason));
+  EXPECT_TRUE(reason.empty());
+#else
+  EXPECT_FALSE(manager->GpuAccessAllowed(&reason));
+  EXPECT_FALSE(reason.empty());
+#endif
+}
 
 }  // namespace content

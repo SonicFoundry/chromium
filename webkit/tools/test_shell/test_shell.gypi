@@ -6,15 +6,15 @@
   'variables': {
     'test_shell_windows_resource_files': [
       'resources/test_shell.rc',
-      '../../glue/resources/pan_east.cur',
-      '../../glue/resources/pan_middle.cur',
-      '../../glue/resources/pan_north.cur',
-      '../../glue/resources/pan_north_east.cur',
-      '../../glue/resources/pan_north_west.cur',
-      '../../glue/resources/pan_south.cur',
-      '../../glue/resources/pan_south_east.cur',
-      '../../glue/resources/pan_south_west.cur',
-      '../../glue/resources/pan_west.cur',
+      '../../../ui/resources/cursors/pan_east.cur',
+      '../../../ui/resources/cursors/pan_middle.cur',
+      '../../../ui/resources/cursors/pan_north.cur',
+      '../../../ui/resources/cursors/pan_north_east.cur',
+      '../../../ui/resources/cursors/pan_north_west.cur',
+      '../../../ui/resources/cursors/pan_south.cur',
+      '../../../ui/resources/cursors/pan_south_east.cur',
+      '../../../ui/resources/cursors/pan_south_west.cur',
+      '../../../ui/resources/cursors/pan_west.cur',
       'resources/small.ico',
       'resources/test_shell.ico',
       'resource.h',
@@ -63,7 +63,7 @@
             '<(DEPTH)/skia/skia.gyp:skia',
             '<(DEPTH)/testing/gmock.gyp:gmock',
             '<(DEPTH)/testing/gtest.gyp:gtest',
-            '<(DEPTH)/third_party/WebKit/Source/WebKit/chromium/WebKit.gyp:inspector_resources',
+            '<(DEPTH)/third_party/WebKit/Source/devtools/devtools.gyp:devtools_frontend_resources',
             '<(DEPTH)/third_party/WebKit/Source/WebKit/chromium/WebKit.gyp:webkit',
             '<(DEPTH)/ui/native_theme/native_theme.gyp:native_theme',
             '<(DEPTH)/v8/tools/gyp/v8.gyp:v8',
@@ -276,9 +276,9 @@
                 # but that causes errors in other targets when
                 # resulting .res files get referenced multiple times.
                 '<(SHARED_INTERMEDIATE_DIR)/net/net_resources.rc',
+                '<(SHARED_INTERMEDIATE_DIR)/ui/ui_resources/ui_unscaled_resources.rc',
                 '<(SHARED_INTERMEDIATE_DIR)/webkit/webkit_chromium_resources.rc',
                 '<(SHARED_INTERMEDIATE_DIR)/webkit/webkit_strings_en-US.rc',
-                '<(SHARED_INTERMEDIATE_DIR)/webkit/webkit_unscaled_resources.rc',
               ],
               'configurations': {
                 'Debug_Base': {
@@ -351,119 +351,6 @@
                 '<(DEPTH)/webkit/support/webkit_support.gyp:webkit_resources',
                 '<(DEPTH)/webkit/support/webkit_support.gyp:webkit_strings',
               ]
-            }],
-          ],
-        },
-        {
-          'target_name': 'test_shell_tests',
-          'type': 'executable',
-          'variables': {
-            'chromium_code': 1,
-          },
-          'dependencies': [
-            '../build/temp_gyp/googleurl.gyp:googleurl',
-            'test_shell_common',
-            '<(DEPTH)/base/base.gyp:test_support_base',
-            '<(DEPTH)/net/net.gyp:net',
-            '<(DEPTH)/net/net.gyp:net_test_support',
-            '<(DEPTH)/ppapi/ppapi_internal.gyp:ppapi_shared',
-            '<(DEPTH)/skia/skia.gyp:skia',
-            '<(DEPTH)/testing/gmock.gyp:gmock',
-            '<(DEPTH)/testing/gtest.gyp:gtest',
-            '<(DEPTH)/v8/tools/gyp/v8.gyp:v8',
-            '<(DEPTH)/webkit/support/webkit_support.gyp:user_agent',
-          ],
-          'sources': [
-            '../../glue/cpp_bound_class_unittest.cc',
-            '../../glue/dom_operations_unittest.cc',
-            '../../glue/dom_serializer_unittest.cc',
-            '../../glue/resource_fetcher_unittest.cc',
-            '../../glue/unittest_test_server.h',
-            '../../mocks/mock_resource_loader_bridge.h',
-            '../../mocks/mock_webframeclient.h',
-            '../../mocks/mock_weburlloader.cc',
-            '../../mocks/mock_weburlloader.h',
-            '../../plugins/ppapi/host_var_tracker_unittest.cc',
-            '../../plugins/ppapi/mock_platform_image_2d.cc',
-            '../../plugins/ppapi/mock_platform_image_2d.h',
-            '../../plugins/ppapi/mock_plugin_delegate.cc',
-            '../../plugins/ppapi/mock_plugin_delegate.h',
-            '../../plugins/ppapi/mock_resource.h',
-            '../../plugins/ppapi/ppapi_plugin_instance_unittest.cc',
-            '../../plugins/ppapi/ppapi_unittest.cc',
-            '../../plugins/ppapi/ppapi_unittest.h',
-            '../../plugins/ppapi/quota_file_io_unittest.cc',
-            '../../user_agent/user_agent_unittest.cc',
-            '../webcore_unit_tests/BMPImageDecoder_unittest.cpp',
-            '../webcore_unit_tests/ICOImageDecoder_unittest.cpp',
-            'image_decoder_unittest.cc',
-            'image_decoder_unittest.h',
-            'mock_spellcheck_unittest.cc',
-            'plugin_tests.cc',
-            'run_all_tests.cc',
-            'test_shell_test.cc',
-            'test_shell_test.h',
-          ],
-          'conditions': [
-            ['OS=="win"', {
-              'resource_include_dirs': [
-                '<(SHARED_INTERMEDIATE_DIR)/webkit',
-              ],
-              'sources': [ '<@(test_shell_windows_resource_files)' ],
-              'configurations': {
-                'Debug_Base': {
-                  'msvs_settings': {
-                    'VCLinkerTool': {
-                      'LinkIncremental': '<(msvs_large_module_debug_link_mode)',
-                    },
-                  },
-                },
-              },
-            }],
-            ['toolkit_uses_gtk == 1', {
-              'dependencies': [
-                'test_shell_pak',
-                '<(DEPTH)/build/linux/system.gyp:gtk',
-              ],
-            }],
-            ['chromeos==1', {
-              'sources': [
-                '../../chromeos/fileapi/file_access_permissions_unittest.cc',
-                '../../chromeos/fileapi/memory_file_util.cc',
-                '../../chromeos/fileapi/memory_file_util.h',
-                '../../chromeos/fileapi/memory_file_util_unittest.cc',
-              ],
-            }],
-            ['OS=="mac"', {
-              # mac tests load the resources from the built test_shell beside the
-              # test
-              'dependencies': [
-                'test_shell',
-               ],
-              'sources!': [
-                # Disable the image decoder tests because we use CoreGraphics
-                # code on mac and these tests are for the Skia image-decoders.
-                '../webcore_unit_tests/BMPImageDecoder_unittest.cpp',
-                '../webcore_unit_tests/ICOImageDecoder_unittest.cpp',
-                '../webcore_unit_tests/XBMImageDecoder_unittest.cpp',
-                'image_decoder_unittest.cc',
-                'image_decoder_unittest.h',
-              ],
-              'sources': [
-              ],
-            }],
-            ['OS=="win"', {
-              # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
-              'msvs_disabled_warnings': [ 4800, 4267 ],
-            }],
-            ['os_posix == 1 and OS != "mac"', {
-              'conditions': [
-                ['linux_use_tcmalloc==1', {
-                  'dependencies': [
-                    '<(DEPTH)/base/allocator/allocator.gyp:allocator',
-                  ],
-                }],
-              ],
             }],
           ],
         },

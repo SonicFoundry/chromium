@@ -88,7 +88,11 @@ class SpdySM : public BufferedSpdyFramerVisitorInterface,
   virtual void OnStreamFrameData(SpdyStreamId stream_id,
                                  const char* data,
                                  size_t len,
-                                 SpdyDataFlags flags) OVERRIDE;
+                                 bool fin) OVERRIDE;
+
+  // Called when a SETTINGS frame is received.
+  // |clear_persisted| True if the respective flag is set on the SETTINGS frame.
+  virtual void OnSettings(bool clear_persisted) OVERRIDE {}
 
   // Called when an individual setting within a SETTINGS frame has been parsed
   // and validated.

@@ -44,15 +44,22 @@ class MEDIA_EXPORT AudioRendererImpl
     : public AudioRenderer,
       NON_EXPORTED_BASE(public AudioRendererSink::RenderCallback) {
  public:
-  // An AudioRendererSink is used as the destination for the rendered audio.
+  // |message_loop| is the thread on which AudioRendererImpl will execute.
+  //
+  // |sink| is used as the destination for the rendered audio.
+  //
+  // |decoders| contains the AudioDecoders to use when initializing.
+  //
+  // |set_decryptor_ready_cb| is fired when the audio decryptor is available
+  // (only applicable if the stream is encrypted and we have a decryptor).
   AudioRendererImpl(const scoped_refptr<base::MessageLoopProxy>& message_loop,
                     AudioRendererSink* sink,
+                    ScopedVector<AudioDecoder> decoders,
                     const SetDecryptorReadyCB& set_decryptor_ready_cb);
   virtual ~AudioRendererImpl();
 
   // AudioRenderer implementation.
-  virtual void Initialize(const scoped_refptr<DemuxerStream>& stream,
-                          const AudioDecoderList& decoders,
+  virtual void Initialize(DemuxerStream* stream,
                           const PipelineStatusCB& init_cb,
                           const StatisticsCB& statistics_cb,
                           const base::Closure& underflow_cb,
@@ -146,15 +153,14 @@ class MEDIA_EXPORT AudioRendererImpl
   // in the kPrerolling state.
   bool IsBeforePrerollTime(const scoped_refptr<DataBuffer>& buffer);
 
-  // Called when |decoder_selector_| selected the |selected_decoder|.
-  // |decrypting_demuxer_stream| was also populated if a DecryptingDemuxerStream
+  // Called when |decoder_selector_| has selected |decoder| or is null if no
+  // decoder could be selected.
+  //
+  // |decrypting_demuxer_stream| is non-null if a DecryptingDemuxerStream was
   // created to help decrypt the encrypted stream.
-  // Note: |decoder_selector| is passed here to keep the AudioDecoderSelector
-  // alive until OnDecoderSelected() finishes.
   void OnDecoderSelected(
-      scoped_ptr<AudioDecoderSelector> decoder_selector,
-      const scoped_refptr<AudioDecoder>& selected_decoder,
-      const scoped_refptr<DecryptingDemuxerStream>& decrypting_demuxer_stream);
+      scoped_ptr<AudioDecoder> decoder,
+      scoped_ptr<DecryptingDemuxerStream> decrypting_demuxer_stream);
 
   void ResetDecoder(const base::Closure& callback);
 
@@ -169,11 +175,11 @@ class MEDIA_EXPORT AudioRendererImpl
   // may deadlock between |message_loop_| and the audio callback thread.
   scoped_refptr<media::AudioRendererSink> sink_;
 
-  SetDecryptorReadyCB set_decryptor_ready_cb_;
+  scoped_ptr<AudioDecoderSelector> decoder_selector_;
 
   // These two will be set by AudioDecoderSelector::SelectAudioDecoder().
-  scoped_refptr<AudioDecoder> decoder_;
-  scoped_refptr<DecryptingDemuxerStream> decrypting_demuxer_stream_;
+  scoped_ptr<AudioDecoder> decoder_;
+  scoped_ptr<DecryptingDemuxerStream> decrypting_demuxer_stream_;
 
   // AudioParameters constructed during Initialize() based on |decoder_|.
   AudioParameters audio_parameters_;
@@ -214,6 +220,9 @@ class MEDIA_EXPORT AudioRendererImpl
     kRebuffering,
   };
   State state_;
+
+  // Keep track of whether or not the sink is playing.
+  bool sink_playing_;
 
   // Keep track of our outstanding read to |decoder_|.
   bool pending_read_;
@@ -256,7 +265,7 @@ class MEDIA_EXPORT AudioRendererImpl
 
   // Variables used only on the audio thread. ---------------------------------
   int actual_frames_per_buffer_;
-  scoped_array<uint8> audio_buffer_;
+  scoped_ptr<uint8[]> audio_buffer_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioRendererImpl);
 };

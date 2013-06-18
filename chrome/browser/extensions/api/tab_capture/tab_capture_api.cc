@@ -6,19 +6,24 @@
 
 #include "chrome/browser/extensions/api/tab_capture/tab_capture_api.h"
 
+#include "base/command_line.h"
 #include "base/stringprintf.h"
 #include "base/values.h"
-#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/extensions/api/tab_capture/tab_capture_registry.h"
 #include "chrome/browser/extensions/api/tab_capture/tab_capture_registry_factory.h"
 #include "chrome/browser/extensions/browser_event_router.h"
 #include "chrome/browser/extensions/event_names.h"
 #include "chrome/browser/extensions/extension_renderer_state.h"
+#include "chrome/browser/extensions/tab_helper.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/feature_switch.h"
+#include "chrome/common/extensions/features/base_feature_provider.h"
+#include "chrome/common/extensions/features/simple_feature.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 
@@ -35,6 +40,9 @@ const char kCapturingSameTab[] = "Cannot capture a tab with an active stream.";
 const char kFindingTabError[] = "Error finding tab to capture.";
 const char kNoAudioOrVideo[] = "Capture failed. No audio or video requested.";
 const char kPermissionError[] = "Tab Capture API flag is not enabled.";
+const char kGrantError[] =
+    "Extension has not been invoked for the current page (see activeTab "
+    "permission). Chrome pages cannot be captured.";
 
 // Keys/values for media stream constraints.
 const char kMediaStreamSource[] = "chromeMediaSource";
@@ -66,6 +74,21 @@ bool TabCaptureCaptureFunction::RunImpl() {
       target_browser->tab_strip_model()->GetActiveWebContents();
   if (!target_contents) {
     error_ = kFindingTabError;
+    return false;
+  }
+
+  const Extension* extension = GetExtension();
+  const std::string& extension_id = extension->id();
+
+  // Make sure either we have been granted permission to capture through an
+  // extension icon click or our extension is whitelisted.
+  if (!TabHelper::FromWebContents(target_contents)->
+          active_tab_permission_granter()->IsGranted(extension) &&
+      CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+          switches::kWhitelistedExtensionID) != extension_id &&
+      !BaseFeatureProvider::GetPermissionFeatures()->GetFeature("tabCapture")->
+          IsIdInWhitelist(extension_id)) {
+    error_ = kGrantError;
     return false;
   }
 
@@ -113,11 +136,11 @@ bool TabCaptureCaptureFunction::RunImpl() {
 
   extensions::TabCaptureRegistry* registry =
       extensions::TabCaptureRegistryFactory::GetForProfile(profile());
-  if (!registry->AddRequest(
-          std::make_pair(render_process_id, routing_id),
-          TabCaptureRegistry::TabCaptureRequest(
-              GetExtension()->id(), tab_id,
-              tab_capture::TAB_CAPTURE_STATE_NONE))) {
+  if (!registry->AddRequest(render_process_id,
+                            routing_id,
+                            extension_id,
+                            tab_id,
+                            tab_capture::TAB_CAPTURE_STATE_NONE)) {
     error_ = kCapturingSameTab;
     return false;
   }
@@ -141,15 +164,15 @@ bool TabCaptureGetCapturedTabsFunction::RunImpl() {
   extensions::TabCaptureRegistry* registry =
       extensions::TabCaptureRegistryFactory::GetForProfile(profile());
 
-  const TabCaptureRegistry::CaptureRequestList& captured_tabs =
+  const TabCaptureRegistry::RegistryCaptureInfo& captured_tabs =
       registry->GetCapturedTabs(GetExtension()->id());
 
   base::ListValue *list = new base::ListValue();
-  for (TabCaptureRegistry::CaptureRequestList::const_iterator it =
+  for (TabCaptureRegistry::RegistryCaptureInfo::const_iterator it =
        captured_tabs.begin(); it != captured_tabs.end(); ++it) {
     scoped_ptr<tab_capture::CaptureInfo> info(new tab_capture::CaptureInfo());
-    info->tab_id = (*it)->tab_id;
-    info->status = (*it)->status;
+    info->tab_id = it->first;
+    info->status = it->second;
     list->Append(info->ToValue().release());
   }
 

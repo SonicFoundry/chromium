@@ -2,21 +2,21 @@
   "bundles": [
     {
       "name": "sdk_tools",
-      "description": "Native Client SDK Tools, revision 182731",
+      "description": "Native Client SDK Tools, revision 186432",
       "stability": "stable",
       "recommended": "yes",
       "version": 1,
       "archives": [
         {
-          "url": "https://commondatastorage.googleapis.com/nativeclient-mirror/nacl/nacl_sdk/trunk.182731/sdk_tools.tgz",
+          "url": "https://commondatastorage.googleapis.com/nativeclient-mirror/nacl/nacl_sdk/trunk.186432/sdk_tools.tgz",
           "checksum": {
-            "sha1": "a801cb708f133be2823fc628ba6f653bf68476c6"
+            "sha1": "afecddc8adf89e89c4c7e6cbd6e015dd49ad4661"
           },
           "host_os": "all",
-          "size": 32315
+          "size": 32905
         }
       ],
-      "revision": 182731
+      "revision": 186432
     },
     {
       "name": "vs_addin",
@@ -34,16 +34,6 @@
       "revision": 1507
     },
     {
-      "name": "pepper_21",
-      "description": "Chrome 21 bundle, revision xxxxx",
-      "stability": "post_stable",
-      "recommended": "no",
-      "version": 21,
-      "repath": "pepper_21",
-      "archives": [],
-      "revision": 0
-    },
-    {
       "name": "pepper_22",
       "description": "Chrome 22 bundle, revision xxxxx",
       "stability": "post_stable",
@@ -56,8 +46,8 @@
     {
       "name": "pepper_23",
       "description": "Chrome 23 bundle, revision xxxxx",
-      "stability": "stable",
-      "recommended": "yes",
+      "stability": "post_stable",
+      "recommended": "no",
       "version": 23,
       "repath": "pepper_23",
       "archives": [],
@@ -66,7 +56,7 @@
     {
       "name": "pepper_24",
       "description": "Chrome 24 bundle, revision xxxxx",
-      "stability": "beta",
+      "stability": "post_stable",
       "recommended": "no",
       "version": 24,
       "repath": "pepper_24",
@@ -76,7 +66,7 @@
     {
       "name": "pepper_25",
       "description": "Chrome 25 bundle, revision xxxxx",
-      "stability": "dev",
+      "stability": "post_stable",
       "recommended": "no",
       "version": 25,
       "repath": "pepper_25",
@@ -86,10 +76,20 @@
     {
       "name": "pepper_26",
       "description": "Chrome 26 bundle, revision xxxxx",
-      "stability": "dev",
-      "recommended": "no",
+      "stability": "stable",
+      "recommended": "yes",
       "version": 26,
       "repath": "pepper_26",
+      "archives": [],
+      "revision": 0
+    },
+    {
+      "name": "pepper_27",
+      "description": "Chrome 27 bundle, revision xxxxx",
+      "stability": "beta",
+      "recommended": "no",
+      "version": 27,
+      "repath": "pepper_27",
       "archives": [],
       "revision": 0
     },

@@ -14,7 +14,7 @@
 #include "base/i18n/rtl.h"
 #include "base/memory/singleton.h"
 #include "base/prefs/pref_service.h"
-#include "base/string_piece.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
@@ -613,10 +613,6 @@ void BrowserTitlebar::UpdateTitleAndIcon() {
         NOTREACHED() << "We should never have a tabbed app window.";
         break;
       }
-      case Browser::TYPE_PANEL: {
-        NOTREACHED();
-        break;
-      }
     }
   }
 }
@@ -954,7 +950,7 @@ bool BrowserTitlebar::IsCommandIdChecked(int command_id) const {
   return false;
 }
 
-void BrowserTitlebar::ExecuteCommand(int command_id) {
+void BrowserTitlebar::ExecuteCommand(int command_id, int event_flags) {
   if (command_id == kShowWindowDecorationsCommand) {
     PrefService* prefs = browser_window_->browser()->profile()->GetPrefs();
     prefs->SetBoolean(prefs::kUseCustomChromeFrame,

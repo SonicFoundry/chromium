@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+'use strict';
+
 /**
  * The amount of time, before a butter bar will hide after the last update.
  */
@@ -27,6 +29,7 @@ function ButterBar(dialogDom, copyManager, metadataCache) {
   this.deleteTaskId_ = null;
   this.currentMode_ = null;
   this.totalDeleted_ = 0;
+  this.lastProgressValue_ = 0;
 
   this.copyManager_.addEventListener('copy-progress',
                                      this.onCopyProgress_.bind(this));
@@ -147,8 +150,15 @@ ButterBar.prototype.update_ = function(message, opt_options) {
   }
   if (opt_options && 'progress' in opt_options) {
     butterMessage.classList.add('single-line');
-    this.butter_.querySelector('.progress-track').style.width =
-        (opt_options.progress * 100) + '%';
+    var progressTrack = this.butter_.querySelector('.progress-track');
+    // Smoothen the progress only when it goes forward. Especially do not
+    // do the transition effect if resetting to 0.
+    if (opt_options.progress > this.lastProgressValue_)
+      progressTrack.classList.add('smoothed');
+    else
+      progressTrack.classList.remove('smoothed');
+    progressTrack.style.width = (opt_options.progress * 100) + '%';
+    this.lastProgressValue_ = opt_options.progress;
   } else {
     butterMessage.classList.remove('single-line');
   }
@@ -319,7 +329,7 @@ ButterBar.prototype.onCopyProgress_ = function(event) {
       break;
 
     default:
-      console.log('Unknown "copy-progress" event reason: ' + event.reason);
+      console.warn('Unknown "copy-progress" event reason: ' + event.reason);
   }
 };
 
@@ -329,21 +339,22 @@ ButterBar.prototype.onCopyProgress_ = function(event) {
  * @private
  */
 ButterBar.prototype.onDelete_ = function(event) {
+  var urls = Array.prototype.slice.call(event.urls);
   switch (event.reason) {
     case 'BEGIN':
       if (this.currentMode_ != ButterBar.Mode.DELETE)
         this.totalDeleted_ = 0;
     case 'PROGRESS':
       var props = [];
-      for (var i = 0; i < event.urls.length; i++) {
+      for (var i = 0; i < urls.length; i++) {
         props[i] = { deleted: true };
       }
-      this.metadataCache_.set(event.urls, 'internal', props);
+      this.metadataCache_.set(urls, 'internal', props);
 
-      this.totalDeleted_ += event.urls.length;
+      this.totalDeleted_ += urls.length;
       var title = strf('DELETED_MESSAGE_PLURAL', this.totalDeleted_);
       if (this.totalDeleted_ == 1) {
-        var fullPath = util.extractFilePath(event.urls[0]);
+        var fullPath = util.extractFilePath(urls[0]);
         var fileName = PathUtil.split(fullPath).pop();
         title = strf('DELETED_MESSAGE', fileName);
       }
@@ -356,15 +367,15 @@ ButterBar.prototype.onDelete_ = function(event) {
 
     case 'SUCCESS':
       var props = [];
-      for (var i = 0; i < event.urls.length; i++) {
+      for (var i = 0; i < urls.length; i++) {
         props[i] = { deleted: false };
       }
-      this.metadataCache_.set(event.urls, 'internal', props);
+      this.metadataCache_.set(urls, 'internal', props);
 
       this.hide_();
       break;
 
     default:
-      console.log('Unknown "delete" event reason: ' + event.reason);
+      console.warn('Unknown "delete" event reason: ' + event.reason);
   }
 };

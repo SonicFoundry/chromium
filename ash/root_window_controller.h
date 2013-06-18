@@ -6,7 +6,7 @@
 #define ASH_ROOT_WINDOW_CONTROLLER_H_
 
 #include "ash/ash_export.h"
-#include "ash/shelf_types.h"
+#include "ash/shelf/shelf_types.h"
 #include "ash/system/user/login_status.h"
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
@@ -30,9 +30,13 @@ class RootWindowEventFilter;
 }
 }
 
+namespace keyboard {
+class KeyboardController;
+}
+
 namespace ash {
-class Launcher;
 class StackingController;
+class ShelfWidget;
 class SystemTray;
 class ToplevelWindowEventHandler;
 
@@ -46,6 +50,7 @@ class ShelfLayoutManager;
 class StatusAreaWidget;
 class SystemBackgroundController;
 class SystemModalContainerLayoutManager;
+class TouchObserverHUD;
 class WorkspaceController;
 
 // This class maintains the per root window state for ash. This class
@@ -80,13 +85,20 @@ class ASH_EXPORT RootWindowController {
 
   ScreenDimmer* screen_dimmer() { return screen_dimmer_.get(); }
 
-  Launcher* launcher() { return launcher_.get(); }
+  // Access the shelf associated with this root window controller,
+  // NULL if no such shelf exists.
+  ShelfWidget* shelf() { return shelf_.get(); }
 
-  ShelfLayoutManager* shelf() const { return shelf_; }
+  TouchObserverHUD* touch_observer_hud() { return touch_observer_hud_; }
 
-  StatusAreaWidget* status_area_widget() {
-    return status_area_widget_;
+  // Sets the touch HUD. The RootWindowController will not own this HUD; its
+  // lifetime is managed by itself.
+  void set_touch_observer_hud(TouchObserverHUD* hud) {
+    touch_observer_hud_ = hud;
   }
+  // Access the shelf layout manager associated with this root
+  // window controller, NULL if no such shelf exists.
+  ShelfLayoutManager* GetShelfLayoutManager();
 
   // Returns the system tray on this root window. Note that
   // calling this on the root window that doesn't have a launcher will
@@ -120,11 +132,11 @@ class ASH_EXPORT RootWindowController {
   // |is_first_run_after_boot| determines the background's initial color.
   void CreateSystemBackground(bool is_first_run_after_boot);
 
-  // Initializes |launcher_|.  Does nothing if it's already initialized.
-  void CreateLauncher();
-
   // Show launcher view if it was created hidden (before session has started).
   void ShowLauncher();
+
+  // Called when the launcher associated with this root window is created.
+  void OnLauncherCreated();
 
   // Called when the user logs in.
   void OnLoginStateChanged(user::LoginStatus status);
@@ -157,46 +169,41 @@ class ASH_EXPORT RootWindowController {
   // Force the shelf to query for it's current visibility state.
   void UpdateShelfVisibility();
 
-  // Sets/gets the shelf auto-hide behavior.
-  void SetShelfAutoHideBehavior(ShelfAutoHideBehavior behavior);
-  ShelfAutoHideBehavior GetShelfAutoHideBehavior() const;
-
-  // Sets/gets the shelf alignemnt.
-  bool SetShelfAlignment(ShelfAlignment alignment);
-  ShelfAlignment GetShelfAlignment();
-
-  // Returns true if the active workspace is in immersive mode. Exposed here
-  // so clients of Ash don't need to know the details of workspace management.
-  bool IsImmersiveMode() const;
+  // Returns the window, if any, which is in fullscreen mode in the active
+  // workspace. Exposed here so clients of Ash don't need to know the details
+  // of workspace management.
+  aura::Window* GetFullscreenWindow() const;
 
  private:
   // Creates each of the special window containers that holds windows of various
   // types in the shell UI.
   void CreateContainersInRootWindow(aura::RootWindow* root_window);
 
+  // Initializes the virtual keyboard.
+  void InitKeyboard();
+
   scoped_ptr<aura::RootWindow> root_window_;
   RootWindowLayoutManager* root_window_layout_;
 
   scoped_ptr<StackingController> stacking_controller_;
 
-  // Widget containing system tray.
-  StatusAreaWidget* status_area_widget_;
+  scoped_ptr<keyboard::KeyboardController> keyboard_controller_;
 
   // The shelf for managing the launcher and the status widget.
-  // RootWindowController does not own the shelf. Instead, it is owned
-  // by container of the status area.
-  ShelfLayoutManager* shelf_;
+  scoped_ptr<ShelfWidget> shelf_;
 
   // Manages layout of panels. Owned by PanelContainer.
   PanelLayoutManager* panel_layout_manager_;
-
-  scoped_ptr<Launcher> launcher_;
 
   scoped_ptr<SystemBackgroundController> system_background_;
   scoped_ptr<BootSplashScreen> boot_splash_screen_;
 
   scoped_ptr<ScreenDimmer> screen_dimmer_;
   scoped_ptr<WorkspaceController> workspace_controller_;
+
+  // Heads-up display for touch events. The RootWindowController does not own
+  // this HUD; its lifetime is managed by itself.
+  TouchObserverHUD* touch_observer_hud_;
 
   // We need to own event handlers for various containers.
   scoped_ptr<ToplevelWindowEventHandler> default_container_handler_;

@@ -4,49 +4,18 @@
 
 #include "chrome/browser/extensions/api/autotest_private/autotest_private_api.h"
 
+#include "base/strings/string_number_conversions.h"
 #include "chrome/browser/extensions/api/autotest_private/autotest_private_api_factory.h"
 #include "chrome/browser/extensions/extension_function_registry.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/common/extensions/api/autotest_private.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/shell.h"
-#include "ash/system/tray/system_tray_delegate.h"
+#include "chrome/browser/chromeos/login/screen_locker.h"
+#include "chrome/browser/chromeos/login/user_manager.h"
 #endif
 
 namespace extensions {
-namespace {
-
-std::string GetUserLoginStatus() {
-#if defined(OS_CHROMEOS)
-  typedef struct {
-    ash::user::LoginStatus login_status;
-    std::string status_string;
-  } StatusString;
-  const StatusString kStatusStrings[] = {
-      { ash::user::LOGGED_IN_LOCKED, "locked" },
-      { ash::user::LOGGED_IN_USER, "user" },
-      { ash::user::LOGGED_IN_OWNER, "owner" },
-      { ash::user::LOGGED_IN_GUEST, "guest" },
-      { ash::user::LOGGED_IN_KIOSK, "kiosk" },
-      { ash::user::LOGGED_IN_PUBLIC, "public" },
-      { ash::user::LOGGED_IN_NONE, "none" },
-  };
-  const ash::user::LoginStatus status =
-      ash::Shell::GetInstance()->system_tray_delegate() ?
-      ash::Shell::GetInstance()->system_tray_delegate()->GetUserLoginStatus() :
-      ash::user::LOGGED_IN_NONE;
-
-  for (size_t i = 0; i < ARRAYSIZE_UNSAFE(kStatusStrings); ++i) {
-    if (kStatusStrings[i].login_status == status)
-      return kStatusStrings[i].status_string;
-  }
-#endif
-
-  return "none";
-}
-
-}  // namespace
 
 bool AutotestPrivateLogoutFunction::RunImpl() {
   DVLOG(1) << "AutotestPrivateLogoutFunction";
@@ -69,7 +38,7 @@ bool AutotestPrivateShutdownFunction::RunImpl() {
 
   DVLOG(1) << "AutotestPrivateShutdownFunction " << params->force;
 
-#if defined(OS_CHROME)
+#if defined(OS_CHROMEOS)
   if (params->force) {
     if (!AutotestPrivateAPIFactory::GetForProfile(profile())->test_mode())
       chrome::ExitCleanly();
@@ -83,7 +52,47 @@ bool AutotestPrivateShutdownFunction::RunImpl() {
 
 bool AutotestPrivateLoginStatusFunction::RunImpl() {
   DVLOG(1) << "AutotestPrivateLoginStatusFunction";
-  SetResult(base::Value::CreateStringValue(GetUserLoginStatus()));
+
+  DictionaryValue* result(new DictionaryValue);
+#if defined(OS_CHROMEOS)
+  const chromeos::UserManager* user_manager = chromeos::UserManager::Get();
+  const bool is_screen_locked =
+      !!chromeos::ScreenLocker::default_screen_locker();
+
+  if (user_manager) {
+    result->SetBoolean("isLoggedIn", user_manager->IsUserLoggedIn());
+    result->SetBoolean("isOwner", user_manager->IsCurrentUserOwner());
+    result->SetBoolean("isScreenLocked", is_screen_locked);
+    if (user_manager->IsUserLoggedIn()) {
+      result->SetBoolean("isRegularUser",
+                         user_manager->IsLoggedInAsRegularUser());
+      result->SetBoolean("isGuest", user_manager->IsLoggedInAsGuest());
+      result->SetBoolean("isKiosk", user_manager->IsLoggedInAsKioskApp());
+
+      const chromeos::User* user = user_manager->GetLoggedInUser();
+      result->SetString("email", user->email());
+      result->SetString("displayEmail", user->display_email());
+
+      std::string user_image;
+      switch (user->image_index()) {
+        case chromeos::User::kExternalImageIndex:
+          user_image = "file";
+          break;
+
+        case chromeos::User::kProfileImageIndex:
+          user_image = "profile";
+          break;
+
+        default:
+          user_image = base::IntToString(user->image_index());
+          break;
+      }
+      result->SetString("userImage", user_image);
+    }
+  }
+#endif
+
+  SetResult(result);
   return true;
 }
 

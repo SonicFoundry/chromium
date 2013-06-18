@@ -10,9 +10,11 @@
 
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/stl_util.h"
 #include "base/utf_string_conversions.h"
 #include "content/renderer/media/media_stream_dependency_factory.h"
 #include "content/renderer/media/peer_connection_tracker.h"
+#include "content/renderer/media/remote_media_stream_impl.h"
 #include "content/renderer/media/rtc_data_channel_handler.h"
 #include "content/renderer/media/rtc_dtmf_sender_handler.h"
 #include "content/renderer/media/rtc_media_constraints.h"
@@ -231,37 +233,28 @@ class StatsResponse : public webrtc::StatsObserver {
       const std::vector<webrtc::StatsReport>& reports) OVERRIDE {
     for (std::vector<webrtc::StatsReport>::const_iterator it = reports.begin();
          it != reports.end(); ++it) {
-      int idx = response_->addReport();
-      if (it->local.values.size() > 0) {
-        AddElement(idx, true, it->id, it->type, it->local);
-      }
-      if (it->remote.values.size() > 0) {
-        AddElement(idx, false, it->id, it->type, it->remote);
+      if (it->values.size() > 0) {
+        AddReport(*it);
       }
     }
     request_->requestSucceeded(response_);
   }
 
  private:
-  void AddElement(int idx,
-                  bool is_local,
-                  const std::string& id,
-                  const std::string& type,
-                  const webrtc::StatsElement& element) {
-    response_->addElement(idx, is_local, element.timestamp);
-    // TODO(hta): Make a better disposition of id and type.
-    AddStatistic(idx, is_local, "id", id);
-    AddStatistic(idx, is_local, "type", type);
-    for (webrtc::StatsElement::Values::const_iterator value_it =
-             element.values.begin();
-         value_it != element.values.end(); ++value_it) {
-      AddStatistic(idx, is_local, value_it->name, value_it->value);
+  void AddReport(const webrtc::StatsReport& report) {
+    int idx = response_->addReport(WebKit::WebString::fromUTF8(report.id),
+                                   WebKit::WebString::fromUTF8(report.type),
+                                   report.timestamp);
+    for (webrtc::StatsReport::Values::const_iterator value_it =
+         report.values.begin();
+         value_it != report.values.end(); ++value_it) {
+      AddStatistic(idx, value_it->name, value_it->value);
     }
   }
 
-  void AddStatistic(int idx, bool is_local, const std::string& name,
+  void AddStatistic(int idx, const std::string& name,
                     const std::string& value) {
-    response_->addStatistic(idx, is_local,
+    response_->addStatistic(idx,
                             WebKit::WebString::fromUTF8(name),
                             WebKit::WebString::fromUTF8(value));
   }
@@ -308,21 +301,16 @@ WebKit::WebRTCStatsResponse LocalRTCStatsResponse::webKitStatsResponse() const {
   return impl_;
 }
 
-size_t LocalRTCStatsResponse::addReport() {
-  return impl_.addReport();
-}
-
-void LocalRTCStatsResponse::addElement(size_t report,
-                                       bool is_local,
-                                       double timestamp) {
-  impl_.addElement(report, is_local, timestamp);
+size_t LocalRTCStatsResponse::addReport(WebKit::WebString type,
+                                        WebKit::WebString id,
+                                        double timestamp) {
+  return impl_.addReport(type, id, timestamp);
 }
 
 void LocalRTCStatsResponse::addStatistic(size_t report,
-                                         bool is_local,
                                          WebKit::WebString name,
                                          WebKit::WebString value) {
-  impl_.addStatistic(report, is_local, name, value);
+  impl_.addStatistic(report, name, value);
 }
 
 RTCPeerConnectionHandler::RTCPeerConnectionHandler(
@@ -337,6 +325,7 @@ RTCPeerConnectionHandler::RTCPeerConnectionHandler(
 RTCPeerConnectionHandler::~RTCPeerConnectionHandler() {
   if (peer_connection_tracker_)
     peer_connection_tracker_->UnregisterPeerConnection(this);
+  STLDeleteValues(&remote_streams_);
 }
 
 void RTCPeerConnectionHandler::associateWithFrame(WebKit::WebFrame* frame) {
@@ -432,7 +421,7 @@ void RTCPeerConnectionHandler::setLocalDescription(
   }
   if (peer_connection_tracker_)
     peer_connection_tracker_->TrackSetSessionDescription(
-        this, native_desc, PeerConnectionTracker::SOURCE_LOCAL);
+        this, description, PeerConnectionTracker::SOURCE_LOCAL);
 
   scoped_refptr<SetSessionDescriptionRequest> set_request(
       new talk_base::RefCountedObject<SetSessionDescriptionRequest>(
@@ -457,7 +446,7 @@ void RTCPeerConnectionHandler::setRemoteDescription(
   }
   if (peer_connection_tracker_)
     peer_connection_tracker_->TrackSetSessionDescription(
-        this, native_desc, PeerConnectionTracker::SOURCE_REMOTE);
+        this, description, PeerConnectionTracker::SOURCE_REMOTE);
 
   scoped_refptr<SetSessionDescriptionRequest> set_request(
       new talk_base::RefCountedObject<SetSessionDescriptionRequest>(
@@ -504,7 +493,7 @@ bool RTCPeerConnectionHandler::addICECandidate(
           UTF16ToUTF8(candidate.sdpMid()),
           candidate.sdpMLineIndex(),
           UTF16ToUTF8(candidate.candidate())));
-  if (!native_candidate.get()) {
+  if (!native_candidate) {
     LOG(ERROR) << "Could not create native ICE candidate.";
     return false;
   }
@@ -550,24 +539,9 @@ void RTCPeerConnectionHandler::getStats(LocalRTCStatsRequest* request) {
   talk_base::scoped_refptr<webrtc::StatsObserver> observer(
       new talk_base::RefCountedObject<StatsResponse>(request));
   webrtc::MediaStreamTrackInterface* track = NULL;
-  if (!native_peer_connection_) {
-    DVLOG(1) << "GetStats cannot verify selector on closed connection";
-    // TODO(hta): Consider how to get an error back.
-    std::vector<webrtc::StatsReport> no_reports;
-    observer->OnComplete(no_reports);
-    return;
-  }
-
   if (request->hasSelector()) {
-    // Verify that stream is a member of local_streams
-    if (native_peer_connection_->local_streams()
-            ->find(UTF16ToUTF8(request->stream().label()))) {
-      track = GetLocalNativeMediaStreamTrack(request->stream(),
-                                             request->component());
-    } else {
-      DVLOG(1) << "GetStats: Stream label not present in PC";
-    }
-
+      track = GetNativeMediaStreamTrack(request->stream(),
+                                        request->component());
     if (!track) {
       DVLOG(1) << "GetStats: Track not found.";
       // TODO(hta): Consider how to get an error back.
@@ -582,8 +556,13 @@ void RTCPeerConnectionHandler::getStats(LocalRTCStatsRequest* request) {
 void RTCPeerConnectionHandler::GetStats(
     webrtc::StatsObserver* observer,
     webrtc::MediaStreamTrackInterface* track) {
-  if (native_peer_connection_)
-    native_peer_connection_->GetStats(observer, track);
+  if (!native_peer_connection_->GetStats(observer, track)) {
+    DVLOG(1) << "GetStats failed.";
+    // TODO(hta): Consider how to get an error back.
+    std::vector<webrtc::StatsReport> no_reports;
+    observer->OnComplete(no_reports);
+    return;
+  }
 }
 
 WebKit::WebRTCDataChannelHandler* RTCPeerConnectionHandler::createDataChannel(
@@ -617,7 +596,7 @@ WebKit::WebRTCDTMFSenderHandler* RTCPeerConnectionHandler::createDTMFSender(
 
   webrtc::AudioTrackInterface* audio_track =
       static_cast<webrtc::AudioTrackInterface*>(
-          GetLocalNativeMediaStreamTrack(track.stream(), track));
+          GetNativeMediaStreamTrack(track.stream(), track));
 
   talk_base::scoped_refptr<webrtc::DtmfSenderInterface> sender(
       native_peer_connection_->CreateDtmfSender(audio_track));
@@ -625,15 +604,18 @@ WebKit::WebRTCDTMFSenderHandler* RTCPeerConnectionHandler::createDTMFSender(
     DLOG(ERROR) << "Could not create native DTMF sender.";
     return NULL;
   }
+  if (peer_connection_tracker_)
+    peer_connection_tracker_->TrackCreateDTMFSender(this, track);
+
   return new RtcDtmfSenderHandler(sender);
 }
 
 void RTCPeerConnectionHandler::stop() {
   DVLOG(1) << "RTCPeerConnectionHandler::stop";
-  native_peer_connection_ = NULL;
 
   if (peer_connection_tracker_)
     peer_connection_tracker_->TrackStop(this);
+  native_peer_connection_->Close();
 }
 
 void RTCPeerConnectionHandler::OnError() {
@@ -655,7 +637,8 @@ void RTCPeerConnectionHandler::OnIceConnectionChange(
     webrtc::PeerConnectionInterface::IceConnectionState new_state) {
   WebKit::WebRTCPeerConnectionHandlerClient::ICEConnectionState state =
       GetWebKitIceConnectionState(new_state);
-  // TODO(perkj): Add new ice connection state to the tracker.
+  if (peer_connection_tracker_)
+    peer_connection_tracker_->TrackIceConnectionStateChange(this, state);
   client_->didChangeICEConnectionState(state);
 }
 
@@ -667,14 +650,12 @@ void RTCPeerConnectionHandler::OnIceGatheringChange(
     // to signal end of candidates.
     WebKit::WebRTCICECandidate null_candidate;
     client_->didGenerateICECandidate(null_candidate);
-    // Adding ice complete state to the tracker.
-    if (peer_connection_tracker_) {
-      peer_connection_tracker_->TrackOnIceComplete(this);
-    }
   }
 
   WebKit::WebRTCPeerConnectionHandlerClient::ICEGatheringState state =
       GetWebKitIceGatheringState(new_state);
+  if (peer_connection_tracker_)
+    peer_connection_tracker_->TrackIceGatheringStateChange(this, state);
   client_->didChangeICEGatheringState(state);
 }
 
@@ -682,17 +663,19 @@ void RTCPeerConnectionHandler::OnAddStream(
     webrtc::MediaStreamInterface* stream_interface) {
   DCHECK(stream_interface);
   DCHECK(remote_streams_.find(stream_interface) == remote_streams_.end());
-  WebKit::WebMediaStream stream =
-      CreateRemoteWebKitMediaStream(stream_interface);
+
+  RemoteMediaStreamImpl* remote_stream =
+      new RemoteMediaStreamImpl(stream_interface);
+  remote_streams_.insert(
+      std::pair<webrtc::MediaStreamInterface*, RemoteMediaStreamImpl*> (
+          stream_interface, remote_stream));
 
   if (peer_connection_tracker_)
     peer_connection_tracker_->TrackAddStream(
-        this, stream, PeerConnectionTracker::SOURCE_REMOTE);
+        this, remote_stream->webkit_stream(),
+        PeerConnectionTracker::SOURCE_REMOTE);
 
-  remote_streams_.insert(
-      std::pair<webrtc::MediaStreamInterface*,
-                WebKit::WebMediaStream>(stream_interface, stream));
-  client_->didAddRemoteStream(stream);
+  client_->didAddRemoteStream(remote_stream->webkit_stream());
 }
 
 void RTCPeerConnectionHandler::OnRemoveStream(
@@ -703,15 +686,17 @@ void RTCPeerConnectionHandler::OnRemoveStream(
     NOTREACHED() << "Stream not found";
     return;
   }
-  WebKit::WebMediaStream stream = it->second;
-  DCHECK(!stream.isNull());
+
+  scoped_ptr<RemoteMediaStreamImpl> remote_stream(it->second);
+  const WebKit::WebMediaStream& webkit_stream = remote_stream->webkit_stream();
+  DCHECK(!webkit_stream.isNull());
   remote_streams_.erase(it);
 
   if (peer_connection_tracker_)
     peer_connection_tracker_->TrackRemoveStream(
-        this, stream, PeerConnectionTracker::SOURCE_REMOTE);
+        this, webkit_stream, PeerConnectionTracker::SOURCE_REMOTE);
 
-  client_->didRemoveRemoteStream(stream);
+  client_->didRemoveRemoteStream(webkit_stream);
 }
 
 void RTCPeerConnectionHandler::OnIceCandidate(
@@ -745,6 +730,8 @@ void RTCPeerConnectionHandler::OnDataChannel(
 }
 
 void RTCPeerConnectionHandler::OnRenegotiationNeeded() {
+  if (peer_connection_tracker_)
+    peer_connection_tracker_->TrackOnRenegotiationNeeded(this);
   client_->negotiationNeeded();
 }
 

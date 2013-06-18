@@ -24,7 +24,6 @@
 #include "base/message_loop.h"
 #include "base/process_util.h"
 #include "base/shared_memory.h"
-#include "base/threading/worker_pool.h"
 #include "media/video/video_decode_accelerator.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_surface.h"
@@ -366,13 +365,9 @@ DXVAVideoDecodeAccelerator::PendingSampleInfo::PendingSampleInfo(
 DXVAVideoDecodeAccelerator::PendingSampleInfo::~PendingSampleInfo() {}
 
 // static
-// Initializes DXVA on a separate thread.
-void DXVAVideoDecodeAccelerator::PreSandboxInitialization(
-    const base::Closure& completion_task) {
+void DXVAVideoDecodeAccelerator::PreSandboxInitialization() {
   // Should be called only once during program startup.
   DCHECK(!pre_sandbox_init_done_);
-
-  base::ScopedClosureRunner scoped_completion_runner(completion_task);
 
   static wchar_t* decoding_dlls[] = {
     L"d3d9.dll",
@@ -390,24 +385,15 @@ void DXVAVideoDecodeAccelerator::PreSandboxInitialization(
     }
   }
 
-  HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, &d3d9_);
-  RETURN_ON_HR_FAILURE(hr,
-                       "Failed to initialize D3D9.",);
-
-  // Initialize H/W video decoding stuff which fails in the sandbox. This is
-  // done on a worker thread because it takes 10s of ms.
-  scoped_completion_runner.Release();
-  base::WorkerPool::PostTask(
-      FROM_HERE,
-      base::Bind(&DXVAVideoDecodeAccelerator::CreateD3DDevManager,
-                 completion_task),
-      true);
+  RETURN_ON_FAILURE(CreateD3DDevManager(),
+                    "Failed to initialize D3D device and manager",);
+  pre_sandbox_init_done_ = true;
 }
 
 // static
-void DXVAVideoDecodeAccelerator::CreateD3DDevManager(
-    const base::Closure& completion_task) {
-  base::ScopedClosureRunner scoped_completion_runner(completion_task);
+bool DXVAVideoDecodeAccelerator::CreateD3DDevManager() {
+  HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, &d3d9_);
+  RETURN_ON_HR_FAILURE(hr, "Direct3DCreate9Ex failed", false);
 
   D3DPRESENT_PARAMETERS present_params = {0};
   present_params.BackBufferWidth = 1;
@@ -421,34 +407,32 @@ void DXVAVideoDecodeAccelerator::CreateD3DDevManager(
   present_params.FullScreen_RefreshRateInHz = 0;
   present_params.PresentationInterval = 0;
 
-  HRESULT hr = d3d9_->CreateDeviceEx(D3DADAPTER_DEFAULT,
-                                     D3DDEVTYPE_HAL,
-                                     ::GetShellWindow(),
-                                     D3DCREATE_FPU_PRESERVE |
-                                     D3DCREATE_SOFTWARE_VERTEXPROCESSING |
-                                     D3DCREATE_DISABLE_PSGP_THREADING |
-                                     D3DCREATE_MULTITHREADED,
-                                     &present_params,
-                                     NULL,
-                                     &device_);
-  RETURN_ON_HR_FAILURE(hr, "Failed to create D3D device",);
+  hr = d3d9_->CreateDeviceEx(D3DADAPTER_DEFAULT,
+                             D3DDEVTYPE_HAL,
+                             ::GetShellWindow(),
+                             D3DCREATE_FPU_PRESERVE |
+                             D3DCREATE_SOFTWARE_VERTEXPROCESSING |
+                             D3DCREATE_DISABLE_PSGP_THREADING |
+                             D3DCREATE_MULTITHREADED,
+                             &present_params,
+                             NULL,
+                             &device_);
+  RETURN_ON_HR_FAILURE(hr, "Failed to create D3D device", false);
 
   hr = DXVA2CreateDirect3DDeviceManager9(&dev_manager_reset_token_,
                                          &device_manager_);
-  RETURN_ON_HR_FAILURE(hr, "DXVA2CreateDirect3DDeviceManager9 failed",);
+  RETURN_ON_HR_FAILURE(hr, "DXVA2CreateDirect3DDeviceManager9 failed", false);
 
   hr = device_manager_->ResetDevice(device_, dev_manager_reset_token_);
-  RETURN_ON_HR_FAILURE(hr, "Failed to reset device",);
+  RETURN_ON_HR_FAILURE(hr, "Failed to reset device", false);
 
   hr = device_->CreateQuery(D3DQUERYTYPE_EVENT, &query_);
-  RETURN_ON_HR_FAILURE(hr, "Failed to create D3D device query",);
-
+  RETURN_ON_HR_FAILURE(hr, "Failed to create D3D device query", false);
   // Ensure query_ API works (to avoid an infinite loop later in
   // CopyOutputSampleDataToPictureBuffer).
   hr = query_->Issue(D3DISSUE_END);
-  RETURN_ON_HR_FAILURE(hr, "Failed to issue END test query",);
-
-  pre_sandbox_init_done_ = true;
+  RETURN_ON_HR_FAILURE(hr, "Failed to issue END test query", false);
+  return true;
 }
 
 DXVAVideoDecodeAccelerator::DXVAVideoDecodeAccelerator(
@@ -514,7 +498,7 @@ bool DXVAVideoDecodeAccelerator::Initialize(media::VideoCodecProfile profile) {
       PLATFORM_FAILURE, false);
 
   state_ = kNormal;
-  MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
+  base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
       &DXVAVideoDecodeAccelerator::NotifyInitializeDone,
       base::AsWeakPtr(this)));
   return true;
@@ -547,6 +531,9 @@ void DXVAVideoDecodeAccelerator::AssignPictureBuffers(
 
   RETURN_AND_NOTIFY_ON_FAILURE((state_ != kUninitialized),
       "Invalid state: " << state_, ILLEGAL_STATE,);
+  RETURN_AND_NOTIFY_ON_FAILURE((kNumPictureBuffers == buffers.size()),
+      "Failed to provide requested picture buffers. (Got " << buffers.size() <<
+      ", requested " << kNumPictureBuffers << ")", INVALID_ARGUMENT,);
 
   // Copy the picture buffers provided by the client to the available list,
   // and mark these buffers as available for use.
@@ -620,7 +607,7 @@ void DXVAVideoDecodeAccelerator::Reset() {
   RETURN_AND_NOTIFY_ON_FAILURE(SendMFTMessage(MFT_MESSAGE_COMMAND_FLUSH, 0),
       "Reset: Failed to send message.", PLATFORM_FAILURE,);
 
-  MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
+  base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
       &DXVAVideoDecodeAccelerator::NotifyResetDone, base::AsWeakPtr(this)));
 
   state_ = DXVAVideoDecodeAccelerator::kNormal;
@@ -891,7 +878,7 @@ bool DXVAVideoDecodeAccelerator::ProcessOutputSample(IMFSample* sample) {
   RETURN_ON_HR_FAILURE(hr, "Failed to get surface description", false);
 
   // Go ahead and request picture buffers.
-  MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
+  base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
       &DXVAVideoDecodeAccelerator::RequestPictureBuffers,
       base::AsWeakPtr(this), surface_desc.Width, surface_desc.Height));
 
@@ -932,7 +919,7 @@ void DXVAVideoDecodeAccelerator::ProcessPendingSamples() {
 
       media::Picture output_picture(index->second->id(),
                                     sample_info.input_buffer_id);
-      MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
+      base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
           &DXVAVideoDecodeAccelerator::NotifyPictureReady,
           base::AsWeakPtr(this), output_picture));
 
@@ -942,7 +929,7 @@ void DXVAVideoDecodeAccelerator::ProcessPendingSamples() {
   }
 
   if (!pending_input_buffers_.empty() && pending_output_samples_.empty()) {
-    MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
+    base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
         &DXVAVideoDecodeAccelerator::DecodePendingInputBuffers,
         base::AsWeakPtr(this)));
   }
@@ -1053,7 +1040,7 @@ void DXVAVideoDecodeAccelerator::FlushInternal() {
       return;
   }
 
-  MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
+  base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
       &DXVAVideoDecodeAccelerator::NotifyFlushDone, base::AsWeakPtr(this)));
 
   state_ = kNormal;
@@ -1125,7 +1112,7 @@ void DXVAVideoDecodeAccelerator::DecodeInternal(
   // decoder to emit an output packet for every input packet.
   // http://code.google.com/p/chromium/issues/detail?id=108121
   // http://code.google.com/p/chromium/issues/detail?id=150925
-  MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
+  base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
       &DXVAVideoDecodeAccelerator::NotifyInputBufferRead,
       base::AsWeakPtr(this), input_buffer_id));
 }

@@ -2,23 +2,34 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+GEN('#include "chrome/test/data/webui/history_ui_browsertest.h"');
+
 /** @const */ var TOTAL_RESULT_COUNT = 160;
 /** @const */ var WAIT_TIMEOUT = 200;
 
 /**
+ * Test fixture for history WebUI testing.
+ * @constructor
+ * @extends {testing.Test}
+ */
+function HistoryUIBrowserTest() {}
+
+/**
  * Create a fake history result with the given timestamp.
  * @param {Number} timestamp Timestamp of the entry, in ms since the epoch.
+ * @param {String} url The URL to set on this entry.
  * @return {Object} An object representing a history entry.
  */
-function createHistoryEntry(timestamp) {
+function createHistoryEntry(timestamp, url) {
   var d = new Date(timestamp);
   return {
     dateTimeOfDay: d.getHours() + ':' + d.getMinutes(),
     dateRelativeDay: d.toDateString(),
+    allTimestamps: [timestamp],
     starred: false,
     time: timestamp,
     title: d.toString(),  // Use the stringified date as the title.
-    url: 'http://google.com/' + timestamp
+    url: url
   };
 }
 
@@ -64,6 +75,53 @@ function checkInterval(checked, start, end) {
 }
 
 /**
+ * Returns a period of 7 days, |offset| weeks back from |today|. The behavior
+ * of this function should be identical to
+ * BrowsingHistoryHandler::SetQueryTimeInWeeks.
+ * @param {Number} offset Number of weeks to go back.
+ * @param {Date} today Which date to consider as "today" (since we're not using
+ *     the actual current date in this case).
+ * @return {Object} An object containing the begin date and the end date of the
+ *     computed period.
+ */
+function setQueryTimeInWeeks(offset, today) {
+  // Going back one day at a time starting from midnight will make sure that
+  // the other values get updated properly.
+  var endTime = new Date(today);
+  endTime.setHours(24, 0, 0, 0);
+  for (var i = 0; i < 7 * offset; i++)
+    endTime.setDate(endTime.getDate() - 1);
+  var beginTime = new Date(endTime);
+  for (var i = 0; i < 7; i++)
+    beginTime.setDate(beginTime.getDate() - 1);
+  return {'endTime': endTime, 'beginTime': beginTime};
+}
+
+/**
+ * Returns the period of a month, |offset| months back from |today|. The
+ * behavior of this function should be identical to
+ * BrowsingHistoryHandler::SetQueryTimeInMonths.
+ * @param {Number} offset Number of months to go back.
+ * @param {Date} today Which date to consider as "today" (since we're not using
+ *     the actual current date in this case).
+ * @return {Object} An object containing the begin date and the end date of the
+ *     computed period.
+ */
+function setQueryTimeInMonths(offset, today) {
+  var endTime = new Date(today);
+  var beginTime = new Date(today);
+  // Last day of this month.
+  endTime.setMonth(endTime.getMonth() + 1, 0);
+  // First day of the current month.
+  beginTime.setMonth(beginTime.getMonth(), 1);
+  for (var i = 0; i < offset; i++) {
+    beginTime.setMonth(beginTime.getMonth() - 1);
+    endTime.setMonth(endTime.getMonth() - 1);
+  }
+  return {'endTime': endTime, 'beginTime': beginTime};
+}
+
+/**
  * Base fixture for History WebUI testing.
  * @extends {testing.Test}
  * @constructor
@@ -78,7 +136,24 @@ BaseHistoryWebUITest.prototype = {
    */
   browsePreload: 'chrome://history-frame',
 
+  /** @override */
+  typedefCppFixture: 'HistoryUIBrowserTest',
+
   isAsync: true,
+};
+
+/**
+ * Fixture for History WebUI testing which returns some fake history results
+ * to the frontend. Other fixtures that want to stub out calls to the backend
+ * can extend this one.
+ * @extends {BaseHistoryWebUITest}
+ * @constructor
+ */
+function HistoryWebUIFakeBackendTest() {
+}
+
+HistoryWebUIFakeBackendTest.prototype = {
+  __proto__: BaseHistoryWebUITest.prototype,
 
   /**
    * Register handlers to stub out calls to the history backend.
@@ -94,7 +169,7 @@ BaseHistoryWebUITest.prototype = {
    * @param handlerName The name of the message to mock.
    * @param handler The mock message handler function.
    */
-   registerMockHandler_: function(handlerName, handler) {
+  registerMockHandler_: function(handlerName, handler) {
     // Mock4JS doesn't pass in the actual arguments to the stub, but it _will_
     // pass the original args to the matcher object. SaveMockArguments acts as
     // a proxy for another matcher, but keeps track of all the arguments it was
@@ -115,25 +190,88 @@ BaseHistoryWebUITest.prototype = {
   queryHistoryStub_: function(args) {
     callFrontendAsync(
         'historyResult', { term: args[0], finished: true }, []);
-  },
+  }
 };
+
+function queryHistoryImpl(args, beginTime, history) {
+  var searchText = args[0];
+  var offset = args[1];
+  var range = args[2];
+  var endTime = args[3] || Number.MAX_VALUE;
+  var maxCount = args[4];
+
+  var results = [];
+  if (searchText) {
+    for (var k = 0; k < history.length; k++) {
+      // Search only by title in this stub.
+      if (history[k].title.indexOf(searchText) != -1)
+        results.push(history[k]);
+    }
+  } else {
+    results = history;
+  }
+
+  // Advance past all entries newer than the specified end time.
+  var i = 0;
+  // Finished is set from the history database so this behavior may not be
+  // completely identical.
+  var finished = true;
+  while (i < results.length && results[i].time >= endTime)
+    ++i;
+
+  if (beginTime) {
+    var j = i;
+    while (j < results.length && results[j].time >= beginTime)
+      ++j;
+
+    finished = (j == results.length);
+    results = results.slice(i, j);
+  } else {
+    results = results.slice(i);
+  }
+
+  if (maxCount) {
+    finished = (maxCount >= results.length);
+    results = results.slice(0, maxCount);
+  }
+
+  var queryStartTime = '';
+  var queryEndTime = '';
+  if (results.length) {
+    queryStartTime = results[results.length - 1].dateRelativeDay;
+    queryEndTime = results[0].dateRelativeDay;
+  } else if (beginTime) {
+    queryStartTime = Date(beginTime);
+    queryEndTime = Date(endTime);
+  }
+
+  callFrontendAsync(
+      'historyResult',
+      {
+        term: searchText,
+        finished: finished,
+        queryStartTime: queryStartTime,
+        queryEndTime: queryEndTime
+      },
+      results);
+}
 
 /**
  * Fixture for History WebUI testing which returns some fake history results
  * to the frontend.
- * @extends {BaseHistoryWebUITest}
+ * @extends {HistoryWebUIFakeBackendTest}
  * @constructor
  */
 function HistoryWebUITest() {}
 
 HistoryWebUITest.prototype = {
-  __proto__: BaseHistoryWebUITest.prototype,
+  __proto__: HistoryWebUIFakeBackendTest.prototype,
 
   preLoad: function() {
-    BaseHistoryWebUITest.prototype.preLoad.call(this);
+    HistoryWebUIFakeBackendTest.prototype.preLoad.call(this);
 
     this.registerMockHandler_(
-        'removeUrlsOnOneDay', this.removeUrlsStub_.bind(this));
+        'removeVisits', this.removeVisitsStub_.bind(this));
 
     // Prepare a list of fake history results. The entries will begin at
     // 1:00 AM on Sept 2, 2008, and will be spaced two minutes apart.
@@ -141,7 +279,8 @@ HistoryWebUITest.prototype = {
     this.fakeHistory_ = [];
 
     for (var i = 0; i < TOTAL_RESULT_COUNT; i++) {
-      this.fakeHistory_.push(createHistoryEntry(timestamp));
+      this.fakeHistory_.push(
+          createHistoryEntry(timestamp, 'http://google.com/' + timestamp));
       timestamp -= 2 * 60 * 1000;  // Next visit is two minutes earlier.
     }
   },
@@ -158,47 +297,53 @@ HistoryWebUITest.prototype = {
     var range = args[2];
     var endTime = args[3] || Number.MAX_VALUE;
     var maxCount = args[4];
+    if (range == HistoryModel.Range.ALL_TIME) {
+      queryHistoryImpl(args, null, this.fakeHistory_);
+      return;
+    }
+    if (range == HistoryModel.Range.WEEK)
+      var interval = setQueryTimeInWeeks(offset, this.today);
+    else
+      var interval = setQueryTimeInMonths(offset, this.today);
 
-    // Advance past all entries newer than the specified end time.
-    var i = 0;
-    while (this.fakeHistory_[i] && this.fakeHistory_[i].time >= endTime)
-      ++i;
-
-    var results = this.fakeHistory_.slice(i);
-    if (maxCount)
-      results = results.slice(0, maxCount);
-
-    callFrontendAsync(
-        'historyResult',
-        {
-          term: searchText,
-          finished: (this.fakeHistory_.length <= i + results.length)
-        },
-        results);
+    args[3] = interval.endTime.getTime();
+    queryHistoryImpl(args, interval.beginTime.getTime(), this.fakeHistory_);
   },
 
   /**
-   * Stub for the 'removeUrlsOnOneDay' message to the history backend.
+   * Stub for the 'removeVisits' message to the history backend.
    * This will modify the fake history data in the test instance, so that
    * further 'queryHistory' messages will not contain the deleted entries.
-   * @param {Array} arguments The original arguments to removeUrlsOnOneDay.
+   * @param {Array} arguments The original arguments to removeVisits.
    */
-  removeUrlsStub_: function(args) {
-    var day = new Date(args[0]).toDateString();
-    var urls = args.slice(1);
+  removeVisitsStub_: function(args) {
+    for (var i = 0; i < args.length; ++i) {
+      var url = args[i].url;
+      var timestamps = args[i].timestamps;
+      assertEquals(timestamps.length, 1);
+      this.removeVisitsToUrl_(url, new Date(timestamps[0]));
+    }
+    callFrontendAsync('deleteComplete');
+  },
 
-    // Remove the matching URLs from the fake history data.
+  /**
+   * Removes any visits to |url| on the same day as |date| from the fake
+   * history data.
+   * @param {string} url
+   * @param {Date} date
+   */
+  removeVisitsToUrl_: function(url, date) {
+    var day = date.toDateString();
     var newHistory = [];
     for (var i = 0, visit; visit = this.fakeHistory_[i]; ++i) {
-      if (urls.indexOf(visit.url) < 0 || visit.dateRelativeDay != day)
+      if (url != visit.url || visit.dateRelativeDay != day)
         newHistory.push(visit);
     }
     this.fakeHistory_ = newHistory;
-    callFrontendAsync('deleteComplete');
   }
 };
 
-TEST_F('BaseHistoryWebUITest', 'emptyHistory', function() {
+TEST_F('HistoryWebUIFakeBackendTest', 'emptyHistory', function() {
   expectTrue($('newest-button').hidden);
   expectTrue($('newer-button').hidden);
   expectTrue($('older-button').hidden);
@@ -249,7 +394,7 @@ TEST_F('HistoryWebUITest', 'basicTest', function() {
 
   // Check that there are 3 page navigation links and that only the "Older"
   // link is visible.
-  expectEquals(3, document.querySelectorAll('.link-button').length)
+  expectEquals(3, document.querySelectorAll('.link-button').length);
   expectTrue($('newest-button').hidden);
   expectTrue($('newer-button').hidden);
   expectFalse($('older-button').hidden);
@@ -272,7 +417,7 @@ TEST_F('HistoryWebUITest', 'basicTest', function() {
 
     // Check that the "Newest" and "Newer" links are now visible, but the
     // "Older" link is hidden.
-    expectEquals(3, document.querySelectorAll('.link-button').length)
+    expectEquals(3, document.querySelectorAll('.link-button').length);
     expectFalse($('newest-button').hidden);
     expectFalse($('newer-button').hidden);
     expectTrue($('older-button').hidden);
@@ -292,16 +437,18 @@ TEST_F('HistoryWebUITest', 'basicTest', function() {
 });
 
 /**
- * Test deletion of history entries.
+ * Test bulk deletion of history entries.
  */
-TEST_F('HistoryWebUITest', 'deletion', function() {
+TEST_F('HistoryWebUITest', 'bulkDeletion', function() {
   var checkboxes = document.querySelectorAll(
       '#results-display input[type=checkbox]');
 
-  // Confirm all the things!!!
-  window.confirm = function() { return true; };
+  // Immediately confirm the history deletion.
+  confirmDeletion = function(okCallback, cancelCallback) {
+    okCallback();
+  };
 
-  // The "remote" button should be initially selected.
+  // The "remove" button should be initially disabled.
   var removeButton = $('remove-selected');
   expectTrue(removeButton.disabled);
 
@@ -336,16 +483,45 @@ TEST_F('HistoryWebUITest', 'deletion', function() {
 });
 
 /**
+ * Test individual deletion of history entries.
+ */
+TEST_F('HistoryWebUITest', 'singleDeletion', function() {
+  var dropDownButton = document.querySelector('.entry-box .drop-down');
+  assertNotEquals(dropDownButton, null);
+  expectFalse(dropDownButton.disabled);
+
+  var removeMenuItem = document.getElementById('remove-visit');
+  assertNotEquals(removeMenuItem, null);
+  expectFalse(removeMenuItem.disabled);
+
+  var secondEntry = document.querySelectorAll('.title a')[1];
+
+  // Delete the first entry.
+  cr.dispatchSimpleEvent(dropDownButton, 'mousedown');
+  expectEquals(window.activeVisit.textContent,
+               historyModel.visits_[0].textContent);
+  cr.dispatchSimpleEvent(removeMenuItem, 'activate');
+
+  // Removing the item triggers a fade-out transition followed by node removal.
+  waitForCallback('removeNodeWithoutTransition', function() {
+    // The original second entry should now be the first.
+    expectEquals(document.querySelector('.title a').textContent,
+                 secondEntry.textContent);
+    testDone();
+  });
+});
+
+/**
  * Test selecting multiple entries using shift click.
  */
 TEST_F('HistoryWebUITest', 'multipleSelect', function() {
   var checkboxes = document.querySelectorAll(
       '#results-display input[type=checkbox]');
 
-  var getAllChecked = function () {
+  var getAllChecked = function() {
     return Array.prototype.slice.call(document.querySelectorAll(
         '#results-display input[type=checkbox]:checked'));
-  }
+  };
 
   // Make sure that nothing is checked.
   expectEquals(0, getAllChecked().length);
@@ -396,4 +572,272 @@ TEST_F('HistoryWebUITest', 'multipleSelect', function() {
   expectEquals('checkbox-19', checked[11].id);
 
   testDone();
+});
+
+TEST_F('HistoryWebUITest', 'searchHistory', function() {
+  var getResultCount = function() {
+    return document.querySelectorAll('.entry').length;
+  };
+  // See that all the elements are there.
+  expectEquals(RESULTS_PER_PAGE, getResultCount());
+
+  // See that the search works.
+  $('search-field').value = 'Thu Oct 02 2008';
+  $('search-button').click();
+
+  waitForCallback('historyResult', function() {
+    expectEquals(31, getResultCount());
+
+    // Clear the search.
+    $('search-field').value = '';
+    $('search-button').click();
+    waitForCallback('historyResult', function() {
+      expectEquals(RESULTS_PER_PAGE, getResultCount());
+      testDone();
+    });
+  });
+});
+
+function setPageState(searchText, page, groupByDomain, range, offset) {
+  window.location = '#' + PageState.getHashString(
+      searchText, page, groupByDomain, range, offset);
+}
+
+function RangeHistoryWebUITest() {}
+
+RangeHistoryWebUITest.prototype = {
+  __proto__: HistoryWebUITest.prototype,
+
+  /** @override */
+  preLoad: function() {
+    HistoryWebUITest.prototype.preLoad.call(this);
+    // Repeat the domain visits every 4 days. The nested lists contain the
+    // domain suffixes for the visits in a day.
+    var domainSuffixByDay = [
+      [1, 2, 3, 4],
+      [1, 2, 2, 3],
+      [1, 2, 1, 2],
+      [1, 1, 1, 1]
+    ];
+
+    var buildDomainUrl = function(timestamp) {
+      var d = new Date(timestamp);
+      // Repeat the same setup of domains every 4 days.
+      var day = d.getDate() % 4;
+      // Assign an entry for every 6 hours so that we get 4 entries per day
+      // maximum.
+      var visitInDay = Math.floor(d.getHours() / 6);
+      return 'http://google' + domainSuffixByDay[day][visitInDay] + '.com/' +
+          timestamp;
+    };
+
+    // Prepare a list of fake history results. Start the results on
+    // 11:00 PM on May 2, 2012 and add 4 results every day (one result every 6
+    // hours).
+    var timestamp = new Date(2012, 4, 2, 23, 0).getTime();
+    this.today = new Date(2012, 4, 2);
+    this.fakeHistory_ = [];
+
+    // Put in 2 days for May and 30 days for April so the results span over
+    // the month limit.
+    for (var i = 0; i < 4 * 32; i++) {
+      this.fakeHistory_.push(
+          createHistoryEntry(timestamp, buildDomainUrl(timestamp)));
+      timestamp -= 6 * 60 * 60 * 1000;
+    }
+
+    // Leave March empty.
+    timestamp -= 31 * 24 * 3600 * 1000;
+
+    // Put results in February.
+    for (var i = 0; i < 29 * 4; i++) {
+      this.fakeHistory_.push(
+          createHistoryEntry(timestamp, buildDomainUrl(timestamp)));
+      timestamp -= 6 * 60 * 60 * 1000;
+    }
+  },
+
+  setUp: function() {
+    // Show the filter controls as if the command line switch was active.
+    $('filter-controls').hidden = false;
+    expectFalse($('filter-controls').hidden);
+  },
+};
+
+TEST_F('RangeHistoryWebUITest', 'allView', function() {
+  // Check that we start off in the all time view.
+  expectEquals(parseInt($('timeframe-filter').value, 10),
+               HistoryModel.Range.ALL_TIME);
+  // See if the correct number of days is shown.
+  var dayHeaders = document.querySelectorAll('.day');
+  assertEquals(Math.ceil(RESULTS_PER_PAGE / 4), dayHeaders.length);
+  testDone();
+});
+
+/**
+ * Checks whether the domains in a day are ordered decreasingly.
+ * @param {Element} element Ordered list containing the grouped domains for a
+ *     day.
+ */
+function checkGroupedVisits(element) {
+  // The history page contains the number of visits next to a domain in
+  // parentheses (e.g. 'google.com (5)'). This function extracts that number
+  // and returns it.
+  var getNumberVisits = function(element) {
+    return parseInt(element.textContent.replace(/\D/g, ''), 10);
+  };
+
+  // Read the number of visits from each domain and make sure that it is lower
+  // than or equal to the number of visits from the previous domain.
+  var domainEntries = element.querySelectorAll('.number-visits');
+  var currentNumberOfVisits = getNumberVisits(domainEntries[0]);
+  for (var j = 1; j < domainEntries.length; j++) {
+    var numberOfVisits = getNumberVisits(domainEntries[j]);
+    assertTrue(currentNumberOfVisits >= numberOfVisits);
+    currentNumberOfVisits = numberOfVisits;
+  }
+}
+
+TEST_F('RangeHistoryWebUITest', 'weekView', function() {
+  // Change to weekly view.
+  $('timeframe-filter').value = HistoryModel.Range.WEEK;
+  historyView.setRangeInDays(HistoryModel.Range.WEEK);
+  waitForCallback('historyResult', function() {
+    // See if the correct number of days is shown.
+    var dayHeaders = document.querySelectorAll('.day');
+    assertEquals(7, dayHeaders.length);
+    expectFalse(document.querySelector('h2.timeframe').hidden);
+
+    testDone();
+  });
+});
+
+TEST_F('RangeHistoryWebUITest', 'weekViewGrouped', function() {
+  // Change to weekly view.
+  setPageState('', 0, true, HistoryModel.Range.WEEK, 0);
+  waitForCallback('historyResult', function() {
+    // See if the correct number of days is still shown.
+    var dayResults = document.querySelectorAll('.day-results');
+    assertEquals(7, dayResults.length);
+
+    // Check whether the results are ordered by visits.
+    for (var i = 0; i < dayResults.length; i++)
+      checkGroupedVisits(dayResults[i]);
+
+    testDone();
+  });
+});
+
+TEST_F('RangeHistoryWebUITest', 'monthView', function() {
+  // Change to monthly view.
+  setPageState('', 0, false, HistoryModel.Range.MONTH, 0);
+  waitForCallback('historyResult', function() {
+    // See if the correct number of days is shown.
+    var dayHeaders = document.querySelectorAll('.day');
+    assertEquals(2, dayHeaders.length);
+    expectFalse(document.querySelector('h2.timeframe').hidden);
+    testDone();
+  });
+});
+
+TEST_F('RangeHistoryWebUITest', 'monthViewGrouped', function() {
+  // Change to monthly view.
+  setPageState('', 0, true, HistoryModel.Range.MONTH, 0);
+  waitForCallback('historyResult', function() {
+    // See if the correct number of days is shown.
+    var monthResults = document.querySelectorAll('.month-results');
+    assertEquals(1, monthResults.length);
+
+    checkGroupedVisits(monthResults[0]);
+
+    testDone();
+  });
+});
+
+TEST_F('RangeHistoryWebUITest', 'monthViewEmptyMonth', function() {
+  // Change to monthly view.
+  setPageState('', 0, true, HistoryModel.Range.MONTH, 2);
+
+  waitForCallback('historyResult', function() {
+    // See if the correct number of days is shown.
+    var resultsDisplay = $('results-display');
+    assertEquals(0, resultsDisplay.querySelectorAll('.months-results').length);
+    assertEquals(1, resultsDisplay.querySelectorAll('div').length);
+
+    testDone();
+  });
+});
+
+/**
+ * Fixture for History WebUI tests using the real history backend.
+ * @extends {BaseHistoryWebUITest}
+ * @constructor
+ */
+function HistoryWebUIRealBackendTest() {}
+
+HistoryWebUIRealBackendTest.prototype = {
+  __proto__: BaseHistoryWebUITest.prototype,
+
+  /** @override */
+  testGenPreamble: function() {
+    // Add some visits to the history database.
+    GEN('  AddPageToHistory(0, "http://google.com", "Google");');
+    GEN('  AddPageToHistory(1, "http://example.com", "Example");');
+    GEN('  AddPageToHistory(2, "http://google.com", "Google");');
+
+    // Add a visit on the next day.
+    GEN('  AddPageToHistory(24, "http://google.com", "Google");');
+  },
+};
+
+/**
+ * Simple test that verifies that the correct entries are retrieved from the
+ * history database and displayed in the UI.
+ */
+TEST_F('HistoryWebUIRealBackendTest', 'basic', function() {
+  // Check that there are two days of entries, and three entries in total.
+  assertEquals(2, document.querySelectorAll('.day').length);
+  assertEquals(3, document.querySelectorAll('.entry').length);
+
+  testDone();
+});
+
+/**
+ * Fixture for History WebUI testing when deletions are prohibited.
+ * @extends {HistoryWebUIRealBackendTest}
+ * @constructor
+ */
+function HistoryWebUIDeleteProhibitedTest() {}
+
+HistoryWebUIDeleteProhibitedTest.prototype = {
+  __proto__: HistoryWebUIRealBackendTest.prototype,
+
+  /** @override */
+  testGenPreamble: function() {
+    HistoryWebUIRealBackendTest.prototype.testGenPreamble.call(this);
+    GEN('  SetDeleteAllowed(false);');
+  },
+};
+
+// Test UI when removing entries is prohibited.
+TEST_F('HistoryWebUIDeleteProhibitedTest', 'deleteProhibited', function() {
+  // No checkboxes should be created.
+  var checkboxes = document.querySelectorAll(
+      '#results-display input[type=checkbox]');
+  expectEquals(0, checkboxes.length);
+
+  // The "remove" button should be disabled.
+  var removeButton = $('remove-selected');
+  expectTrue(removeButton.disabled);
+
+  // The "Remove from history" drop-down item should be disabled.
+  var removeVisit = $('remove-visit');
+  expectTrue(removeVisit.disabled);
+
+  // Attempting to remove items anyway should fail.
+  historyModel.removeVisitsFromHistory(historyModel.visits_, function () {
+    // The callback is only called on success.
+    testDone([false, 'Delete succeeded even though it was prohibited.']);
+  });
+  waitForCallback('deleteFailed', testDone);
 });

@@ -6,8 +6,8 @@ package org.chromium.content.browser;
 
 import android.test.suitebuilder.annotation.SmallTest;
 
-import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.DisabledTest;
+import org.chromium.base.test.util.Feature;
 
 /**
  * Part of the test suite for the Java Bridge. This class tests that we correctly convert
@@ -22,8 +22,8 @@ import org.chromium.base.test.util.DisabledTest;
  */
 public class JavaBridgeArrayCoercionTest extends JavaBridgeTestBase {
     private class TestObject extends Controller {
-        private Object mObjectInstance;
-        private CustomType mCustomTypeInstance;
+        private final Object mObjectInstance;
+        private final CustomType mCustomTypeInstance;
 
         private boolean[] mBooleanArray;
         private byte[] mByteArray;
@@ -141,7 +141,7 @@ public class JavaBridgeArrayCoercionTest extends JavaBridgeTestBase {
     }
 
     // Two custom types used when testing passing objects.
-    private class CustomType {
+    private static class CustomType {
     }
 
     private TestObject mTestObject;
@@ -248,12 +248,8 @@ public class JavaBridgeArrayCoercionTest extends JavaBridgeTestBase {
 
     // Test passing an array of JavaScript NaN values to a method which takes a
     // Java array.
-    /*
     @SmallTest
     @Feature({"AndroidWebView", "Android-JavaBridge"})
-      Bug: http://code.google.com/p/chromium/issues/detail?id=145881
-    */
-    @DisabledTest
     public void testPassNumberNaN() throws Throwable {
         executeJavaScript("testObject.setBooleanArray([Number.NaN]);");
         assertFalse(mTestObject.waitForBooleanArray()[0]);
@@ -294,12 +290,8 @@ public class JavaBridgeArrayCoercionTest extends JavaBridgeTestBase {
 
     // Test passing an array of JavaScript infinity values to a method which
     // takes a Java array.
-    /*
     @SmallTest
     @Feature({"AndroidWebView", "Android-JavaBridge"})
-      Bug: http://code.google.com/p/chromium/issues/detail?id=145881
-    */
-    @DisabledTest
     public void testPassNumberInfinity() throws Throwable {
         executeJavaScript("testObject.setBooleanArray([Infinity]);");
         assertFalse(mTestObject.waitForBooleanArray()[0]);
@@ -317,9 +309,8 @@ public class JavaBridgeArrayCoercionTest extends JavaBridgeTestBase {
         executeJavaScript("testObject.setIntArray([Infinity]);");
         assertEquals(Integer.MAX_VALUE, mTestObject.waitForIntArray()[0]);
 
-        // LIVECONNECT_COMPLIANCE: Should be Long.MAX_VALUE.
         executeJavaScript("testObject.setLongArray([Infinity]);");
-        assertEquals(-1L, mTestObject.waitForLongArray()[0]);
+        assertEquals(Long.MAX_VALUE, mTestObject.waitForLongArray()[0]);
 
         executeJavaScript("testObject.setFloatArray([Infinity]);");
         assertEquals(Float.POSITIVE_INFINITY, mTestObject.waitForFloatArray()[0]);

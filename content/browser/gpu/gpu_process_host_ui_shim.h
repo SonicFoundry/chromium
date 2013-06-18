@@ -28,6 +28,10 @@ struct GpuHostMsg_AcceleratedSurfaceBuffersSwapped_Params;
 struct GpuHostMsg_AcceleratedSurfacePostSubBuffer_Params;
 struct GpuHostMsg_AcceleratedSurfaceRelease_Params;
 
+namespace cc {
+struct LatencyInfo;
+}
+
 namespace gfx {
 class Size;
 }
@@ -50,7 +54,7 @@ class GpuProcessHostUIShim : public IPC::Listener,
   // Destroy the GpuProcessHostUIShim with the given host ID. This can only
   // be called on the UI thread. Only the GpuProcessHost should destroy the
   // UI shim.
-  static void Destroy(int host_id);
+  static void Destroy(int host_id, const std::string& message);
 
   // Destroy all remaining GpuProcessHostUIShims.
   CONTENT_EXPORT static void DestroyAll();
@@ -103,6 +107,7 @@ class GpuProcessHostUIShim : public IPC::Listener,
   void OnUpdateVSyncParameters(int surface_id,
                                base::TimeTicks timebase,
                                base::TimeDelta interval);
+  void OnFrameDrawn(const cc::LatencyInfo& latency_info);
 
   // The serial number of the GpuProcessHost / GpuProcessHostUIShim pair.
   int host_id_;

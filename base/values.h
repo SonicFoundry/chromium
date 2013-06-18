@@ -336,41 +336,11 @@ class BASE_EXPORT DictionaryValue : public Value {
   // Swaps contents with the |other| dictionary.
   virtual void Swap(DictionaryValue* other);
 
-  // This class provides an iterator for the keys in the dictionary.
-  // It can't be used to modify the dictionary.
-  //
-  // YOU SHOULD ALWAYS USE THE XXXWithoutPathExpansion() APIs WITH THESE, NOT
-  // THE NORMAL XXX() APIs.  This makes sure things will work correctly if any
-  // keys have '.'s in them.
-  class BASE_EXPORT key_iterator
-      : private std::iterator<std::input_iterator_tag, const std::string> {
-   public:
-    explicit key_iterator(ValueMap::const_iterator itr);
-    // Not explicit, because this is a copy constructor.
-    key_iterator(const key_iterator& rhs);
-    key_iterator operator++() {
-      ++itr_;
-      return *this;
-    }
-    const std::string& operator*() { return itr_->first; }
-    bool operator!=(const key_iterator& other) { return itr_ != other.itr_; }
-    bool operator==(const key_iterator& other) { return itr_ == other.itr_; }
-
-   private:
-    ValueMap::const_iterator itr_;
-  };
-
-  key_iterator begin_keys() const { return key_iterator(dictionary_.begin()); }
-  key_iterator end_keys() const { return key_iterator(dictionary_.end()); }
-
   // This class provides an iterator over both keys and values in the
   // dictionary.  It can't be used to modify the dictionary.
   class BASE_EXPORT Iterator {
    public:
     explicit Iterator(const DictionaryValue& target);
-
-    // DEPRECATED: use !IsAtEnd() instead.
-    bool HasNext() const { return it_ != target_.dictionary_.end(); }
 
     bool IsAtEnd() const { return it_ == target_.dictionary_.end(); }
     void Advance() { ++it_; }
@@ -522,8 +492,31 @@ class BASE_EXPORT ValueSerializer {
   virtual Value* Deserialize(int* error_code, std::string* error_str) = 0;
 };
 
-// Stream operator so Values can be used in assertion statements.
+// Stream operator so Values can be used in assertion statements.  In order that
+// gtest uses this operator to print readable output on test failures, we must
+// override each specific type. Otherwise, the default template implementation
+// is preferred over an upcast.
 BASE_EXPORT std::ostream& operator<<(std::ostream& out, const Value& value);
+
+BASE_EXPORT inline std::ostream& operator<<(std::ostream& out,
+                                            const FundamentalValue& value) {
+  return out << static_cast<const Value&>(value);
+}
+
+BASE_EXPORT inline std::ostream& operator<<(std::ostream& out,
+                                            const StringValue& value) {
+  return out << static_cast<const Value&>(value);
+}
+
+BASE_EXPORT inline std::ostream& operator<<(std::ostream& out,
+                                            const DictionaryValue& value) {
+  return out << static_cast<const Value&>(value);
+}
+
+BASE_EXPORT inline std::ostream& operator<<(std::ostream& out,
+                                            const ListValue& value) {
+  return out << static_cast<const Value&>(value);
+}
 
 }  // namespace base
 

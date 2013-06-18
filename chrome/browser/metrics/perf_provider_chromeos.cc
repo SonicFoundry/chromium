@@ -11,7 +11,7 @@
 #include "base/compiler_specific.h"
 #include "base/metrics/histogram.h"
 #include "base/process_util.h"
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "chrome/browser/metrics/perf_provider_chromeos.h"
 #include "chrome/browser/profiles/profile.h"
@@ -26,7 +26,12 @@
 namespace {
 
 // Default time in seconds between invocations of perf.
-const unsigned kPerfCommandIntervalDefaultSeconds = 12 * 60 * 60;
+// This period is roughly 6.5 hours.
+// This is chosen to be relatively prime with the number of seconds in:
+// - one minute (60)
+// - one hour (3600)
+// - one day (86400)
+const unsigned kPerfCommandIntervalDefaultSeconds = 23093;
 
 // Default time in seconds perf is run for.
 const unsigned kPerfCommandDurationDefaultSeconds = 2;
@@ -67,7 +72,7 @@ class WindowedIncognitoObserver : public chrome::BrowserListObserver {
 
 PerfProvider::PerfProvider()
       : state_(READY_TO_COLLECT),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+      weak_factory_(this) {
   ScheduleCollection();
 }
 

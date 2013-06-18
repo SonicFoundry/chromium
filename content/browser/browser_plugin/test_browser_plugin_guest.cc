@@ -7,7 +7,7 @@
 #include "base/test/test_timeouts.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
-#include "content/common/browser_plugin_messages.h"
+#include "content/common/browser_plugin/browser_plugin_messages.h"
 #include "content/public/browser/notification_types.h"
 
 namespace content {
@@ -16,13 +16,8 @@ class BrowserPluginGuest;
 
 TestBrowserPluginGuest::TestBrowserPluginGuest(
     int instance_id,
-    WebContentsImpl* embedder_web_contents,
-    WebContentsImpl* web_contents,
-    const BrowserPluginHostMsg_CreateGuest_Params& params)
-    : BrowserPluginGuest(instance_id,
-                         embedder_web_contents,
-                         web_contents,
-                         params),
+    WebContentsImpl* web_contents)
+    : BrowserPluginGuest(instance_id, web_contents, NULL, false),
       update_rect_count_(0),
       damage_buffer_call_count_(0),
       exit_observed_(false),
@@ -111,7 +106,9 @@ void TestBrowserPluginGuest::WaitForDamageBufferWithSize(
 
 void TestBrowserPluginGuest::RenderViewGone(base::TerminationStatus status) {
   exit_observed_ = true;
-  LOG(INFO) << "Guest crashed";
+  if (status != base::TERMINATION_STATUS_NORMAL_TERMINATION &&
+      status != base::TERMINATION_STATUS_STILL_RUNNING)
+    LOG(INFO) << "Guest crashed status: " << status;
   if (crash_message_loop_runner_)
     crash_message_loop_runner_->Quit();
   BrowserPluginGuest::RenderViewGone(status);

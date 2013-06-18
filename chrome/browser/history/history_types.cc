@@ -92,12 +92,14 @@ VisitRow::~VisitRow() {
 
 // URLResult -------------------------------------------------------------------
 
-URLResult::URLResult() {
+URLResult::URLResult()
+    : blocked_visit_(false) {
 }
 
 URLResult::URLResult(const GURL& url, base::Time visit_time)
     : URLRow(url),
-      visit_time_(visit_time) {
+      visit_time_(visit_time),
+      blocked_visit_(false) {
 }
 
 URLResult::URLResult(const GURL& url,
@@ -114,6 +116,7 @@ void URLResult::SwapResult(URLResult* other) {
   std::swap(visit_time_, other->visit_time_);
   snippet_.Swap(&other->snippet_);
   title_match_positions_.swap(other->title_match_positions_);
+  std::swap(blocked_visit_, other->blocked_visit_);
 }
 
 // QueryResults ----------------------------------------------------------------
@@ -121,10 +124,7 @@ void URLResult::SwapResult(URLResult* other) {
 QueryResults::QueryResults() : reached_beginning_(false) {
 }
 
-QueryResults::~QueryResults() {
-  // Free all the URL objects.
-  STLDeleteContainerPointers(results_.begin(), results_.end());
-}
+QueryResults::~QueryResults() {}
 
 const size_t* QueryResults::MatchesForURL(const GURL& url,
                                           size_t* num_matches) const {
@@ -173,8 +173,6 @@ void QueryResults::DeleteRange(size_t begin, size_t end) {
   std::set<GURL> urls_modified;
   for (size_t i = begin; i <= end; i++) {
     urls_modified.insert(results_[i]->url());
-    delete results_[i];
-    results_[i] = NULL;
   }
 
   // Now just delete that range in the vector en masse (the STL ending is
@@ -442,5 +440,19 @@ ImportedFaviconUsage::~ImportedFaviconUsage() {
 // VisitDatabaseObserver -------------------------------------------------------
 
 VisitDatabaseObserver::~VisitDatabaseObserver() {}
+
+ExpireHistoryArgs::ExpireHistoryArgs() {
+}
+
+ExpireHistoryArgs::~ExpireHistoryArgs() {
+}
+
+void ExpireHistoryArgs::SetTimeRangeForOneDay(base::Time time) {
+  begin_time = time.LocalMidnight();
+
+  // Due to DST, leap seconds, etc., the next day at midnight may be more than
+  // 24 hours away, so add 36 hours and round back down to midnight.
+  end_time = (begin_time + base::TimeDelta::FromHours(36)).LocalMidnight();
+}
 
 }  // namespace history

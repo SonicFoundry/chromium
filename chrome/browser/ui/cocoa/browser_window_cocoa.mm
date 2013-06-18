@@ -10,7 +10,7 @@
 #include "base/mac/mac_util.h"
 #include "base/message_loop.h"
 #include "base/prefs/pref_service.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/download/download_shelf.h"
 #include "chrome/browser/extensions/tab_helper.h"
@@ -425,6 +425,10 @@ void BrowserWindowCocoa::FocusBookmarksToolbar() {
   // Not needed on the Mac.
 }
 
+void BrowserWindowCocoa::FocusInfobars() {
+  // Not needed on the Mac.
+}
+
 bool BrowserWindowCocoa::IsBookmarkBarVisible() const {
   return browser_->profile()->GetPrefs()->GetBoolean(prefs::kShowBookmarkBar);
 }
@@ -449,10 +453,6 @@ gfx::Rect BrowserWindowCocoa::GetRootWindowResizerRect() const {
   return gfx::Rect(NSRectToCGRect(tabRect));
 }
 
-bool BrowserWindowCocoa::IsPanel() const {
-  return false;
-}
-
 // This is called from Browser, which in turn is called directly from
 // a menu option.  All we do here is set a preference.  The act of
 // setting the preference sends notifications to all windows who then
@@ -470,14 +470,6 @@ void BrowserWindowCocoa::ShowUpdateChromeDialog() {
   restart_browser::RequestRestart(window());
 }
 
-void BrowserWindowCocoa::ShowTaskManager() {
-  TaskManagerMac::Show(false);
-}
-
-void BrowserWindowCocoa::ShowBackgroundPages() {
-  TaskManagerMac::Show(true);
-}
-
 void BrowserWindowCocoa::ShowBookmarkBubble(const GURL& url,
                                             bool already_bookmarked) {
   [controller_ showBookmarkBubbleForURL:url
@@ -491,16 +483,21 @@ void BrowserWindowCocoa::ShowChromeToMobileBubble() {
 #if defined(ENABLE_ONE_CLICK_SIGNIN)
 void BrowserWindowCocoa::ShowOneClickSigninBubble(
     OneClickSigninBubbleType type,
+    const string16& email,
+    const string16& error_message,
     const StartSyncCallback& start_sync_callback) {
+  WebContents* web_contents =
+        browser_->tab_strip_model()->GetActiveWebContents();
   if (type == ONE_CLICK_SIGNIN_BUBBLE_TYPE_BUBBLE) {
     scoped_nsobject<OneClickSigninBubbleController> bubble_controller(
         [[OneClickSigninBubbleController alloc]
             initWithBrowserWindowController:cocoa_controller()
+                                webContents:web_contents
+                               errorMessage:base::SysUTF16ToNSString(
+                                                error_message)
                                    callback:start_sync_callback]);
     [bubble_controller showWindow:nil];
   } else {
-    WebContents* web_contents =
-        browser_->tab_strip_model()->GetActiveWebContents();
     // Deletes itself when the dialog closes.
     new OneClickSigninDialogController(web_contents, start_sync_callback);
   }
@@ -645,13 +642,14 @@ FindBar* BrowserWindowCocoa::CreateFindBar() {
   // constructor or the FindBarCocoaController init, but that makes
   // unit testing difficult, since we would also require a
   // BrowserWindow object.
-  FindBarBridge* bridge = new FindBarBridge();
+  FindBarBridge* bridge = new FindBarBridge(browser_);
   AddFindBar(bridge->find_bar_cocoa_controller());
   return bridge;
 }
 
-bool BrowserWindowCocoa::GetConstrainedWindowTopY(int* top_y) {
-  return false;
+WebContentsModalDialogHost*
+    BrowserWindowCocoa::GetWebContentsModalDialogHost() {
+  return NULL;
 }
 
 extensions::ActiveTabPermissionGranter*
@@ -665,9 +663,8 @@ extensions::ActiveTabPermissionGranter*
   return tab_helper ? tab_helper->active_tab_permission_granter() : NULL;
 }
 
-void BrowserWindowCocoa::ModeChanged(
-    const chrome::search::Mode& old_mode,
-    const chrome::search::Mode& new_mode) {
+void BrowserWindowCocoa::ModelChanged(const SearchModel::State& old_state,
+                                      const SearchModel::State& new_state) {
   [controller_ updateBookmarkBarStateForInstantOverlay];
 }
 

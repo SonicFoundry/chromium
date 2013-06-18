@@ -10,6 +10,7 @@
 #include "base/message_loop.h"
 #include "base/path_service.h"
 #include "base/pending_task.h"
+#include "base/rand_util.h"
 #include "base/string_util.h"
 #include "base/stringprintf.h"
 #include "base/strings/string_number_conversions.h"
@@ -64,7 +65,6 @@ base::FilePath GetTestFilePath(const std::string& relative_path) {
   path = path.AppendASCII("chrome")
              .AppendASCII("test")
              .AppendASCII("data")
-             .AppendASCII("chromeos")
              .Append(base::FilePath::FromUTF8Unsafe(relative_path));
   return path;
 }
@@ -86,6 +86,34 @@ void RunBlockingPoolTask() {
   }
 }
 
+void RunAndQuit(const base::Closure& closure) {
+  closure.Run();
+  MessageLoop::current()->Quit();
+}
+
+bool WriteStringToFile(const base::FilePath& file_path,
+                       const std::string& content) {
+  int result = file_util::WriteFile(file_path, content.data(), content.size());
+  return content.size() == static_cast<size_t>(result);
+}
+
+bool CreateFileOfSpecifiedSize(const base::FilePath& temp_dir,
+                               size_t size,
+                               base::FilePath* path,
+                               std::string* data) {
+  if (!file_util::CreateTemporaryFileInDir(temp_dir, path))
+    return false;
+
+  if (size == 0) {
+    // Note: RandBytesAsString doesn't support generating an empty string.
+    data->clear();
+    return true;
+  }
+
+  *data = base::RandBytesAsString(size);
+  return WriteStringToFile(*path, *data);
+}
+
 scoped_ptr<base::Value> LoadJSONFile(const std::string& relative_path) {
   base::FilePath path = GetTestFilePath(relative_path);
 
@@ -95,125 +123,6 @@ scoped_ptr<base::Value> LoadJSONFile(const std::string& relative_path) {
   LOG_IF(WARNING, !value.get()) << "Failed to parse " << path.value()
                                 << ": " << error;
   return value.Pass();
-}
-
-void CopyResultsFromEntryActionCallback(GDataErrorCode* error_out,
-                                        GDataErrorCode error_in) {
-  *error_out = error_in;
-}
-
-void CopyResultFromEntryActionCallbackAndQuit(GDataErrorCode* error_out,
-                                              GDataErrorCode error_in) {
-  *error_out = error_in;
-  MessageLoop::current()->Quit();
-}
-
-void CopyResultsFromGetDataCallback(GDataErrorCode* error_out,
-                                    scoped_ptr<base::Value>* value_out,
-                                    GDataErrorCode error_in,
-                                    scoped_ptr<base::Value> value_in) {
-  value_out->swap(value_in);
-  *error_out = error_in;
-}
-
-void CopyResultsFromGetDataCallbackAndQuit(GDataErrorCode* error_out,
-                                           scoped_ptr<base::Value>* value_out,
-                                           GDataErrorCode error_in,
-                                           scoped_ptr<base::Value> value_in) {
-  *error_out = error_in;
-  *value_out = value_in.Pass();
-  MessageLoop::current()->Quit();
-}
-
-void CopyResultsFromGetResourceEntryCallback(
-    GDataErrorCode* error_out,
-    scoped_ptr<ResourceEntry>* resource_entry_out,
-    GDataErrorCode error_in,
-    scoped_ptr<ResourceEntry> resource_entry_in) {
-  resource_entry_out->swap(resource_entry_in);
-  *error_out = error_in;
-}
-
-void CopyResultsFromGetResourceListCallback(
-    GDataErrorCode* error_out,
-    scoped_ptr<ResourceList>* resource_list_out,
-    GDataErrorCode error_in,
-    scoped_ptr<ResourceList> resource_list_in) {
-  resource_list_out->swap(resource_list_in);
-  *error_out = error_in;
-}
-
-void CopyResultsFromGetAccountMetadataCallback(
-    GDataErrorCode* error_out,
-    scoped_ptr<AccountMetadata>* account_metadata_out,
-    GDataErrorCode error_in,
-    scoped_ptr<AccountMetadata> account_metadata_in) {
-  account_metadata_out->swap(account_metadata_in);
-  *error_out = error_in;
-}
-
-void CopyResultsFromGetAccountMetadataCallbackAndQuit(
-    GDataErrorCode* error_out,
-    scoped_ptr<AccountMetadata>* account_metadata_out,
-    GDataErrorCode error_in,
-    scoped_ptr<AccountMetadata> account_metadata_in) {
-  CopyResultsFromGetAccountMetadataCallback(
-      error_out, account_metadata_out, error_in, account_metadata_in.Pass());
-  MessageLoop::current()->Quit();
-}
-
-void CopyResultsFromGetAboutResourceCallback(
-    GDataErrorCode* error_out,
-    scoped_ptr<AboutResource>* about_resource_out,
-    GDataErrorCode error_in,
-    scoped_ptr<AboutResource> about_resource_in) {
-  *error_out = error_in;
-  *about_resource_out = about_resource_in.Pass();
-}
-
-void CopyResultsFromGetAppListCallback(
-    GDataErrorCode* error_out,
-    scoped_ptr<AppList>* app_list_out,
-    GDataErrorCode error_in,
-    scoped_ptr<AppList> app_list_in) {
-  *app_list_out = app_list_in.Pass();
-  *error_out = error_in;
-}
-
-void CopyResultsFromDownloadActionCallback(
-    GDataErrorCode* error_out,
-    base::FilePath* temp_file_out,
-    GDataErrorCode error_in,
-    const base::FilePath& temp_file_in) {
-  *error_out = error_in;
-  *temp_file_out = temp_file_in;
-}
-
-void CopyResultsFromInitiateUploadCallback(
-    GDataErrorCode* error_out,
-    GURL* url_out,
-    GDataErrorCode error_in,
-    const GURL& url_in) {
-  *error_out = error_in;
-  *url_out = url_in;
-}
-
-void CopyResultsFromInitiateUploadCallbackAndQuit(
-    GDataErrorCode* error_out,
-    GURL* url_out,
-    GDataErrorCode error_in,
-    const GURL& url_in) {
-  CopyResultsFromInitiateUploadCallback(error_out, url_out, error_in, url_in);
-  MessageLoop::current()->Quit();
-}
-
-void CopyResultsFromUploadRangeCallback(
-    UploadRangeResponse* response_out,
-    scoped_ptr<ResourceEntry>* entry_out,
-    const UploadRangeResponse& response_in,
-    scoped_ptr<ResourceEntry> entry_in) {
-  *response_out = response_in;
-  *entry_out = entry_in.Pass();
 }
 
 // Returns a HttpResponse created from the given file path.
@@ -309,6 +218,33 @@ bool ParseContentRangeHeader(const std::string& value,
 
   return (base::StringToInt64(parts[0], start_position) &&
           base::StringToInt64(parts[1], end_position));
+}
+
+void AppendProgressCallbackResult(std::vector<ProgressInfo>* progress_values,
+                                  int64 progress,
+                                  int64 total) {
+  progress_values->push_back(ProgressInfo(progress, total));
+}
+
+TestGetContentCallback::TestGetContentCallback()
+    : callback_(base::Bind(&TestGetContentCallback::OnGetContent,
+                           base::Unretained(this))) {
+}
+
+TestGetContentCallback::~TestGetContentCallback() {
+}
+
+std::string TestGetContentCallback::GetConcatenatedData() const {
+  std::string result;
+  for (size_t i = 0; i < data_.size(); ++i) {
+    result += *data_[i];
+  }
+  return result;
+}
+
+void TestGetContentCallback::OnGetContent(google_apis::GDataErrorCode error,
+                                          scoped_ptr<std::string> data) {
+  data_.push_back(data.release());
 }
 
 }  // namespace test_util

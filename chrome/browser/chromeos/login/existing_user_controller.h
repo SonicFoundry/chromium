@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
@@ -61,29 +62,30 @@ class ExistingUserController : public LoginDisplay::Delegate,
   // Tells the controller to resume a pending login.
   void ResumeLogin();
 
-  // Invoked when a kiosk app launch is started.
-  void OnKioskAppLaunchStarted();
+  // Invoked to prepare for a kiosk app launch attempt.
+  void PrepareKioskAppLaunch();
 
-  // Invoked when a kiosk app launch is failed.
-  void OnKioskAppLaunchFailed();
+  // Start the public session auto-login timer.
+  void StartPublicSessionAutoLoginTimer();
+
+  // Stop the public session auto-login timer when a login attempt begins.
+  void StopPublicSessionAutoLoginTimer();
 
   // LoginDisplay::Delegate: implementation
   virtual void CancelPasswordChangedFlow() OVERRIDE;
   virtual void CreateAccount() OVERRIDE;
-  virtual void CreateLocallyManagedUser(const string16& display_name,
-                                        const std::string& password) OVERRIDE;
-  virtual void CompleteLogin(const std::string& username,
-                             const std::string& password) OVERRIDE;
+  virtual void CompleteLogin(const UserContext& user_context) OVERRIDE;
   virtual string16 GetConnectedNetworkName() OVERRIDE;
-  virtual void Login(const std::string& username,
-                     const std::string& password) OVERRIDE;
+  virtual void Login(const UserContext& user_context) OVERRIDE;
   virtual void MigrateUserData(const std::string& old_password) OVERRIDE;
   virtual void LoginAsRetailModeUser() OVERRIDE;
   virtual void LoginAsGuest() OVERRIDE;
   virtual void LoginAsPublicAccount(const std::string& username) OVERRIDE;
+  virtual void OnSigninScreenReady() OVERRIDE;
   virtual void OnUserSelected(const std::string& username) OVERRIDE;
   virtual void OnStartEnterpriseEnrollment() OVERRIDE;
   virtual void OnStartDeviceReset() OVERRIDE;
+  virtual void ResetPublicSessionAutoLoginTimer() OVERRIDE;
   virtual void ResyncUserData() OVERRIDE;
   virtual void SetDisplayEmail(const std::string& email) OVERRIDE;
   virtual void ShowWrongHWIDScreen() OVERRIDE;
@@ -113,13 +115,20 @@ class ExistingUserController : public LoginDisplay::Delegate,
 
  private:
   friend class ExistingUserControllerTest;
+  friend class ExistingUserControllerAutoLoginTest;
+  friend class ExistingUserControllerPublicSessionTest;
   friend class MockLoginPerformerDelegate;
+
+  // Retrieve public session auto-login policy and update the timer.
+  void ConfigurePublicSessionAutoLogin();
+
+  // Trigger public session auto-login.
+  void OnPublicSessionAutoLoginTimerFire();
 
   // LoginPerformer::Delegate implementation:
   virtual void OnLoginFailure(const LoginFailure& error) OVERRIDE;
   virtual void OnLoginSuccess(
-      const std::string& username,
-      const std::string& password,
+      const UserContext& user_context,
       bool pending_requests,
       bool using_oauth) OVERRIDE;
   virtual void OnOffTheRecordLoginSuccess() OVERRIDE;
@@ -167,25 +176,20 @@ class ExistingUserController : public LoginDisplay::Delegate,
   // Shows "reset device" screen.
   void ShowResetScreen();
 
-  // Shows "critical TPM error" screen and starts reboot timer.
-  void ShowTPMErrorAndScheduleReboot();
-
-  // Reboot timer handler.
-  void OnRebootTimeElapsed();
+  // Shows "critical TPM error" screen.
+  void ShowTPMError();
 
   // Invoked to complete login. Login might be suspended if auto-enrollment
   // has to be performed, and will resume once auto-enrollment completes.
   void CompleteLoginInternal(
-      const std::string& username,
-      const std::string& password,
+      const UserContext& user_context,
       DeviceSettingsService::OwnershipStatus ownership_status,
       bool is_owner);
 
   // Creates |login_performer_| if necessary and calls login() on it.
   // The string arguments aren't passed by const reference because this is
   // posted as |resume_login_callback_| and resets it.
-  void PerformLogin(std::string username,
-                    std::string password,
+  void PerformLogin(const UserContext& user_context,
                     LoginPerformer::AuthorizationMode auth_mode);
 
   void set_login_performer_delegate(LoginPerformer::Delegate* d) {
@@ -194,6 +198,15 @@ class ExistingUserController : public LoginDisplay::Delegate,
 
   // Updates the |login_display_| attached to this controller.
   void UpdateLoginDisplay(const UserList& users);
+
+  // Public session auto-login timer.
+  scoped_ptr<base::OneShotTimer<ExistingUserController> > auto_login_timer_;
+
+  // Public session auto-login timeout, in milliseconds.
+  int public_session_auto_login_delay_;
+
+  // Username for public session auto-login.
+  std::string public_session_auto_login_username_;
 
   // Used to execute login operations.
   scoped_ptr<LoginPerformer> login_performer_;
@@ -254,6 +267,9 @@ class ExistingUserController : public LoginDisplay::Delegate,
   // True if auto-enrollment should be performed before starting the user's
   // session.
   bool do_auto_enrollment_;
+
+  // Whether the sign-in UI is finished loading.
+  bool signin_screen_ready_;
 
   // The username used for auto-enrollment, if it was triggered.
   std::string auto_enrollment_username_;

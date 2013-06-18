@@ -10,7 +10,7 @@
 
 // Used for observing function of the backend datasource for this page by
 // tests.
-var webui_responded_ = false;
+var webuiResponded = false;
 
 cr.define('extensions', function() {
   var ExtensionsList = options.ExtensionsList;
@@ -87,13 +87,15 @@ cr.define('extensions', function() {
       $('dev-controls').addEventListener('webkitTransitionEnd',
           this.handleDevControlsTransitionEnd_.bind(this));
 
-      $('unlock-button').addEventListener('click', function() {
-        chrome.send('setElevated', [true]);
-      });
+      if (!cr.isChromeOS) {
+        $('unlock-button').addEventListener('click', function() {
+          chrome.send('setElevated', [true]);
+        });
 
-      $('lock-button').addEventListener('click', function() {
-        chrome.send('setElevated', [false]);
-      });
+        $('lock-button').addEventListener('click', function() {
+          chrome.send('setElevated', [false]);
+        });
+      }
 
       // Set up the three dev mode buttons (load unpacked, pack and update).
       $('load-unpacked').addEventListener('click',
@@ -234,7 +236,7 @@ cr.define('extensions', function() {
       document.documentElement.classList.remove('loading');
     }, 0);
 
-    webui_responded_ = true;
+    webuiResponded = true;
 
     if (extensionsData.extensions.length > 0) {
       // Enforce order specified in the data or (if equal) then sort by
@@ -268,11 +270,6 @@ cr.define('extensions', function() {
       $('toggle-dev-on').disabled = false;
     }
 
-    if (extensionsData.showDisabledExtensionsWarning) {
-      pageDiv.classList.add('showing-banner');
-      pageDiv.classList.add('sideload-wipeout');
-      marginTop += 60;
-    }
     pageDiv.style.marginTop = marginTop + 'px';
 
     if (extensionsData.developerMode) {

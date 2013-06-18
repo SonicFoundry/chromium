@@ -40,6 +40,8 @@ static inline bool IsEndOfStream(int result, int decoded_size,
 FFmpegAudioDecoder::FFmpegAudioDecoder(
     const scoped_refptr<base::MessageLoopProxy>& message_loop)
     : message_loop_(message_loop),
+      weak_factory_(this),
+      demuxer_stream_(NULL),
       codec_context_(NULL),
       bits_per_channel_(0),
       channel_layout_(CHANNEL_LAYOUT_NONE),
@@ -53,7 +55,7 @@ FFmpegAudioDecoder::FFmpegAudioDecoder(
 }
 
 void FFmpegAudioDecoder::Initialize(
-    const scoped_refptr<DemuxerStream>& stream,
+    DemuxerStream* stream,
     const PipelineStatusCB& status_cb,
     const StatisticsCB& statistics_cb) {
   DCHECK(message_loop_->BelongsToCurrentThread());
@@ -68,6 +70,7 @@ void FFmpegAudioDecoder::Initialize(
     CHECK(false);
   }
 
+  weak_this_ = weak_factory_.GetWeakPtr();
   demuxer_stream_ = stream;
 
   if (!ConfigureDecoder()) {
@@ -131,7 +134,8 @@ FFmpegAudioDecoder::~FFmpegAudioDecoder() {
 
 void FFmpegAudioDecoder::ReadFromDemuxerStream() {
   DCHECK(!read_cb_.is_null());
-  demuxer_stream_->Read(base::Bind(&FFmpegAudioDecoder::BufferReady, this));
+  demuxer_stream_->Read(base::Bind(
+      &FFmpegAudioDecoder::BufferReady, weak_this_));
 }
 
 void FFmpegAudioDecoder::BufferReady(
@@ -187,7 +191,7 @@ void FFmpegAudioDecoder::BufferReady(
     return;
   }
 
-  bool is_vorbis = codec_context_->codec_id == CODEC_ID_VORBIS;
+  bool is_vorbis = codec_context_->codec_id == AV_CODEC_ID_VORBIS;
   if (!input->IsEndOfStream()) {
     if (last_input_timestamp_ == kNoTimestamp()) {
       if (is_vorbis && (input->GetTimestamp() < base::TimeDelta())) {
@@ -385,7 +389,7 @@ void FFmpegAudioDecoder::RunDecodeLoop(
       if (output_bytes_to_drop_ > 0) {
         // Currently Vorbis is the only codec that causes us to drop samples.
         // If we have to drop samples it always means the timeline starts at 0.
-        DCHECK_EQ(codec_context_->codec_id, CODEC_ID_VORBIS);
+        DCHECK_EQ(codec_context_->codec_id, AV_CODEC_ID_VORBIS);
         output_timestamp_helper_->SetBaseTimestamp(base::TimeDelta());
       } else {
         output_timestamp_helper_->SetBaseTimestamp(input->GetTimestamp());
@@ -393,14 +397,20 @@ void FFmpegAudioDecoder::RunDecodeLoop(
     }
 
     int decoded_audio_size = 0;
+#ifdef CHROMIUM_NO_AVFRAME_CHANNELS
+    int channels = av_get_channel_layout_nb_channels(
+        av_frame_->channel_layout);
+#else
+    int channels = av_frame_->channels;
+#endif
     if (frame_decoded) {
       if (av_frame_->sample_rate != samples_per_second_ ||
-          av_frame_->channels != channels_ ||
+          channels != channels_ ||
           av_frame_->format != av_sample_format_) {
         DLOG(ERROR) << "Unsupported midstream configuration change!"
                     << " Sample Rate: " << av_frame_->sample_rate << " vs "
                     << samples_per_second_
-                    << ", Channels: " << av_frame_->channels << " vs "
+                    << ", Channels: " << channels << " vs "
                     << channels_
                     << ", Sample Format: " << av_frame_->format << " vs "
                     << av_sample_format_;
@@ -450,20 +460,21 @@ void FFmpegAudioDecoder::RunDecodeLoop(
           total_frames *= codec_context_->channels;
           skip_frames *= codec_context_->channels;
         }
-        converter_bus_->set_frames(total_frames);
-        DCHECK_EQ(decoded_audio_size,
-                  (converter_bus_->frames() - skip_frames) * bytes_per_frame_);
 
+        converter_bus_->set_frames(total_frames);
         for (int i = 0; i < converter_bus_->channels(); ++i) {
           converter_bus_->SetChannelData(i, reinterpret_cast<float*>(
               av_frame_->extended_data[i]));
         }
 
+        const int frames_to_interleave = decoded_audio_size / bytes_per_frame_;
+        DCHECK_EQ(frames_to_interleave, converter_bus_->frames() - skip_frames);
+
         output = new DataBuffer(decoded_audio_size);
         output->SetDataSize(decoded_audio_size);
         converter_bus_->ToInterleavedPartial(
-            skip_frames, converter_bus_->frames() - skip_frames,
-            bits_per_channel_ / 8, output->GetWritableData());
+            skip_frames, frames_to_interleave, bits_per_channel_ / 8,
+            output->GetWritableData());
       } else {
         output = DataBuffer::CopyFrom(
             av_frame_->extended_data[0] + start_sample * bytes_per_frame_,

@@ -11,11 +11,8 @@
 #include "chrome/browser/sync/profile_sync_service.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/webdata/autocomplete_syncable_service.h"
-#include "chrome/browser/webdata/web_data_service.h"
-#include "chrome/browser/webdata/web_data_service_factory.h"
-#include "chrome/common/chrome_notification_types.h"
+#include "components/autofill/browser/webdata/autofill_webdata_service.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/notification_source.h"
 #include "sync/api/sync_error.h"
 #include "sync/internal_api/public/util/experiments.h"
 
@@ -35,24 +32,24 @@ syncer::ModelType AutofillDataTypeController::type() const {
   return syncer::AUTOFILL;
 }
 
-syncer::ModelSafeGroup AutofillDataTypeController::model_safe_group()
-    const {
+syncer::ModelSafeGroup AutofillDataTypeController::model_safe_group() const {
   return syncer::GROUP_DB;
 }
 
-void AutofillDataTypeController::Observe(
-    int notification_type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
+void AutofillDataTypeController::WebDatabaseLoaded() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  DCHECK_EQ(chrome::NOTIFICATION_WEB_DATABASE_LOADED, notification_type);
   DCHECK_EQ(MODEL_STARTING, state());
-  notification_registrar_.RemoveAll();
+
+  if (web_data_service_)
+    web_data_service_->RemoveDBObserver(this);
+
   OnModelLoaded();
 }
 
 AutofillDataTypeController::~AutofillDataTypeController() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  if (web_data_service_)
+    web_data_service_->RemoveDBObserver(this);
 }
 
 bool AutofillDataTypeController::PostTaskOnBackendThread(
@@ -66,14 +63,13 @@ bool AutofillDataTypeController::StartModels() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK_EQ(MODEL_STARTING, state());
 
-  web_data_service_ = WebDataServiceFactory::GetForProfile(
-      profile(), Profile::IMPLICIT_ACCESS);
+  web_data_service_ =
+      autofill::AutofillWebDataService::FromBrowserContext(profile());
   if (web_data_service_->IsDatabaseLoaded()) {
     return true;
   } else {
-    notification_registrar_.Add(
-        this, chrome::NOTIFICATION_WEB_DATABASE_LOADED,
-        content::Source<WebDataService>(web_data_service_.get()));
+    if (web_data_service_)
+      web_data_service_->AddDBObserver(this);
     return false;
   }
 }
@@ -82,7 +78,8 @@ void AutofillDataTypeController::StopModels() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(state() == STOPPING || state() == NOT_RUNNING || state() == DISABLED);
   DVLOG(1) << "AutofillDataTypeController::StopModels() : State = " << state();
-  notification_registrar_.RemoveAll();
+  if (web_data_service_)
+    web_data_service_->RemoveDBObserver(this);
 }
 
 void AutofillDataTypeController::StartAssociating(
@@ -109,7 +106,7 @@ void AutofillDataTypeController::UpdateAutofillCullingSettings(
     bool cull_expired_entries) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::DB));
   AutocompleteSyncableService* service =
-    web_data_service_->GetAutocompleteSyncableService();
+      AutocompleteSyncableService::FromWebDataService(web_data_service_);
   if (!service) {
     DVLOG(1) << "Can't update culling, no AutocompleteSyncableService.";
     return;

@@ -41,7 +41,7 @@
   "net/base/net_resources.grd": {
     "includes": [4000],
   },
-  "webkit/glue/resources/webkit_unscaled_resources.grd": {
+  "ui/resources/ui_unscaled_resources.grd": {
     "includes": [4500],
   },
   "webkit/glue/resources/webkit_resources.grd": {
@@ -178,6 +178,12 @@
   },
   "cloud_print/virtual_driver/win/install/virtual_driver_setup_resources.grd": {
     "messages": [23500],
+    "includes": [23550],
+  },
+  "cloud_print/service/win/service_resources.grd": {
+    "messages": [23600],
+    "includes": [23800],
+    "structures": [23900],
   },
   "chrome/browser/resources/quota_internals_resources.grd": {
     "includes": [24000],
@@ -200,11 +206,18 @@
   "chrome/browser/resources/memory_internals_resources.grd": {
     "includes": [27500],
   },
-
   "device/device_bluetooth_strings.grd": {
     "messages": [28000],
   },
-
+  "ui/keyboard/keyboard_resources.grd": {
+    "includes": [28050],
+  },
+  "chrome/browser/resources/translate_internals_resources.grd": {
+    "includes": [28500],
+  },
+  "chrome/browser/resources/sync_file_system_internals_resources.grd": {
+    "includes": [29000],
+  },
   "content/nw/src/resources/nw_resources.grd": {
     "includes": [27500],
     "structures": [28000],

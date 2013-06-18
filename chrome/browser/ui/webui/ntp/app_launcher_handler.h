@@ -9,9 +9,10 @@
 #include <string>
 
 #include "base/memory/scoped_ptr.h"
-#include "base/prefs/public/pref_change_registrar.h"
+#include "base/prefs/pref_change_registrar.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
 #include "chrome/browser/favicon/favicon_service.h"
+#include "chrome/browser/managed_mode/scoped_extension_elevation.h"
 #include "chrome/browser/ui/extensions/extension_enable_flow_delegate.h"
 #include "chrome/common/cancelable_task_tracker.h"
 #include "chrome/common/extensions/extension.h"
@@ -24,11 +25,10 @@
 class ExtensionEnableFlow;
 class ExtensionService;
 class PrefChangeRegistrar;
-class PrefRegistrySyncable;
 class Profile;
 
-namespace extensions {
-class AppNotification;
+namespace user_prefs {
+class PrefRegistrySyncable;
 }
 
 // The handler for Javascript messages related to the "apps" view.
@@ -43,7 +43,6 @@ class AppLauncherHandler : public content::WebUIMessageHandler,
   // Populate a dictionary with the information from an extension.
   static void CreateAppInfo(
       const extensions::Extension* extension,
-      const extensions::AppNotification* notification,
       ExtensionService* service,
       base::DictionaryValue* value);
 
@@ -98,6 +97,9 @@ class AppLauncherHandler : public content::WebUIMessageHandler,
   // action for UMA.
   void HandleRecordAppLaunchByUrl(const base::ListValue* args);
 
+  // Callback for "stopShowingAppLauncherPromo" message.
+  void StopShowingAppLauncherPromo(const base::ListValue* args);
+
   // Callback for "closeNotification" message.
   void HandleNotificationClose(const base::ListValue* args);
 
@@ -105,10 +107,11 @@ class AppLauncherHandler : public content::WebUIMessageHandler,
   void HandleSetNotificationsDisabled(const base::ListValue* args);
 
   // Register app launcher preferences.
-  static void RegisterUserPrefs(PrefRegistrySyncable* registry);
+  static void RegisterUserPrefs(user_prefs::PrefRegistrySyncable* registry);
 
   // Records the given type of app launch for UMA.
-  static void RecordAppLaunchType(extension_misc::AppLaunchBucket bucket);
+  static void RecordAppLaunchType(extension_misc::AppLaunchBucket bucket,
+                                  extensions::Manifest::Type app_type);
 
  private:
   struct AppInstallInfo {
@@ -128,14 +131,15 @@ class AppLauncherHandler : public content::WebUIMessageHandler,
   static void RecordWebStoreLaunch();
 
   // Records an app launch in the corresponding |bucket| of the app launch
-  // histogram. |promo_active| specifies if the web store promotion was active.
-  static void RecordAppLaunchByID(extension_misc::AppLaunchBucket bucket);
-
-  // Records an app launch in the corresponding |bucket| of the app launch
   // histogram if the |escaped_url| corresponds to an installed app.
   static void RecordAppLaunchByUrl(Profile* profile,
                                    std::string escaped_url,
                                    extension_misc::AppLaunchBucket bucket);
+
+  // Generates a temporary elevation for a managed user which is bound to the
+  // life-time of the return value.
+  static scoped_ptr<ScopedExtensionElevation> GetScopedElevation(
+      const std::string& extension_id, ExtensionService* service);
 
   // Prompts the user to re-enable the app for |extension_id|.
   void PromptToEnableApp(const std::string& extension_id);
@@ -159,7 +163,9 @@ class AppLauncherHandler : public content::WebUIMessageHandler,
   // Sends |highlight_app_id_| to the js.
   void SetAppToBeHighlighted();
 
-  void OnPreferenceChanged();
+  void OnExtensionPreferenceChanged();
+
+  void OnLocalStatePreferenceChanged();
 
   // The apps are represented in the extensions model, which
   // outlives us since it's owned by our containing profile.
@@ -170,7 +176,10 @@ class AppLauncherHandler : public content::WebUIMessageHandler,
   content::NotificationRegistrar registrar_;
 
   // Monitor extension preference changes so that the Web UI can be notified.
-  PrefChangeRegistrar pref_change_registrar_;
+  PrefChangeRegistrar extension_pref_change_registrar_;
+
+  // Monitor the local state pref to control the app launcher promo.
+  PrefChangeRegistrar local_state_pref_change_registrar_;
 
   // Used to show confirmation UI for uninstalling extensions in incognito mode.
   scoped_ptr<ExtensionUninstallDialog> extension_uninstall_dialog_;

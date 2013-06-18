@@ -18,15 +18,18 @@
 #include "ppapi/proxy/browser_font_singleton_resource.h"
 #include "ppapi/proxy/content_decryptor_private_serializer.h"
 #include "ppapi/proxy/enter_proxy.h"
+#include "ppapi/proxy/extensions_common_resource.h"
 #include "ppapi/proxy/flash_clipboard_resource.h"
 #include "ppapi/proxy/flash_file_resource.h"
 #include "ppapi/proxy/flash_fullscreen_resource.h"
 #include "ppapi/proxy/flash_resource.h"
 #include "ppapi/proxy/gamepad_resource.h"
 #include "ppapi/proxy/host_dispatcher.h"
+#include "ppapi/proxy/pdf_resource.h"
 #include "ppapi/proxy/plugin_dispatcher.h"
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/proxy/serialized_var.h"
+#include "ppapi/proxy/truetype_font_singleton_resource.h"
 #include "ppapi/shared_impl/ppapi_globals.h"
 #include "ppapi/shared_impl/ppb_url_util_shared.h"
 #include "ppapi/shared_impl/ppb_view_shared.h"
@@ -81,7 +84,7 @@ void RequestSurroundingText(PP_Instance instance) {
 
 PPB_Instance_Proxy::PPB_Instance_Proxy(Dispatcher* dispatcher)
     : InterfaceProxy(dispatcher),
-      callback_factory_(ALLOW_THIS_IN_INITIALIZER_LIST(this)) {
+      callback_factory_(this) {
 }
 
 PPB_Instance_Proxy::~PPB_Instance_Proxy() {
@@ -321,6 +324,14 @@ void PPB_Instance_Proxy::SelectedFindResultChanged(PP_Instance instance,
   NOTIMPLEMENTED();  // Not proxied yet.
 }
 
+PP_Bool PPB_Instance_Proxy::IsFullscreen(PP_Instance instance) {
+  InstanceData* data = static_cast<PluginDispatcher*>(dispatcher())->
+      GetInstanceData(instance);
+  if (!data)
+    return PP_FALSE;
+  return PP_FromBool(data->view.is_fullscreen);
+}
+
 PP_Bool PPB_Instance_Proxy::SetFullscreen(PP_Instance instance,
                                           PP_Bool fullscreen) {
   PP_Bool result = PP_FALSE;
@@ -354,8 +365,14 @@ Resource* PPB_Instance_Proxy::GetSingletonResource(PP_Instance instance,
     case BROKER_SINGLETON_ID:
       new_singleton = new BrokerResource(connection, instance);
       break;
+    case EXTENSIONS_COMMON_SINGLETON_ID:
+      new_singleton = new ExtensionsCommonResource(connection, instance);
+      break;
     case GAMEPAD_SINGLETON_ID:
       new_singleton = new GamepadResource(connection, instance);
+      break;
+    case TRUETYPE_FONT_SINGLETON_ID:
+      new_singleton = new TrueTypeFontSingletonResource(connection, instance);
       break;
 // Flash/trusted resources aren't needed for NaCl.
 #if !defined(OS_NACL) && !defined(NACL_WIN64)
@@ -375,12 +392,16 @@ Resource* PPB_Instance_Proxy::GetSingletonResource(PP_Instance instance,
       new_singleton = new FlashResource(connection, instance,
           static_cast<PluginDispatcher*>(dispatcher()));
       break;
+    case PDF_SINGLETON_ID:
+      new_singleton = new PDFResource(connection, instance);
+      break;
 #else
     case BROWSER_FONT_SINGLETON_ID:
     case FLASH_CLIPBOARD_SINGLETON_ID:
     case FLASH_FILE_SINGLETON_ID:
     case FLASH_FULLSCREEN_SINGLETON_ID:
     case FLASH_SINGLETON_ID:
+    case PDF_SINGLETON_ID:
       NOTREACHED();
       break;
 #endif  // !defined(OS_NACL) && !defined(NACL_WIN64)
@@ -676,7 +697,8 @@ void PPB_Instance_Proxy::PostMessage(PP_Instance instance,
                                      PP_Var message) {
   dispatcher()->Send(new PpapiHostMsg_PPBInstance_PostMessage(
       API_ID_PPB_INSTANCE,
-      instance, SerializedVarSendInput(dispatcher(), message)));
+      instance, SerializedVarSendInputShmem(dispatcher(), message,
+                                            instance)));
 }
 
 PP_Bool PPB_Instance_Proxy::SetCursor(PP_Instance instance,
@@ -765,7 +787,7 @@ void PPB_Instance_Proxy::SelectionChanged(PP_Instance instance) {
   data->should_do_request_surrounding_text = true;
 
   if (!data->is_request_surrounding_text_pending) {
-    MessageLoop::current()->PostTask(
+    base::MessageLoop::current()->PostTask(
         FROM_HERE,
         RunWhileLocked(base::Bind(&RequestSurroundingText, instance)));
     data->is_request_surrounding_text_pending = true;
@@ -908,7 +930,9 @@ void PPB_Instance_Proxy::OnHostMsgPostMessage(
     SerializedVarReceiveInput message) {
   EnterInstanceNoLock enter(instance);
   if (enter.succeeded())
-    enter.functions()->PostMessage(instance, message.Get(dispatcher()));
+    enter.functions()->PostMessage(instance,
+                                   message.GetForInstance(dispatcher(),
+                                                          instance));
 }
 
 void PPB_Instance_Proxy::OnHostMsgLockMouse(PP_Instance instance) {

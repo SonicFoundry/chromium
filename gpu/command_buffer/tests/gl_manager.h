@@ -59,6 +59,8 @@ class GLManager {
 
   void MakeCurrent();
 
+  void SetSurface(gfx::GLSurface* surface);
+
   gles2::MailboxManager* mailbox_manager() const {
     return mailbox_manager_.get();
   }
@@ -78,6 +80,7 @@ class GLManager {
  private:
   void PumpCommands();
   bool GetBufferChanged(int32 transfer_buffer_id);
+  void SetupBaseContext();
 
   scoped_refptr<gles2::MailboxManager> mailbox_manager_;
   scoped_refptr<gfx::GLShareGroup> share_group_;
@@ -90,6 +93,12 @@ class GLManager {
   scoped_ptr<TransferBuffer> transfer_buffer_;
   scoped_ptr<gles2::GLES2Implementation> gles2_implementation_;
   bool context_lost_allowed_;
+
+  // Used on Android to virtualize GL for all contexts.
+  static int use_count_;
+  static scoped_refptr<gfx::GLShareGroup>* base_share_group_;
+  static scoped_refptr<gfx::GLSurface>* base_surface_;
+  static scoped_refptr<gfx::GLContext>* base_context_;
 };
 
 }  // namespace gpu

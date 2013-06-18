@@ -26,12 +26,15 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread.h"
+#include "cc/layers/video_frame_provider.h"
 #include "googleurl/src/gurl.h"
 #include "media/base/audio_renderer_sink.h"
 #include "media/base/decryptor.h"
 #include "media/base/pipeline.h"
+#include "media/filters/gpu_video_decoder.h"
 #include "media/filters/skcanvas_video_renderer.h"
 #include "skia/ext/platform_canvas.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebGraphicsContext3D.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebAudioSourceProvider.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebMediaPlayer.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebMediaPlayerClient.h"
@@ -50,7 +53,12 @@ class MessageLoopProxy;
 
 namespace media {
 class ChunkDemuxer;
+class FFmpegDemuxer;
 class MediaLog;
+}
+
+namespace webkit {
+class WebLayerImpl;
 }
 
 namespace webkit_media {
@@ -63,7 +71,8 @@ class WebMediaPlayerParams;
 
 class WebMediaPlayerImpl
     : public WebKit::WebMediaPlayer,
-      public MessageLoop::DestructionObserver,
+      public cc::VideoFrameProvider,
+      public base::MessageLoop::DestructionObserver,
       public base::SupportsWeakPtr<WebMediaPlayerImpl> {
  public:
   // Constructs a WebMediaPlayer implementation using Chromium's media stack.
@@ -77,6 +86,9 @@ class WebMediaPlayerImpl
   virtual ~WebMediaPlayerImpl();
 
   virtual void load(const WebKit::WebURL& url, CORSMode cors_mode);
+  virtual void load(const WebKit::WebURL& url,
+                    WebKit::WebMediaSource* media_source,
+                    CORSMode cors_mode);
   virtual void cancelLoad();
 
   // Playback controls.
@@ -84,15 +96,14 @@ class WebMediaPlayerImpl
   virtual void pause();
   virtual bool supportsFullscreen() const;
   virtual bool supportsSave() const;
-  virtual void seek(float seconds);
-  virtual void setEndTime(float seconds);
-  virtual void setRate(float rate);
-  virtual void setVolume(float volume);
+  virtual void seek(double seconds);
+  virtual void setRate(double rate);
+  virtual void setVolume(double volume);
   virtual void setVisible(bool visible);
   virtual void setPreload(WebKit::WebMediaPlayer::Preload preload);
   virtual bool totalBytesKnown();
   virtual const WebKit::WebTimeRanges& buffered();
-  virtual float maxTimeSeekable() const;
+  virtual double maxTimeSeekable() const;
 
   // Methods for painting.
   virtual void setSize(const WebKit::WebSize& size);
@@ -111,8 +122,8 @@ class WebMediaPlayerImpl
   // Getters of playback state.
   virtual bool paused() const;
   virtual bool seeking() const;
-  virtual float duration() const;
-  virtual float currentTime() const;
+  virtual double duration() const;
+  virtual double currentTime() const;
 
   // Get rate of loading the resource.
   virtual int32 dataRate() const;
@@ -130,32 +141,29 @@ class WebMediaPlayerImpl
   virtual bool didPassCORSAccessCheck() const;
   virtual WebKit::WebMediaPlayer::MovieLoadType movieLoadType() const;
 
-  virtual float mediaTimeForTimeValue(float timeValue) const;
+  virtual double mediaTimeForTimeValue(double timeValue) const;
 
   virtual unsigned decodedFrameCount() const;
   virtual unsigned droppedFrameCount() const;
   virtual unsigned audioDecodedByteCount() const;
   virtual unsigned videoDecodedByteCount() const;
 
-  virtual WebKit::WebVideoFrame* getCurrentFrame();
-  virtual void putCurrentFrame(WebKit::WebVideoFrame* web_video_frame);
+  // cc::VideoFrameProvider implementation.
+  virtual void SetVideoFrameProviderClient(
+      cc::VideoFrameProvider::Client* client) OVERRIDE;
+  virtual scoped_refptr<media::VideoFrame> GetCurrentFrame() OVERRIDE;
+  virtual void PutCurrentFrame(const scoped_refptr<media::VideoFrame>& frame)
+      OVERRIDE;
+
+  virtual bool copyVideoTextureToPlatformTexture(
+      WebKit::WebGraphicsContext3D* web_graphics_context,
+      unsigned int texture,
+      unsigned int level,
+      unsigned int internal_format,
+      bool premultiply_alpha,
+      bool flip_y);
 
   virtual WebKit::WebAudioSourceProvider* audioSourceProvider();
-
-  virtual AddIdStatus sourceAddId(
-      const WebKit::WebString& id,
-      const WebKit::WebString& type,
-      const WebKit::WebVector<WebKit::WebString>& codecs);
-  virtual bool sourceRemoveId(const WebKit::WebString& id);
-  virtual WebKit::WebTimeRanges sourceBuffered(const WebKit::WebString& id);
-  virtual bool sourceAppend(const WebKit::WebString& id,
-                            const unsigned char* data,
-                            unsigned length);
-  virtual bool sourceAbort(const WebKit::WebString& id);
-  virtual void sourceSetDuration(double new_duration);
-  virtual void sourceEndOfStream(EndOfStreamStatus status);
-  virtual bool sourceSetTimestampOffset(const WebKit::WebString& id,
-                                        double offset);
 
   virtual MediaKeyException generateKeyRequest(
       const WebKit::WebString& key_system,
@@ -186,7 +194,7 @@ class WebMediaPlayerImpl
   void OnPipelineError(media::PipelineStatus error);
   void OnPipelineBufferingState(
       media::Pipeline::BufferingState buffering_state);
-  void OnDemuxerOpened();
+  void OnDemuxerOpened(scoped_ptr<WebKit::WebMediaSource> media_source);
   void OnKeyAdded(const std::string& key_system, const std::string& session_id);
   void OnKeyError(const std::string& key_system,
                   const std::string& session_id,
@@ -199,11 +207,14 @@ class WebMediaPlayerImpl
   void OnNeedKey(const std::string& key_system,
                  const std::string& type,
                  const std::string& session_id,
-                 scoped_array<uint8> init_data,
+                 scoped_ptr<uint8[]> init_data,
                  int init_data_size);
   void SetOpaque(bool);
 
  private:
+  // Contains common logic used across the different types loading.
+  void LoadSetup(const WebKit::WebURL& url);
+
   // Called after asynchronous initialization of a data source completed.
   void DataSourceInitialized(const GURL& gurl, bool success);
 
@@ -211,7 +222,9 @@ class WebMediaPlayerImpl
   void NotifyDownloading(bool is_downloading);
 
   // Finishes starting the pipeline due to a call to load().
-  void StartPipeline();
+  //
+  // A non-null |media_source| will construct a Media Source pipeline.
+  void StartPipeline(WebKit::WebMediaSource* media_source);
 
   // Helpers that set the network/ready state and notifies the client if
   // they've changed.
@@ -266,7 +279,6 @@ class WebMediaPlayerImpl
   // for DCHECKs so methods calls won't execute in the wrong thread.
   const scoped_refptr<base::MessageLoopProxy> main_loop_;
 
-  scoped_ptr<media::FilterCollection> filter_collection_;
   scoped_refptr<media::Pipeline> pipeline_;
   base::Thread media_thread_;
 
@@ -288,13 +300,13 @@ class WebMediaPlayerImpl
   // SetPlaybackRate(0) is being executed.
   bool paused_;
   bool seeking_;
-  float playback_rate_;
+  double playback_rate_;
   base::TimeDelta paused_time_;
 
   // Seek gets pending if another seek is in progress. Only last pending seek
   // will have effect.
   bool pending_seek_;
-  float pending_seek_seconds_;
+  double pending_seek_seconds_;
 
   WebKit::WebMediaPlayerClient* client_;
 
@@ -310,6 +322,9 @@ class WebMediaPlayerImpl
 
   bool incremented_externally_allocated_memory_;
 
+  // Factories for supporting GpuVideoDecoder. May be null.
+  scoped_refptr<media::GpuVideoDecoder::Factories> gpu_factories_;
+
   // Routes audio playback to either AudioRendererSink or WebAudio.
   scoped_refptr<WebAudioSourceProviderImpl> audio_source_provider_;
 
@@ -324,8 +339,12 @@ class WebMediaPlayerImpl
   // These two are mutually exclusive:
   //   |data_source_| is used for regular resource loads.
   //   |chunk_demuxer_| is used for Media Source resource loads.
-  scoped_refptr<BufferedDataSource> data_source_;
-  scoped_refptr<media::ChunkDemuxer> chunk_demuxer_;
+  //
+  // |demuxer_| will contain the appropriate demuxer based on which resource
+  // load strategy we're using.
+  scoped_ptr<BufferedDataSource> data_source_;
+  scoped_ptr<media::Demuxer> demuxer_;
+  media::ChunkDemuxer* chunk_demuxer_;
 
   // Temporary for EME v0.1. In the future the init data type should be passed
   // through GenerateKeyRequest() directly from WebKit.
@@ -340,6 +359,15 @@ class WebMediaPlayerImpl
   media::SkCanvasVideoRenderer skcanvas_video_renderer_;
   scoped_refptr<media::VideoFrame> current_frame_;
   bool pending_repaint_;
+  bool pending_size_change_;
+
+  // The compositor layer for displaying the video content when using composited
+  // playback.
+  scoped_ptr<webkit::WebLayerImpl> video_weblayer_;
+
+  // A pointer back to the compositor to inform it about state changes. This is
+  // not NULL while the compositor is actively using this webmediaplayer.
+  cc::VideoFrameProvider::Client* video_frame_provider_client_;
 
   DISALLOW_COPY_AND_ASSIGN(WebMediaPlayerImpl);
 };

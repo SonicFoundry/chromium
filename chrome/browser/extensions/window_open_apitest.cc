@@ -13,7 +13,6 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_iterator.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/panels/panel_manager.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
@@ -23,7 +22,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/result_codes.h"
 #include "content/public/test/browser_test_utils.h"
-#include "net/base/mock_host_resolver.h"
+#include "net/dns/mock_host_resolver.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(USE_ASH)
@@ -64,8 +63,8 @@ bool WaitForTabsAndPopups(Browser* browser,
                           int num_popups,
                           int num_panels) {
   SCOPED_TRACE(
-      StringPrintf("WaitForTabsAndPopups tabs:%d, popups:%d, panels:%d",
-                   num_tabs, num_popups, num_panels));
+      base::StringPrintf("WaitForTabsAndPopups tabs:%d, popups:%d, panels:%d",
+                         num_tabs, num_popups, num_panels));
   // We start with one tab and one browser already open.
   ++num_tabs;
   size_t num_browsers = static_cast<size_t>(num_popups) + 1;
@@ -93,13 +92,7 @@ bool WaitForTabsAndPopups(Browser* browser,
     if (*iter == browser)
       continue;
 
-    // Check for TYPE_POPUP.
-#if defined(USE_ASH_PANELS)
-    // On Ash, panel windows may open as popup windows.
-    EXPECT_TRUE((*iter)->is_type_popup() || (*iter)->is_type_panel());
-#else
     EXPECT_TRUE((*iter)->is_type_popup());
-#endif
     ++num_popups_seen;
   }
   EXPECT_EQ(num_popups, num_popups_seen);
@@ -248,15 +241,10 @@ IN_PROC_BROWSER_TEST_F(WindowOpenPanelTest, MAYBE_WindowOpenPanel) {
   ASSERT_TRUE(RunExtensionTest("window_open/panel")) << message_;
 }
 
-#if defined(USE_ASH_PANELS) || defined(OS_WIN)
 // On Ash, this currently fails because we're currently opening new panel
 // windows as popup windows instead.
-// This is also flakey on Windows builds: crbug.com/179251
-#define MAYBE_WindowOpenPanelDetached DISABLED_WindowOpenPanelDetached
-#else
-#define MAYBE_WindowOpenPanelDetached WindowOpenPanelDetached
-#endif
-IN_PROC_BROWSER_TEST_F(WindowOpenPanelTest, MAYBE_WindowOpenPanelDetached) {
+// This is also flakey on Windows, ASan and Mac builds: crbug.com/179251
+IN_PROC_BROWSER_TEST_F(WindowOpenPanelTest, DISABLED_WindowOpenPanelDetached) {
   ASSERT_TRUE(RunExtensionTest("window_open/panel_detached")) << message_;
 }
 
@@ -401,6 +389,19 @@ IN_PROC_BROWSER_TEST_F(WindowOpenPanelTest, MAYBE_WindowOpenFromPanel) {
 
 IN_PROC_BROWSER_TEST_F(ExtensionApiTest, DISABLED_WindowOpener) {
   ASSERT_TRUE(RunExtensionTest("window_open/opener")) << message_;
+}
+
+#if defined(OS_MACOSX)
+// Extension popup windows are incorrectly sized on OSX, crbug.com/225601
+#define MAYBE_WindowOpenSized DISABLED_WindowOpenSized
+#else
+#define MAYBE_WindowOpenSized WindowOpenSized
+#endif
+// Ensure that the width and height properties of a window opened with
+// chrome.windows.create match the creation parameters. See crbug.com/173831.
+IN_PROC_BROWSER_TEST_F(ExtensionApiTest, MAYBE_WindowOpenSized) {
+  ASSERT_TRUE(RunExtensionTest("window_open/window_size")) << message_;
+  EXPECT_TRUE(WaitForTabsAndPopups(browser(), 0, 1, 0));
 }
 
 // Tests that an extension page can call window.open to an extension URL and

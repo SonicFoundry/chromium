@@ -186,7 +186,7 @@ HttpStreamParser::HttpStreamParser(ClientSocketHandle* connection,
       connection_(connection),
       net_log_(net_log),
       sent_last_chunk_(false),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_(this)) {
+      weak_ptr_factory_(this) {
   io_callback_ = base::Bind(&HttpStreamParser::OnIOComplete,
                             weak_ptr_factory_.GetWeakPtr());
 }
@@ -802,6 +802,7 @@ int HttpStreamParser::DoParseResponseHeaders(int end_offset) {
     return ERR_RESPONSE_HEADERS_MULTIPLE_LOCATION;
 
   response_->headers = headers;
+  response_->connection_info = HttpResponseInfo::CONNECTION_INFO_HTTP1;
   response_->vary_data.Init(*request_, *response_->headers);
   DVLOG(1) << __FUNCTION__ << "()"
            << " content_length = \""

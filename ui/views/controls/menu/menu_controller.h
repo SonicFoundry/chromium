@@ -45,7 +45,7 @@ class MenuRunnerImpl;
 // MenuController is used internally by the various menu classes to manage
 // showing, selecting and drag/drop for menus. All relevant events are
 // forwarded to the MenuController from SubmenuView and MenuHost.
-class VIEWS_EXPORT MenuController : public MessageLoop::Dispatcher,
+class VIEWS_EXPORT MenuController : public base::MessageLoop::Dispatcher,
                                     public WidgetObserver {
  public:
   // Enumeration of how the menu should exit.
@@ -98,6 +98,9 @@ class VIEWS_EXPORT MenuController : public MessageLoop::Dispatcher,
   // the menu is being canceled.
   ExitType exit_type() const { return exit_type_; }
 
+  // Returns the time from the event which closed the menu - or 0.
+  base::TimeDelta closing_event_time() const { return closing_event_time_; }
+
   // Various events, forwarded from the submenu.
   //
   // NOTE: the coordinates of the events are in that of the
@@ -132,6 +135,9 @@ class VIEWS_EXPORT MenuController : public MessageLoop::Dispatcher,
 
   // WidgetObserver overrides:
   virtual void OnWidgetDestroying(Widget* widget) OVERRIDE;
+
+  // Only used for testing.
+  static void TurnOffContextMenuSelectionHoldForTest();
 
  private:
   friend class internal::MenuRunnerImpl;
@@ -419,12 +425,13 @@ class VIEWS_EXPORT MenuController : public MessageLoop::Dispatcher,
   // the title. Returns true if a match was selected and the menu should exit.
   bool SelectByChar(char16 key);
 
-#if (defined(OS_WIN) && !defined(USE_AURA)) || defined(USE_X11)
-  // If there is a window at the location of the event, a new mouse event is
-  // generated and posted to it at the given location.
-  // For Chromeos this applies also to the desktop background window.
+  // For Windows and Aura we repost an event for some events that dismiss
+  // the context menu. The event is then reprocessed to cause its result
+  // if the context menu had not been present.
+  // On non-aura Windows, a new mouse event is generated and posted to
+  // the window (if there is one) at the location of the event. On
+  // aura, the event is reposted on the RootWindow.
   void RepostEvent(SubmenuView* source, const ui::LocatedEvent& event);
-#endif
 
   // Sets the drop target to new_item.
   void SetDropMenuItem(MenuItemView* new_item,
@@ -559,6 +566,12 @@ class VIEWS_EXPORT MenuController : public MessageLoop::Dispatcher,
   int message_loop_depth_;
 
   views::MenuConfig menu_config_;
+
+  // The timestamp of the event which closed the menu - or 0 otherwise.
+  base::TimeDelta closing_event_time_;
+
+  // Time when the menu is first shown.
+  base::TimeTicks menu_start_time_;
 
   DISALLOW_COPY_AND_ASSIGN(MenuController);
 };

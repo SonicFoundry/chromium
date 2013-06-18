@@ -146,6 +146,9 @@ void BackingStoreMac::PaintToBackingStore(
       CGContextRef layer = CGLayerGetContext(cg_layer());
       gfx::Rect paint_rect = copy_rect;
       paint_rect.set_y(size().height() - copy_rect.bottom());
+      // TODO (Ryan Mechelke <ryanm@sonicfoundry.com>): only call CGContextClearRect if transparency is being used.
+      // This call prevents cavnases and other such things from becoming opaque after being updated a few times
+      CGContextClearRect(layer, paint_rect.ToCGRect());
       CGContextDrawImage(layer, paint_rect.ToCGRect(), image);
     } else {
       // The layer hasn't been created yet, so draw into the cache bitmap.

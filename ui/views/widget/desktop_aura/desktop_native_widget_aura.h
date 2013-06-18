@@ -28,6 +28,8 @@ class CompoundEventFilter;
 class InputMethodEventFilter;
 class ShadowController;
 class TooltipController;
+class VisibilityController;
+class WindowModalityController;
 }
 
 class DesktopRootWindowHost;
@@ -35,7 +37,6 @@ class DropHelper;
 class NativeWidgetAuraWindowObserver;
 class TooltipManagerAura;
 
-// TODO(erg): May also need to be a DragDropDelegate
 class VIEWS_EXPORT DesktopNativeWidgetAura
     : public internal::NativeWidgetPrivate,
       public aura::WindowDelegate,
@@ -84,10 +85,6 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   virtual void SetNativeWindowProperty(const char* name, void* value) OVERRIDE;
   virtual void* GetNativeWindowProperty(const char* name) const OVERRIDE;
   virtual TooltipManager* GetTooltipManager() const OVERRIDE;
-  virtual bool IsScreenReaderActive() const OVERRIDE;
-  virtual void SendNativeAccessibilityEvent(
-      View* view,
-      ui::AccessibilityTypes::Event event_type) OVERRIDE;
   virtual void SetCapture() OVERRIDE;
   virtual void ReleaseCapture() OVERRIDE;
   virtual bool HasCapture() const OVERRIDE;
@@ -100,9 +97,6 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   virtual void SetWindowTitle(const string16& title) OVERRIDE;
   virtual void SetWindowIcons(const gfx::ImageSkia& window_icon,
                               const gfx::ImageSkia& app_icon) OVERRIDE;
-  virtual void SetAccessibleName(const string16& name) OVERRIDE;
-  virtual void SetAccessibleRole(ui::AccessibilityTypes::Role role) OVERRIDE;
-  virtual void SetAccessibleState(ui::AccessibilityTypes::State state) OVERRIDE;
   virtual void InitModalType(ui::ModalType modal_type) OVERRIDE;
   virtual gfx::Rect GetWindowBoundsInScreen() const OVERRIDE;
   virtual gfx::Rect GetClientAreaBoundsInScreen() const OVERRIDE;
@@ -135,7 +129,6 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   virtual void SetOpacity(unsigned char opacity) OVERRIDE;
   virtual void SetUseDragFrame(bool use_drag_frame) OVERRIDE;
   virtual void FlashFrame(bool flash_frame) OVERRIDE;
-  virtual bool IsAccessibleWidget() const OVERRIDE;
   virtual void RunShellDrag(View* view,
                             const ui::OSExchangeData& data,
                             const gfx::Point& location,
@@ -235,6 +228,11 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
 
   scoped_ptr<corewm::TooltipController> tooltip_controller_;
   scoped_ptr<TooltipManagerAura> tooltip_manager_;
+
+  scoped_ptr<views::corewm::VisibilityController> visibility_controller_;
+
+  scoped_ptr<views::corewm::WindowModalityController>
+      window_modality_controller_;
 
   // See comments in OnLostActive().
   bool restore_focus_on_activate_;

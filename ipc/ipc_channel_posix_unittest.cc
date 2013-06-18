@@ -21,6 +21,7 @@
 #include "base/test/multiprocess_test.h"
 #include "base/test/test_timeouts.h"
 #include "ipc/ipc_listener.h"
+#include "ipc/unix_domain_socket_util.h"
 #include "testing/multiprocess_func_list.h"
 
 namespace {
@@ -81,7 +82,7 @@ class IPCChannelPosixTestListener : public IPC::Listener {
   STATUS status() { return status_; }
 
   void QuitRunLoop() {
-    MessageLoopForIO::current()->QuitNow();
+    base::MessageLoopForIO::current()->QuitNow();
   }
 
  private:
@@ -104,8 +105,8 @@ class IPCChannelPosixTest : public base::MultiProcessTest {
   virtual void SetUp();
   virtual void TearDown();
 
-private:
-  scoped_ptr<MessageLoopForIO> message_loop_;
+ private:
+  scoped_ptr<base::MessageLoopForIO> message_loop_;
 };
 
 const std::string IPCChannelPosixTest::GetChannelDirName() {
@@ -125,7 +126,7 @@ const std::string IPCChannelPosixTest::GetConnectionSocketName() {
 void IPCChannelPosixTest::SetUp() {
   MultiProcessTest::SetUp();
   // Construct a fresh IO Message loop for the duration of each test.
-  message_loop_.reset(new MessageLoopForIO());
+  message_loop_.reset(new base::MessageLoopForIO());
 }
 
 void IPCChannelPosixTest::TearDown() {
@@ -145,7 +146,7 @@ void IPCChannelPosixTest::SetUpSocket(IPC::ChannelHandle *handle,
   struct sockaddr_un server_address = { 0 };
   memset(&server_address, 0, sizeof(server_address));
   server_address.sun_family = AF_UNIX;
-  int path_len = snprintf(server_address.sun_path, IPC::kMaxPipeNameLength,
+  int path_len = snprintf(server_address.sun_path, IPC::kMaxSocketNameLength,
                           "%s", name.c_str());
   DCHECK_EQ(static_cast<int>(name.length()), path_len);
   size_t server_address_len = offsetof(struct sockaddr_un,
@@ -179,15 +180,12 @@ void IPCChannelPosixTest::SetUpSocket(IPC::ChannelHandle *handle,
 }
 
 void IPCChannelPosixTest::SpinRunLoop(base::TimeDelta delay) {
-  MessageLoopForIO *loop = MessageLoopForIO::current();
+  base::MessageLoopForIO* loop = base::MessageLoopForIO::current();
   // Post a quit task so that this loop eventually ends and we don't hang
   // in the case of a bad test. Usually, the run loop will quit sooner than
   // that because all tests use a IPCChannelPosixTestListener which quits the
   // current run loop on any channel activity.
-  loop->PostDelayedTask(
-      FROM_HERE,
-      MessageLoop::QuitClosure(),
-      delay);
+  loop->PostDelayedTask(FROM_HERE, base::MessageLoop::QuitClosure(), delay);
   loop->Run();
 }
 
@@ -311,7 +309,7 @@ TEST_F(IPCChannelPosixTest, BadChannelName) {
                              "future-proof_growth_strategies_Continually"
                              "pontificate_proactive_potentialities_before"
                              "leading-edge_processes";
-  EXPECT_GE(strlen(kTooLongName), IPC::kMaxPipeNameLength);
+  EXPECT_GE(strlen(kTooLongName), IPC::kMaxSocketNameLength);
   IPC::ChannelHandle handle2(kTooLongName);
   IPC::Channel channel2(handle2, IPC::Channel::MODE_NAMED_SERVER, NULL);
   EXPECT_FALSE(channel2.Connect());
@@ -390,7 +388,7 @@ TEST_F(IPCChannelPosixTest, IsNamedServerInitialized) {
 
 // A long running process that connects to us
 MULTIPROCESS_TEST_MAIN(IPCChannelPosixTestConnectionProc) {
-  MessageLoopForIO message_loop;
+  base::MessageLoopForIO message_loop;
   IPCChannelPosixTestListener listener(true);
   IPC::ChannelHandle handle(IPCChannelPosixTest::GetConnectionSocketName());
   IPCChannelPosixTest::SetUpSocket(&handle, IPC::Channel::MODE_NAMED_CLIENT);
@@ -403,7 +401,7 @@ MULTIPROCESS_TEST_MAIN(IPCChannelPosixTestConnectionProc) {
 
 // Simple external process that shouldn't be able to connect to us.
 MULTIPROCESS_TEST_MAIN(IPCChannelPosixFailConnectionProc) {
-  MessageLoopForIO message_loop;
+  base::MessageLoopForIO message_loop;
   IPCChannelPosixTestListener listener(false);
   IPC::ChannelHandle handle(IPCChannelPosixTest::GetConnectionSocketName());
   IPCChannelPosixTest::SetUpSocket(&handle, IPC::Channel::MODE_NAMED_CLIENT);

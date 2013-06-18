@@ -6,6 +6,7 @@
 #define UI_VIEWS_CONTROLS_LABEL_H_
 
 #include <string>
+#include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
@@ -116,6 +117,12 @@ class VIEWS_EXPORT Label : public View {
     return directionality_mode_;
   }
 
+  // Get or set the distance in pixels between baselines of multi-line text.
+  // Default is 0, indicating the distance between lines should be the standard
+  // one for the label's text, font, and platform.
+  int line_height() const { return line_height_; }
+  void SetLineHeight(int height);
+
   // Get or set if the label text can wrap on multiple lines; default is false.
   bool is_multi_line() const { return is_multi_line_; }
   void SetMultiLine(bool multi_line);
@@ -161,6 +168,7 @@ class VIEWS_EXPORT Label : public View {
   // GetPreferredSize().height() if the receiver is not multi-line.
   virtual int GetHeightForWidth(int w) OVERRIDE;
   virtual std::string GetClassName() const OVERRIDE;
+  virtual View* GetTooltipHandlerForPoint(const gfx::Point& point) OVERRIDE;
   virtual bool HitTestRect(const gfx::Rect& rect) const OVERRIDE;
   virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
   // Gets the tooltip text for labels that are wider than their bounds, except
@@ -221,6 +229,12 @@ class VIEWS_EXPORT Label : public View {
   // Updates any colors that have not been explicitly set from the theme.
   void UpdateColorsFromTheme(const ui::NativeTheme* theme);
 
+  // Resets |cached_heights_| and |cached_heights_cursor_| and mark
+  // |text_size_valid_| as false.
+  void ResetCachedSize();
+
+  bool ShouldShowDefaultTooltip() const;
+
   string16 text_;
   gfx::Font font_;
   SkColor requested_enabled_color_;
@@ -237,6 +251,7 @@ class VIEWS_EXPORT Label : public View {
   bool auto_color_readability_;
   mutable gfx::Size text_size_;
   mutable bool text_size_valid_;
+  int line_height_;
   bool is_multi_line_;
   bool allow_character_break_;
   ElideBehavior elide_behavior_;
@@ -262,6 +277,10 @@ class VIEWS_EXPORT Label : public View {
 
   // Should a shadow be drawn behind the text?
   bool has_shadow_;
+
+  // The cached heights to avoid recalculation in GetHeightForWidth().
+  std::vector<gfx::Size> cached_heights_;
+  int cached_heights_cursor_;
 
   DISALLOW_COPY_AND_ASSIGN(Label);
 };

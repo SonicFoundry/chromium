@@ -1,13 +1,6 @@
 // Copyright (c) 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-//
-// A new breed of mock media filters, this time using gmock!  Feel free to add
-// actions if you need interesting side-effects.
-//
-// Don't forget you can use StrictMock<> and NiceMock<> if you want the mock
-// filters to fail the test or do nothing when an unexpected method is called.
-// http://code.google.com/p/googlemock/wiki/CookBook#Nice_Mocks_and_Strict_Mocks
 
 #ifndef MEDIA_BASE_MOCK_FILTERS_H_
 #define MEDIA_BASE_MOCK_FILTERS_H_
@@ -31,30 +24,10 @@
 
 namespace media {
 
-// Use this template to test for object destruction by setting expectations on
-// the method OnDestroy().
-//
-// TODO(scherkus): not sure about the naming...  perhaps contribute this back
-// to gmock itself!
-template<class MockClass>
-class Destroyable : public MockClass {
- public:
-  Destroyable() {}
-
-  MOCK_METHOD0(OnDestroy, void());
-
- protected:
-  virtual ~Destroyable() {
-    OnDestroy();
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(Destroyable);
-};
-
 class MockDemuxer : public Demuxer {
  public:
   MockDemuxer();
+  virtual ~MockDemuxer();
 
   // Demuxer implementation.
   MOCK_METHOD2(Initialize, void(DemuxerHost* host, const PipelineStatusCB& cb));
@@ -62,11 +35,8 @@ class MockDemuxer : public Demuxer {
   MOCK_METHOD2(Seek, void(base::TimeDelta time, const PipelineStatusCB& cb));
   MOCK_METHOD1(Stop, void(const base::Closure& callback));
   MOCK_METHOD0(OnAudioRendererDisabled, void());
-  MOCK_METHOD1(GetStream, scoped_refptr<DemuxerStream>(DemuxerStream::Type));
+  MOCK_METHOD1(GetStream, DemuxerStream*(DemuxerStream::Type));
   MOCK_CONST_METHOD0(GetStartTime, base::TimeDelta());
-
- protected:
-  virtual ~MockDemuxer();
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockDemuxer);
@@ -74,37 +44,40 @@ class MockDemuxer : public Demuxer {
 
 class MockDemuxerStream : public DemuxerStream {
  public:
-  MockDemuxerStream();
-
-  // DemuxerStream implementation.
-  MOCK_METHOD0(type, Type());
-  MOCK_METHOD1(Read, void(const ReadCB& read_cb));
-  MOCK_METHOD0(audio_decoder_config, const AudioDecoderConfig&());
-  MOCK_METHOD0(video_decoder_config, const VideoDecoderConfig&());
-  MOCK_METHOD0(EnableBitstreamConverter, void());
-
- protected:
+  MockDemuxerStream(DemuxerStream::Type type);
   virtual ~MockDemuxerStream();
 
+  // DemuxerStream implementation.
+  virtual Type type() OVERRIDE;
+  MOCK_METHOD1(Read, void(const ReadCB& read_cb));
+  virtual const AudioDecoderConfig& audio_decoder_config() OVERRIDE;
+  virtual const VideoDecoderConfig& video_decoder_config() OVERRIDE;
+  MOCK_METHOD0(EnableBitstreamConverter, void());
+
+  void set_audio_decoder_config(const AudioDecoderConfig& config);
+  void set_video_decoder_config(const VideoDecoderConfig& config);
+
  private:
+  DemuxerStream::Type type_;
+  AudioDecoderConfig audio_decoder_config_;
+  VideoDecoderConfig video_decoder_config_;
+
   DISALLOW_COPY_AND_ASSIGN(MockDemuxerStream);
 };
 
 class MockVideoDecoder : public VideoDecoder {
  public:
   MockVideoDecoder();
+  virtual ~MockVideoDecoder();
 
   // VideoDecoder implementation.
-  MOCK_METHOD3(Initialize, void(const scoped_refptr<DemuxerStream>&,
+  MOCK_METHOD3(Initialize, void(DemuxerStream*,
                                 const PipelineStatusCB&,
                                 const StatisticsCB&));
   MOCK_METHOD1(Read, void(const ReadCB&));
   MOCK_METHOD1(Reset, void(const base::Closure&));
   MOCK_METHOD1(Stop, void(const base::Closure&));
   MOCK_CONST_METHOD0(HasAlpha, bool());
-
- protected:
-  virtual ~MockVideoDecoder();
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockVideoDecoder);
@@ -113,9 +86,10 @@ class MockVideoDecoder : public VideoDecoder {
 class MockAudioDecoder : public AudioDecoder {
  public:
   MockAudioDecoder();
+  virtual ~MockAudioDecoder();
 
   // AudioDecoder implementation.
-  MOCK_METHOD3(Initialize, void(const scoped_refptr<DemuxerStream>&,
+  MOCK_METHOD3(Initialize, void(DemuxerStream*,
                                 const PipelineStatusCB&,
                                 const StatisticsCB&));
   MOCK_METHOD1(Read, void(const ReadCB&));
@@ -123,9 +97,6 @@ class MockAudioDecoder : public AudioDecoder {
   MOCK_METHOD0(channel_layout, ChannelLayout(void));
   MOCK_METHOD0(samples_per_second, int(void));
   MOCK_METHOD1(Reset, void(const base::Closure&));
-
- protected:
-  virtual ~MockAudioDecoder();
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockAudioDecoder);
@@ -137,16 +108,15 @@ class MockVideoRenderer : public VideoRenderer {
   virtual ~MockVideoRenderer();
 
   // VideoRenderer implementation.
-  MOCK_METHOD10(Initialize, void(const scoped_refptr<DemuxerStream>& stream,
-                                 const VideoDecoderList& decoders,
-                                 const PipelineStatusCB& init_cb,
-                                 const StatisticsCB& statistics_cb,
-                                 const TimeCB& time_cb,
-                                 const NaturalSizeChangedCB& size_changed_cb,
-                                 const base::Closure& ended_cb,
-                                 const PipelineStatusCB& error_cb,
-                                 const TimeDeltaCB& get_time_cb,
-                                 const TimeDeltaCB& get_duration_cb));
+  MOCK_METHOD9(Initialize, void(DemuxerStream* stream,
+                                const PipelineStatusCB& init_cb,
+                                const StatisticsCB& statistics_cb,
+                                const TimeCB& time_cb,
+                                const NaturalSizeChangedCB& size_changed_cb,
+                                const base::Closure& ended_cb,
+                                const PipelineStatusCB& error_cb,
+                                const TimeDeltaCB& get_time_cb,
+                                const TimeDeltaCB& get_duration_cb));
   MOCK_METHOD1(Play, void(const base::Closure& callback));
   MOCK_METHOD1(Pause, void(const base::Closure& callback));
   MOCK_METHOD1(Flush, void(const base::Closure& callback));
@@ -164,8 +134,7 @@ class MockAudioRenderer : public AudioRenderer {
   virtual ~MockAudioRenderer();
 
   // AudioRenderer implementation.
-  MOCK_METHOD9(Initialize, void(const scoped_refptr<DemuxerStream>& stream,
-                                const AudioDecoderList& decoders,
+  MOCK_METHOD8(Initialize, void(DemuxerStream* stream,
                                 const PipelineStatusCB& init_cb,
                                 const StatisticsCB& statistics_cb,
                                 const base::Closure& underflow_cb,
@@ -209,13 +178,10 @@ class MockDecryptor : public Decryptor {
                              const scoped_refptr<DecoderBuffer>& encrypted,
                              const DecryptCB& decrypt_cb));
   MOCK_METHOD1(CancelDecrypt, void(StreamType stream_type));
-  // TODO(xhwang): The following two methods are workarounds of the issue that
-  // move-only parameters are not supported in mocked methods. Remove when the
-  // issue is fixed: http://code.google.com/p/googletest/issues/detail?id=395
-  MOCK_METHOD2(InitializeAudioDecoderMock,
+  MOCK_METHOD2(InitializeAudioDecoder,
                void(const AudioDecoderConfig& config,
                     const DecoderInitCB& init_cb));
-  MOCK_METHOD2(InitializeVideoDecoderMock,
+  MOCK_METHOD2(InitializeVideoDecoder,
                void(const VideoDecoderConfig& config,
                     const DecoderInitCB& init_cb));
   MOCK_METHOD2(DecryptAndDecodeAudio,
@@ -226,11 +192,6 @@ class MockDecryptor : public Decryptor {
                     const VideoDecodeCB& video_decode_cb));
   MOCK_METHOD1(ResetDecoder, void(StreamType stream_type));
   MOCK_METHOD1(DeinitializeDecoder, void(StreamType stream_type));
-
-  virtual void InitializeAudioDecoder(scoped_ptr<AudioDecoderConfig> config,
-                                      const DecoderInitCB& init_cb) OVERRIDE;
-  virtual void InitializeVideoDecoder(scoped_ptr<VideoDecoderConfig> config,
-                                      const DecoderInitCB& init_cb) OVERRIDE;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockDecryptor);

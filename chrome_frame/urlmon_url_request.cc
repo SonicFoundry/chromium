@@ -1083,7 +1083,7 @@ void UrlmonUrlRequestManager::StartRequestHelper(
     for (size_t i = 0; i < elements->size(); ++i) {
       net::UploadElement* element = (*elements)[i];
       DCHECK(element->type() == net::UploadElement::TYPE_BYTES);
-      std::string chunk_length = StringPrintf(
+      std::string chunk_length = base::StringPrintf(
           "%X\r\n", static_cast<unsigned int>(element->bytes_length()));
       std::vector<char> bytes;
       bytes.insert(bytes.end(), chunk_length.data(),
@@ -1216,7 +1216,7 @@ void UrlmonUrlRequestManager::GetCookiesForUrl(const GURL& url, int cookie_id) {
                                    &cookie_size);
   DWORD error = 0;
   if (cookie_size) {
-    scoped_array<char> cookies(new char[cookie_size + 1]);
+    scoped_ptr<char[]> cookies(new char[cookie_size + 1]);
     if (!InternetGetCookieA(url.spec().c_str(), NULL, cookies.get(),
                             &cookie_size)) {
       success = false;

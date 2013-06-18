@@ -161,7 +161,7 @@ std::string GetProcStatsFieldAsString(
     ProcStatsFields field_num) {
   if (field_num < VM_COMM || field_num > VM_STATE) {
     NOTREACHED();
-    return "";
+    return std::string();
   }
 
   if (proc_stats.size() > static_cast<size_t>(field_num))
@@ -391,10 +391,7 @@ bool ProcessIterator::CheckForNextProcess() {
   entry_.ppid_ = GetProcStatsFieldAsInt(proc_stats, VM_PPID);
   entry_.gid_ = GetProcStatsFieldAsInt(proc_stats, VM_PGRP);
   entry_.cmd_line_args_.assign(cmd_line_args.begin(), cmd_line_args.end());
-
-  // TODO(port): read pid's commandline's $0, like killall does.  Using the
-  // short name between openparen and closeparen won't work for long names!
-  entry_.exe_file_ = GetProcStatsFieldAsString(proc_stats, VM_COMM);
+  entry_.exe_file_ = GetProcessExecutablePath(pid).BaseName().value();
   return true;
 }
 
@@ -752,9 +749,9 @@ void OnNoMemory() {
 #define USE_TCMALLOC
 #endif
 
-extern "C" {
-#if !defined(USE_TCMALLOC) && !defined(ADDRESS_SANITIZER) && \
-    !defined(OS_ANDROID) && !defined(THREAD_SANITIZER)
+#if !defined(OS_ANDROID) && !defined(USE_TCMALLOC) && \
+    !defined(ADDRESS_SANITIZER) && !defined(MEMORY_SANITIZER) && \
+    !defined(THREAD_SANITIZER)
 
 extern "C" {
 void* __libc_malloc(size_t size);
@@ -763,7 +760,6 @@ void* __libc_calloc(size_t nmemb, size_t size);
 void* __libc_valloc(size_t size);
 void* __libc_pvalloc(size_t size);
 void* __libc_memalign(size_t alignment, size_t size);
-}  // extern "C"
 
 // Overriding the system memory allocation functions:
 //
@@ -833,8 +829,8 @@ int posix_memalign(void** ptr, size_t alignment, size_t size) {
   return 0;
 }
 
-#endif  // !defined(USE_TCMALLOC)
 }  // extern C
+#endif  // ANDROID, TCMALLOC, *_SANITIZER
 
 void EnableTerminationOnHeapCorruption() {
   // On Linux, there nothing to do AFAIK.

@@ -10,9 +10,10 @@
 #include "chrome/browser/history/history_service.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/search/search.h"
+#include "chrome/browser/search/search.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_notification_types.h"
+#include "chrome/common/url_constants.h"
 #include "content/public/browser/favicon_status.h"
 #include "content/public/browser/invalidate_type.h"
 #include "content/public/browser/navigation_controller.h"
@@ -22,7 +23,6 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
-#include "content/public/browser/web_ui.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
@@ -91,13 +91,16 @@ bool FaviconTabHelper::ShouldDisplayFavicon() {
   if (controller.GetLastCommittedEntry() && controller.GetPendingEntry())
     return true;
 
+  GURL url = web_contents()->GetURL();
+  if (url.SchemeIs(chrome::kChromeUIScheme) &&
+      url.host() == chrome::kChromeUINewTabHost) {
+    return false;
+  }
+
   // No favicon on Instant New Tab Pages.
-  if (chrome::search::IsInstantNTP(web_contents()))
+  if (chrome::IsInstantNTP(web_contents()))
     return false;
 
-  content::WebUI* web_ui = web_contents()->GetWebUIForCurrentState();
-  if (web_ui)
-    return !web_ui->ShouldHideFavicon();
   return true;
 }
 
@@ -132,16 +135,18 @@ NavigationEntry* FaviconTabHelper::GetActiveEntry() {
 }
 
 int FaviconTabHelper::StartDownload(const GURL& url, int image_size) {
-  return web_contents()->DownloadFavicon(url, image_size,
-      base::Bind(&FaviconTabHelper::DidDownloadFavicon,
-                 base::Unretained(this)));
+  return web_contents()->DownloadImage(
+      url,
+      true,
+      image_size,
+      base::Bind(&FaviconTabHelper::DidDownloadFavicon,base::Unretained(this)));
 }
 
-void FaviconTabHelper::NotifyFaviconUpdated() {
+void FaviconTabHelper::NotifyFaviconUpdated(bool icon_url_changed) {
   content::NotificationService::current()->Notify(
       chrome::NOTIFICATION_FAVICON_UPDATED,
       content::Source<WebContents>(web_contents()),
-      content::NotificationService::NoDetails());
+      content::Details<bool>(&icon_url_changed));
   web_contents()->NotifyNavigationStateChanged(content::INVALIDATE_TYPE_TAB);
 }
 

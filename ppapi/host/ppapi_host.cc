@@ -8,6 +8,7 @@
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/host/host_factory.h"
 #include "ppapi/host/host_message_context.h"
+#include "ppapi/host/instance_message_filter.h"
 #include "ppapi/host/resource_host.h"
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/proxy/resource_message_params.h"
@@ -33,8 +34,11 @@ PpapiHost::PpapiHost(IPC::Sender* sender,
 
 PpapiHost::~PpapiHost() {
   // Delete these explicitly before destruction since then the host is still
-  // technically alive in case one of the hosts accesses us from the
+  // technically alive in case one of the filters accesses us from the
   // destructor.
+  instance_message_filters_.clear();
+
+  // The resources may also want to use us in their destructors.
   resources_.clear();
   pending_resource_hosts_.clear();
 }
@@ -59,11 +63,23 @@ bool PpapiHost::OnMessageReceived(const IPC::Message& msg) {
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
 
+  if (!handled) {
+    for (size_t i = 0; i < instance_message_filters_.size(); i++) {
+      if (instance_message_filters_[i]->OnInstanceMessageReceived(msg)) {
+        handled = true;
+        break;
+      }
+    }
+  }
+
   return handled;
 }
 
 void PpapiHost::SendReply(const ReplyMessageContext& context,
                           const IPC::Message& msg) {
+  TRACE_EVENT2("ppapi proxy", "PpapiHost::SendReply",
+               "Class", IPC_MESSAGE_ID_CLASS(msg.type()),
+               "Line", IPC_MESSAGE_ID_LINE(msg.type()));
   if (context.sync_reply_msg) {
     PpapiHostMsg_ResourceSyncCall::WriteReplyParams(context.sync_reply_msg,
                                                     context.params, msg);
@@ -75,6 +91,9 @@ void PpapiHost::SendReply(const ReplyMessageContext& context,
 
 void PpapiHost::SendUnsolicitedReply(PP_Resource resource,
                                      const IPC::Message& msg) {
+  TRACE_EVENT2("ppapi proxy", "PpapiHost::SendUnsolicitedReply",
+               "Class", IPC_MESSAGE_ID_CLASS(msg.type()),
+               "Line", IPC_MESSAGE_ID_LINE(msg.type()));
   DCHECK(resource);  // If this fails, host is probably pending.
   proxy::ResourceMessageReplyParams params(resource, 0);
   Send(new PpapiPluginMsg_ResourceReply(params, msg));
@@ -94,9 +113,17 @@ void PpapiHost::AddHostFactoryFilter(scoped_ptr<HostFactory> filter) {
   host_factory_filters_.push_back(filter.release());
 }
 
+void PpapiHost::AddInstanceMessageFilter(
+    scoped_ptr<InstanceMessageFilter> filter) {
+  instance_message_filters_.push_back(filter.release());
+}
+
 void PpapiHost::OnHostMsgResourceCall(
     const proxy::ResourceMessageCallParams& params,
     const IPC::Message& nested_msg) {
+  TRACE_EVENT2("ppapi proxy", "PpapiHost::OnHostMsgResourceCall",
+               "Class", IPC_MESSAGE_ID_CLASS(nested_msg.type()),
+               "Line", IPC_MESSAGE_ID_LINE(nested_msg.type()));
   HostMessageContext context(params);
   HandleResourceCall(params, nested_msg, &context);
 }
@@ -105,6 +132,9 @@ void PpapiHost::OnHostMsgResourceSyncCall(
     const proxy::ResourceMessageCallParams& params,
     const IPC::Message& nested_msg,
     IPC::Message* reply_msg) {
+  TRACE_EVENT2("ppapi proxy", "PpapiHost::OnHostMsgResourceSyncCall",
+               "Class", IPC_MESSAGE_ID_CLASS(nested_msg.type()),
+               "Line", IPC_MESSAGE_ID_LINE(nested_msg.type()));
   // Sync messages should always have callback set because they always expect
   // a reply from the host.
   DCHECK(params.has_callback());
@@ -135,6 +165,9 @@ void PpapiHost::OnHostMsgResourceCreated(
     const proxy::ResourceMessageCallParams& params,
     PP_Instance instance,
     const IPC::Message& nested_msg) {
+  TRACE_EVENT2("ppapi proxy", "PpapiHost::OnHostMsgResourceCreated",
+               "Class", IPC_MESSAGE_ID_CLASS(nested_msg.type()),
+               "Line", IPC_MESSAGE_ID_LINE(nested_msg.type()));
   if (resources_.size() >= kMaxResourcesPerPlugin)
     return;
 
@@ -179,6 +212,12 @@ void PpapiHost::OnHostMsgResourceDestroyed(PP_Resource resource) {
     NOTREACHED();
     return;
   }
+  // Invoking the HostResource destructor might result in looking up the
+  // PP_Resource in resources_. std::map is not well specified as to whether the
+  // element will be there or not. Therefore, we delay destruction of the
+  // HostResource until after we've made sure the map no longer contains
+  // |resource|.
+  linked_ptr<ResourceHost> delete_at_end_of_scope(found->second);
   resources_.erase(found);
 }
 

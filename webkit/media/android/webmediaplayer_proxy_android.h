@@ -8,6 +8,10 @@
 #include <string>
 
 #include "base/time.h"
+#include "googleurl/src/gurl.h"
+#if defined(GOOGLE_TV)
+#include "media/base/android/demuxer_stream_player_params.h"
+#endif
 
 namespace webkit_media {
 
@@ -20,8 +24,9 @@ class WebMediaPlayerProxyAndroid {
   virtual ~WebMediaPlayerProxyAndroid();
 
   // Initialize a MediaPlayerBridge object in browser process
-  virtual void Initialize(int player_id, const std::string& url,
-                          const std::string& first_party_for_cookies) = 0;
+  virtual void Initialize(int player_id, const GURL& url,
+                          bool is_media_source,
+                          const GURL& first_party_for_cookies) = 0;
 
   // Start the player.
   virtual void Start(int player_id) = 0;
@@ -43,6 +48,21 @@ class WebMediaPlayerProxyAndroid {
 
   // Request the player to exit fullscreen.
   virtual void ExitFullscreen(int player_id) = 0;
+
+#if defined(GOOGLE_TV)
+  // Request an external surface for out-of-band compositing.
+  virtual void RequestExternalSurface(int player_id) = 0;
+
+  // Inform the media source player that the demuxer is ready.
+  virtual void DemuxerReady(
+      int player_id,
+      const media::MediaPlayerHostMsg_DemuxerReady_Params&) = 0;
+
+  // Return the data to the media source player when data is ready.
+  virtual void ReadFromDemuxerAck(
+      int player_id,
+      const media::MediaPlayerHostMsg_ReadFromDemuxerAck_Params& params) = 0;
+#endif
 };
 
 }  // namespace webkit_media

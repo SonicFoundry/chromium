@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+'use strict';
+
 
 // Namespace object for the utilities.
 function ImageUtil() {}
@@ -302,10 +304,10 @@ Rect.fill = function(context, rect) {
  * @param {Rect} outer Outer rectangle.
  */
 Rect.fillBetween = function(context, inner, outer) {
-  var inner_right = inner.left + inner.width;
-  var inner_bottom = inner.top + inner.height;
-  var outer_right = outer.left + outer.width;
-  var outer_bottom = outer.top + outer.height;
+  var innerRight = inner.left + inner.width;
+  var innerBottom = inner.top + inner.height;
+  var outerRight = outer.left + outer.width;
+  var outerBottom = outer.top + outer.height;
   if (inner.top > outer.top) {
     context.fillRect(
         outer.left, outer.top, outer.width, inner.top - outer.top);
@@ -314,13 +316,13 @@ Rect.fillBetween = function(context, inner, outer) {
     context.fillRect(
         outer.left, inner.top, inner.left - outer.left, inner.height);
   }
-  if (inner.width < outer_right) {
+  if (inner.width < outerRight) {
     context.fillRect(
-        inner_right, inner.top, outer_right - inner_right, inner.height);
+        innerRight, inner.top, outerRight - innerRight, inner.height);
   }
-  if (inner.height < outer_bottom) {
+  if (inner.height < outerBottom) {
     context.fillRect(
-        outer.left, inner_bottom, outer.width, outer_bottom - inner_bottom);
+        outer.left, innerBottom, outer.width, outerBottom - innerBottom);
   }
 };
 
@@ -580,7 +582,7 @@ ImageUtil.ImageLoader.prototype.copyStrip_ = function(
     try {
       setTimeout(this.callback_, 0, context.canvas);
     } catch (e) {
-      console.log(e);
+      console.error(e);
     }
     this.callback_ = null;
   } else {

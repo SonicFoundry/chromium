@@ -10,7 +10,7 @@
 #include "base/mac/bundle_locations.h"
 #include "base/mac/mac_util.h"
 #include "base/prefs/pref_service.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/browser_process.h"
 #import "chrome/browser/ui/cocoa/window_size_autosaver.h"
 #include "chrome/browser/ui/host_desktop.h"
@@ -585,3 +585,13 @@ void TaskManagerMac::Show(bool highlight_background_resources) {
                                  highlight_background_resources);
   instance_->model_->StartUpdating();
 }
+
+namespace chrome {
+
+// Declared in browser_dialogs.h.
+void ShowTaskManager(Browser* browser, bool highlight_background_resources) {
+  TaskManagerMac::Show(highlight_background_resources);
+}
+
+}  // namespace chrome
+

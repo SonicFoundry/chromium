@@ -10,7 +10,7 @@
 #include "base/bind.h"
 #include "base/debug/trace_event.h"
 #include "base/logging.h"
-#include "base/stl_util.h"
+
 namespace media {
 // Helper class representing a range of buffered data. All buffers in a
 // SourceBufferRange are ordered sequentially in presentation order with no
@@ -281,10 +281,19 @@ static base::TimeDelta kSeekToStartFudgeRoom() {
   return base::TimeDelta::FromMilliseconds(1000);
 }
 // The maximum amount of data in bytes the stream will keep in memory.
+#if defined(GOOGLE_TV)
+// In Google TV, set the size of the buffer to 1 min because of
+// the limited memory of the embedded system.
+// 2MB: approximately 1 minutes of 256Kbps content.
+// 30MB: approximately 1 minutes of 4Mbps content.
+static int kDefaultAudioMemoryLimit = 2 * 1024 * 1024;
+static int kDefaultVideoMemoryLimit = 30 * 1024 * 1024;
+#else
 // 12MB: approximately 5 minutes of 320Kbps content.
 // 150MB: approximately 5 minutes of 4Mbps content.
 static int kDefaultAudioMemoryLimit = 12 * 1024 * 1024;
 static int kDefaultVideoMemoryLimit = 150 * 1024 * 1024;
+#endif
 
 namespace media {
 
@@ -300,13 +309,13 @@ SourceBufferStream::SourceBufferStream(const AudioDecoderConfig& audio_config,
       range_for_next_append_(ranges_.end()),
       new_media_segment_(false),
       last_appended_buffer_timestamp_(kNoTimestamp()),
+      last_appended_buffer_is_keyframe_(false),
       last_output_buffer_timestamp_(kNoTimestamp()),
       max_interbuffer_distance_(kNoTimestamp()),
       memory_limit_(kDefaultAudioMemoryLimit),
       config_change_pending_(false) {
   DCHECK(audio_config.IsValidConfig());
-  audio_configs_.push_back(new AudioDecoderConfig());
-  audio_configs_.back()->CopyFrom(audio_config);
+  audio_configs_.push_back(audio_config);
 }
 
 SourceBufferStream::SourceBufferStream(const VideoDecoderConfig& video_config,
@@ -321,13 +330,13 @@ SourceBufferStream::SourceBufferStream(const VideoDecoderConfig& video_config,
       range_for_next_append_(ranges_.end()),
       new_media_segment_(false),
       last_appended_buffer_timestamp_(kNoTimestamp()),
+      last_appended_buffer_is_keyframe_(false),
       last_output_buffer_timestamp_(kNoTimestamp()),
       max_interbuffer_distance_(kNoTimestamp()),
       memory_limit_(kDefaultVideoMemoryLimit),
       config_change_pending_(false) {
   DCHECK(video_config.IsValidConfig());
-  video_configs_.push_back(new VideoDecoderConfig());
-  video_configs_.back()->CopyFrom(video_config);
+  video_configs_.push_back(video_config);
 }
 
 SourceBufferStream::~SourceBufferStream() {
@@ -335,9 +344,6 @@ SourceBufferStream::~SourceBufferStream() {
     delete ranges_.front();
     ranges_.pop_front();
   }
-
-  STLDeleteElements(&audio_configs_);
-  STLDeleteElements(&video_configs_);
 }
 
 void SourceBufferStream::OnNewMediaSegment(
@@ -354,6 +360,7 @@ void SourceBufferStream::OnNewMediaSegment(
       !AreAdjacentInSequence(last_appended_buffer_timestamp_,
                              media_segment_start_time)) {
     last_appended_buffer_timestamp_ = kNoTimestamp();
+    last_appended_buffer_is_keyframe_ = false;
   } else {
     DCHECK(last_range == range_for_next_append_);
   }
@@ -375,10 +382,8 @@ bool SourceBufferStream::Append(
   }
 
   // Buffers within a media segment should be monotonically increasing.
-  if (!IsMonotonicallyIncreasing(buffers)) {
-    MEDIA_LOG(log_cb_) << "Buffers were not monotonically increasing.";
+  if (!IsMonotonicallyIncreasing(buffers))
     return false;
-  }
 
   if (media_segment_start_time_ < base::TimeDelta() ||
       buffers.front()->GetDecodeTimestamp() < base::TimeDelta()) {
@@ -398,7 +403,10 @@ bool SourceBufferStream::Append(
   // If there's a range for |buffers|, insert |buffers| accordingly. Otherwise,
   // create a new range with |buffers|.
   if (range_for_new_buffers != ranges_.end()) {
-    InsertIntoExistingRange(range_for_new_buffers, buffers, &deleted_buffers);
+    if (!InsertIntoExistingRange(range_for_new_buffers, buffers,
+                                 &deleted_buffers)) {
+      return false;
+    }
   } else {
     DCHECK(new_media_segment_);
     range_for_new_buffers =
@@ -411,6 +419,7 @@ bool SourceBufferStream::Append(
   range_for_next_append_ = range_for_new_buffers;
   new_media_segment_ = false;
   last_appended_buffer_timestamp_ = buffers.back()->GetDecodeTimestamp();
+  last_appended_buffer_is_keyframe_ = buffers.back()->IsKeyframe();
 
   // Resolve overlaps.
   ResolveCompleteOverlaps(range_for_new_buffers, &deleted_buffers);
@@ -473,19 +482,49 @@ bool SourceBufferStream::ShouldSeekToStartOfBuffered(
           beginning_of_buffered < kSeekToStartFudgeRoom());
 }
 
+// Buffers with the same timestamp are only allowed under certain conditions.
+// Video: Allowed when the previous frame and current frame are NOT keyframes.
+//        This is the situation for VP8 Alt-Ref frames.
+// Otherwise: Allowed in all situations except where a non-keyframe is followed
+//            by a keyframe.
+// Returns true if |prev_is_keyframe| and |current_is_keyframe| indicate a
+// same timestamp situation that is allowed. False is returned otherwise.
+bool SourceBufferStream::AllowSameTimestamp(
+    bool prev_is_keyframe, bool current_is_keyframe) const {
+  if (video_configs_.size() > 0)
+    return !prev_is_keyframe && !current_is_keyframe;
+
+  return prev_is_keyframe || !current_is_keyframe;
+}
+
 bool SourceBufferStream::IsMonotonicallyIncreasing(
     const BufferQueue& buffers) const {
   DCHECK(!buffers.empty());
   base::TimeDelta prev_timestamp = last_appended_buffer_timestamp_;
+  bool prev_is_keyframe = last_appended_buffer_is_keyframe_;
   for (BufferQueue::const_iterator itr = buffers.begin();
        itr != buffers.end(); ++itr) {
     base::TimeDelta current_timestamp = (*itr)->GetDecodeTimestamp();
+    bool current_is_keyframe = (*itr)->IsKeyframe();
     DCHECK(current_timestamp != kNoTimestamp());
 
-    if (prev_timestamp != kNoTimestamp() && current_timestamp < prev_timestamp)
-      return false;
+    if (prev_timestamp != kNoTimestamp()) {
+      if (current_timestamp < prev_timestamp) {
+        MEDIA_LOG(log_cb_) << "Buffers were not monotonically increasing.";
+        return false;
+      }
+
+      if (current_timestamp == prev_timestamp &&
+          !AllowSameTimestamp(prev_is_keyframe, current_is_keyframe)) {
+        MEDIA_LOG(log_cb_) << "Unexpected combination of buffers with the"
+                           << " same timestamp detected at "
+                           << current_timestamp.InSecondsF();
+        return false;
+      }
+    }
 
     prev_timestamp = current_timestamp;
+    prev_is_keyframe = current_is_keyframe;
   }
   return true;
 }
@@ -628,7 +667,7 @@ int SourceBufferStream::FreeBuffers(int total_bytes_to_free,
   return bytes_freed;
 }
 
-void SourceBufferStream::InsertIntoExistingRange(
+bool SourceBufferStream::InsertIntoExistingRange(
     const RangeList::iterator& range_for_new_buffers_itr,
     const BufferQueue& new_buffers, BufferQueue* deleted_buffers) {
   DCHECK(deleted_buffers);
@@ -657,22 +696,41 @@ void SourceBufferStream::InsertIntoExistingRange(
     }
   }
 
-  if (last_appended_buffer_timestamp_ != kNoTimestamp()) {
+  base::TimeDelta prev_timestamp = last_appended_buffer_timestamp_;
+  bool prev_is_keyframe = last_appended_buffer_is_keyframe_;
+  base::TimeDelta next_timestamp = new_buffers.front()->GetDecodeTimestamp();
+  bool next_is_keyframe = new_buffers.front()->IsKeyframe();
+
+  if (prev_timestamp != kNoTimestamp() && prev_timestamp != next_timestamp) {
     // Clean up the old buffers between the last appended buffer and the
     // beginning of |new_buffers|.
     DeleteBetween(
-        range_for_new_buffers_itr, last_appended_buffer_timestamp_,
-        new_buffers.front()->GetDecodeTimestamp(), true,
+        range_for_new_buffers_itr, prev_timestamp, next_timestamp, true,
         deleted_buffers);
   }
 
+  bool is_exclusive = false;
+  if (prev_timestamp == next_timestamp) {
+    if (!new_media_segment_ &&
+        !AllowSameTimestamp(prev_is_keyframe, next_is_keyframe)) {
+      MEDIA_LOG(log_cb_) << "Invalid same timestamp construct detected at time "
+                         << prev_timestamp.InSecondsF();
+      return false;
+    }
+
+    // Make the delete range exclusive if we are dealing with an allowed same
+    // timestamp situation so that the buffer with the same timestamp that is
+    // already stored in |*range_for_new_buffers_itr| doesn't get deleted.
+    is_exclusive = AllowSameTimestamp(prev_is_keyframe, next_is_keyframe);
+  }
+
   // If we cannot append the |new_buffers| to the end of the existing range,
-  // this is either a start overlap or an middle overlap. Delete the buffers
+  // this is either a start overlap or a middle overlap. Delete the buffers
   // that |new_buffers| overlaps.
   if (!range_for_new_buffers->CanAppendBuffersToEnd(new_buffers)) {
     DeleteBetween(
         range_for_new_buffers_itr, new_buffers.front()->GetDecodeTimestamp(),
-        new_buffers.back()->GetDecodeTimestamp(), false,
+        new_buffers.back()->GetDecodeTimestamp(), is_exclusive,
         deleted_buffers);
   }
 
@@ -681,6 +739,7 @@ void SourceBufferStream::InsertIntoExistingRange(
     SetSelectedRange(NULL);
 
   range_for_new_buffers->AppendBuffersToEnd(new_buffers);
+  return true;
 }
 
 void SourceBufferStream::DeleteBetween(
@@ -773,7 +832,7 @@ void SourceBufferStream::ResolveEndOverlap(
     AddToRanges(new_next_range);
 
   // If we didn't overlap a selected range, return.
-  if (selected_range_ != overlapped_range.get())
+  if (selected_range_ != overlapped_range)
     return;
 
   // If the |overlapped_range| transfers its next buffer position to
@@ -1002,13 +1061,13 @@ bool SourceBufferStream::IsEndSelected() const {
 const AudioDecoderConfig& SourceBufferStream::GetCurrentAudioDecoderConfig() {
   if (config_change_pending_)
     CompleteConfigChange();
-  return *audio_configs_[current_config_index_];
+  return audio_configs_[current_config_index_];
 }
 
 const VideoDecoderConfig& SourceBufferStream::GetCurrentVideoDecoderConfig() {
   if (config_change_pending_)
     CompleteConfigChange();
-  return *video_configs_[current_config_index_];
+  return video_configs_[current_config_index_];
 }
 
 base::TimeDelta SourceBufferStream::GetMaxInterbufferDistance() const {
@@ -1022,34 +1081,34 @@ bool SourceBufferStream::UpdateAudioConfig(const AudioDecoderConfig& config) {
   DCHECK(video_configs_.empty());
   DVLOG(3) << "UpdateAudioConfig.";
 
-  if (audio_configs_[0]->codec() != config.codec()) {
+  if (audio_configs_[0].codec() != config.codec()) {
     MEDIA_LOG(log_cb_) << "Audio codec changes not allowed.";
     return false;
   }
 
-  if (audio_configs_[0]->samples_per_second() != config.samples_per_second()) {
+  if (audio_configs_[0].samples_per_second() != config.samples_per_second()) {
     MEDIA_LOG(log_cb_) << "Audio sample rate changes not allowed.";
     return false;
   }
 
-  if (audio_configs_[0]->channel_layout() != config.channel_layout()) {
+  if (audio_configs_[0].channel_layout() != config.channel_layout()) {
     MEDIA_LOG(log_cb_) << "Audio channel layout changes not allowed.";
     return false;
   }
 
-  if (audio_configs_[0]->bits_per_channel() != config.bits_per_channel()) {
+  if (audio_configs_[0].bits_per_channel() != config.bits_per_channel()) {
     MEDIA_LOG(log_cb_) << "Audio bits per channel changes not allowed.";
     return false;
   }
 
-  if (audio_configs_[0]->is_encrypted() != config.is_encrypted()) {
+  if (audio_configs_[0].is_encrypted() != config.is_encrypted()) {
     MEDIA_LOG(log_cb_) << "Audio encryption changes not allowed.";
     return false;
   }
 
   // Check to see if the new config matches an existing one.
   for (size_t i = 0; i < audio_configs_.size(); ++i) {
-    if (config.Matches(*audio_configs_[i])) {
+    if (config.Matches(audio_configs_[i])) {
       append_config_index_ = i;
       return true;
     }
@@ -1059,8 +1118,7 @@ bool SourceBufferStream::UpdateAudioConfig(const AudioDecoderConfig& config) {
   append_config_index_ = audio_configs_.size();
   DVLOG(2) << "New audio config - index: " << append_config_index_;
   audio_configs_.resize(audio_configs_.size() + 1);
-  audio_configs_[append_config_index_] = new AudioDecoderConfig();
-  audio_configs_[append_config_index_]->CopyFrom(config);
+  audio_configs_[append_config_index_] = config;
   return true;
 }
 
@@ -1069,24 +1127,24 @@ bool SourceBufferStream::UpdateVideoConfig(const VideoDecoderConfig& config) {
   DCHECK(audio_configs_.empty());
   DVLOG(3) << "UpdateVideoConfig.";
 
-  if (video_configs_[0]->is_encrypted() != config.is_encrypted()) {
+  if (video_configs_[0].is_encrypted() != config.is_encrypted()) {
     MEDIA_LOG(log_cb_) << "Video Encryption changes not allowed.";
     return false;
   }
 
-  if (video_configs_[0]->codec() != config.codec()) {
+  if (video_configs_[0].codec() != config.codec()) {
     MEDIA_LOG(log_cb_) << "Video codec changes not allowed.";
     return false;
   }
 
-  if (video_configs_[0]->is_encrypted() != config.is_encrypted()) {
+  if (video_configs_[0].is_encrypted() != config.is_encrypted()) {
     MEDIA_LOG(log_cb_) << "Video encryption changes not allowed.";
     return false;
   }
 
   // Check to see if the new config matches an existing one.
   for (size_t i = 0; i < video_configs_.size(); ++i) {
-    if (config.Matches(*video_configs_[i])) {
+    if (config.Matches(video_configs_[i])) {
       append_config_index_ = i;
       return true;
     }
@@ -1096,8 +1154,7 @@ bool SourceBufferStream::UpdateVideoConfig(const VideoDecoderConfig& config) {
   append_config_index_ = video_configs_.size();
   DVLOG(2) << "New video config - index: " << append_config_index_;
   video_configs_.resize(video_configs_.size() + 1);
-  video_configs_[append_config_index_] = new VideoDecoderConfig();
-  video_configs_[append_config_index_]->CopyFrom(config);
+  video_configs_[append_config_index_] = config;
   return true;
 }
 
@@ -1257,6 +1314,10 @@ SourceBufferRange::SourceBufferRange(
 }
 
 void SourceBufferRange::AppendBuffersToEnd(const BufferQueue& new_buffers) {
+  DCHECK(buffers_.empty() ||
+         buffers_.back()->GetDecodeTimestamp() <=
+         new_buffers.front()->GetDecodeTimestamp());
+
   for (BufferQueue::const_iterator itr = new_buffers.begin();
        itr != new_buffers.end(); ++itr) {
     DCHECK((*itr)->GetDecodeTimestamp() != kNoTimestamp());

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+'use strict';
+
 /**
  * @param {HTMLElement} container Container element.
  * @constructor
@@ -261,10 +263,7 @@ AudioPlayer.prototype.select_ = function(newTrack, opt_restoreState) {
   this.fetchMetadata_(url, function(metadata) {
     if (this.currentTrack_ != currentTrack)
       return;
-    // Do not try no stream when offline.
-    var src =
-        (navigator.onLine && metadata.streaming && metadata.streaming.url) ||
-        url;
+    var src = url;
     this.audioControls_.load(src, opt_restoreState);
 
     // Resolve real filesystem path of the current audio file.
@@ -583,6 +582,8 @@ function FullWindowAudioControls(container, advanceTrack, onError) {
   }.bind(this));
 
   util.disableBrowserShortcutKeys(document);
+  if (!util.platform.v2())
+    util.enableNewFullScreenHandler(document);
 }
 
 FullWindowAudioControls.prototype = { __proto__: AudioControls.prototype };

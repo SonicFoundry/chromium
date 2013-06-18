@@ -183,6 +183,12 @@ cr.define('ntp', function() {
   var finishedLoadingNotificationSent_ = false;
 
   /**
+   * Whether the page title has been loaded.
+   * @type {boolean}
+   */
+  var titleLoadedStatus_ = false;
+
+  /**
    * Whether the NTP is in incognito mode or not.
    * @type {boolean}
    */
@@ -467,6 +473,13 @@ cr.define('ntp', function() {
       window.addEventListener('contextmenu', contextMenuHandler);
   }
 
+  function sendNTPTitleLoadedNotification() {
+    if (!titleLoadedStatus_) {
+      titleLoadedStatus_ = true;
+      chrome.send('notifyNTPTitleLoaded');
+    }
+  }
+
   /**
    * Notifies the chrome process of the status of the NTP.
    */
@@ -653,6 +666,10 @@ cr.define('ntp', function() {
     title.insertBefore(spacerImg, title.firstChild);
     thumbnailCell.appendChild(title);
 
+    var shade = createDiv('thumbnail-cell-shade');
+    thumbnailContainer.appendChild(shade);
+    addActiveTouchListener(shade, 'thumbnail-cell-shade-active');
+
     wrapClickHandler(thumbnailCell, item, opt_clickCallback);
 
     thumbnailCell.setAttribute(CONTEXT_MENU_URL_KEY, item.url);
@@ -815,11 +832,12 @@ cr.define('ntp', function() {
         'chrome://touch-icon/size/' + iconSize + '@1x/' + item.url;
     listItem.appendChild(createDiv('icon', iconUrl));
     trackImageLoad(iconUrl);
-    var title = createElement('span', {
+    var title = createElement('div', {
       textContent: item.title,
-      className: 'title'
+      className: 'title session_title'
     });
     listItem.appendChild(title);
+
     listItem.addEventListener('click', function(evt) {
       var clickCallback =
           opt_clickCallback ? opt_clickCallback : itemShortcutClickHandler;
@@ -853,11 +871,11 @@ cr.define('ntp', function() {
     var icon = createDiv('session-icon ' + item.iconStyle);
     sessionOuterDiv.appendChild(icon);
 
-    var titleContainer = createElement('span', 'title');
+    var titleContainer = createElement('div', 'title');
     sessionOuterDiv.appendChild(titleContainer);
 
     // Extra container to allow title & last-sync time to stack vertically.
-    var sessionInnerDiv = createDiv(null);
+    var sessionInnerDiv = createDiv('session_container');
     titleContainer.appendChild(sessionInnerDiv);
 
     var title = createDiv('session-name');
@@ -1326,7 +1344,8 @@ cr.define('ntp', function() {
 
     // Set the position of the title.
     if (titleWidth < containerWidth) {
-      title.style.left = '0px';
+      // left-align on LTR and right-align on RTL.
+      title.style.left = '';
     } else {
       title.style.left = boundedScrollPosition + 'px';
     }
@@ -2105,6 +2124,14 @@ cr.define('ntp', function() {
     currentPaneIndex = paneIndex;
 
     document.body.scrollTop = 0;
+
+    var panelPrefix = sectionPrefixes[paneIndex];
+    var title = templateData[panelPrefix + '_document_title'];
+    if (!title)
+      title = templateData['title'];
+    document.title = title;
+
+    sendNTPTitleLoadedNotification();
 
     // TODO (dtrainor): Could potentially add logic to reset the bookmark state
     // if they are moving to that pane.  This logic was in there before, but

@@ -7,6 +7,7 @@
 If you change this, please run and update the tests."""
 
 import collections
+import errno
 import optparse
 import os
 import re
@@ -263,14 +264,14 @@ def ExtractNatives(contents):
                          '\(\"(?P<native_class_name>.*?)\"\))?\s*'
                          '(@NativeCall(\(\"(?P<java_class_name>.*?)\"\)))?\s*'
                          '(?P<qualifiers>\w+\s\w+|\w+|\s+)\s*?native '
-                         '(?P<return>\S*?) '
+                         '(?P<return_type>\S*?) '
                          '(?P<name>\w+?)\((?P<params>.*?)\);')
   for match in re.finditer(re_native, contents):
     native = NativeMethod(
         static='static' in match.group('qualifiers'),
         java_class_name=match.group('java_class_name'),
         native_class_name=match.group('native_class_name'),
-        return_type=match.group('return'),
+        return_type=match.group('return_type'),
         name=match.group('name').replace('native', ''),
         params=JniParams.Parse(match.group('params')))
     natives += [native]
@@ -380,7 +381,7 @@ RE_SCOPED_JNI_RETURN_TYPES = re.compile('jobject|jclass|jstring|.*Array')
 RE_CALLED_BY_NATIVE = re.compile(
     '@CalledByNative(?P<Unchecked>(Unchecked)*?)(?:\("(?P<annotation>.*)"\))?'
     '\s+(?P<prefix>[\w ]*?)'
-    '\s*(?P<return_type>\w+(\[\])*?)'
+    '\s*(?P<return_type>\S+?)'
     '\s+(?P<name>\w+)'
     '\s*\((?P<params>[^\)]*)\)')
 
@@ -877,7 +878,7 @@ jclass g_${JAVA_CLASS}_clazz = NULL;""")
     """Returns the imlementation of FindClass for all known classes."""
     template = Template("""\
   g_${JAVA_CLASS}_clazz = reinterpret_cast<jclass>(env->NewGlobalRef(
-      base::android::GetUnscopedClass(env, k${JAVA_CLASS}ClassPath)));""")
+      base::android::GetClass(env, k${JAVA_CLASS}ClassPath).obj()));""")
     ret = []
     for clazz in self.GetUniqueClasses(self.called_by_natives):
       values = {'JAVA_CLASS': clazz}
@@ -949,8 +950,11 @@ def ExtractJarInputFile(jar_file, input_file, out_dir):
   jar_file = zipfile.ZipFile(jar_file)
 
   out_dir = os.path.join(out_dir, os.path.dirname(input_file))
-  if not os.path.exists(out_dir):
+  try:
     os.makedirs(out_dir)
+  except OSError as e:
+    if e.errno != errno.EEXIST:
+      raise
   extracted_file_name = os.path.join(out_dir, os.path.basename(input_file))
   with open(extracted_file_name, 'w') as outfile:
     outfile.write(jar_file.read(input_file))

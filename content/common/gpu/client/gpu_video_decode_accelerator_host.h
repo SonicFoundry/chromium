@@ -9,6 +9,7 @@
 
 #include "base/memory/weak_ptr.h"
 #include "base/threading/non_thread_safe.h"
+#include "content/common/gpu/client/command_buffer_proxy_impl.h"
 #include "ipc/ipc_listener.h"
 #include "media/video/video_decode_accelerator.h"
 
@@ -20,12 +21,14 @@ class GpuChannelHost;
 class GpuVideoDecodeAcceleratorHost
     : public IPC::Listener,
       public media::VideoDecodeAccelerator,
+      public CommandBufferProxyImpl::DeletionObserver,
       public base::NonThreadSafe {
  public:
   // |channel| is used to send IPC messages to GPU process.
   GpuVideoDecodeAcceleratorHost(GpuChannelHost* channel,
                                 int32 decoder_route_id,
-                                media::VideoDecodeAccelerator::Client* client);
+                                media::VideoDecodeAccelerator::Client* client,
+                                CommandBufferProxyImpl* impl);
 
   // IPC::Listener implementation.
   virtual void OnChannelError() OVERRIDE;
@@ -40,6 +43,9 @@ class GpuVideoDecodeAcceleratorHost
   virtual void Flush() OVERRIDE;
   virtual void Reset() OVERRIDE;
   virtual void Destroy() OVERRIDE;
+
+  // CommandBufferProxyImpl::DeletionObserver implemetnation.
+  virtual void OnWillDeleteImpl() OVERRIDE;
 
  private:
   // Only Destroy() should be deleting |this|.
@@ -61,13 +67,13 @@ class GpuVideoDecodeAcceleratorHost
   GpuChannelHost* channel_;
 
   // Route ID for the associated decoder in the GPU process.
-  // TODO(fischman): storing route_id's for GPU process entities in the client
-  // process is vulnerable to GPU process crashing & being respawned, and
-  // attempting to use an outdated or reused route id.
   int32 decoder_route_id_;
 
   // Reference to the client that will receive callbacks from the decoder.
   media::VideoDecodeAccelerator::Client* client_;
+
+  // Unowned reference to the CommandBufferProxyImpl that created us.
+  CommandBufferProxyImpl* impl_;
 
   DISALLOW_COPY_AND_ASSIGN(GpuVideoDecodeAcceleratorHost);
 };

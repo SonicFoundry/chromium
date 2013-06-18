@@ -5,9 +5,11 @@
 #ifndef CHROME_BROWSER_MANAGED_MODE_MANAGED_USER_SERVICE_H_
 #define CHROME_BROWSER_MANAGED_MODE_MANAGED_USER_SERVICE_H_
 
+#include <set>
 #include <vector>
 
-#include "base/prefs/public/pref_change_registrar.h"
+#include "base/memory/scoped_ptr.h"
+#include "base/prefs/pref_change_registrar.h"
 #include "base/string16.h"
 #include "chrome/browser/extensions/management_policy.h"
 #include "chrome/browser/managed_mode/managed_mode_url_filter.h"
@@ -17,10 +19,14 @@
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_contents.h"
 
+class Browser;
 class ManagedModeURLFilter;
 class ManagedModeSiteList;
-class PrefRegistrySyncable;
 class Profile;
+
+namespace user_prefs {
+class PrefRegistrySyncable;
+}
 
 // This class handles all the information related to a given managed profile
 // (e.g. the installed content packs, the default URL filtering behavior, or
@@ -41,9 +47,11 @@ class ManagedUserService : public ProfileKeyedService,
   virtual ~ManagedUserService();
 
   bool ProfileIsManaged() const;
-  bool IsElevated() const;
 
-  static void RegisterUserPrefs(PrefRegistrySyncable* registry);
+  // Returns the elevation state for specific WebContents.
+  bool IsElevatedForWebContents(const content::WebContents* web_contents) const;
+
+  static void RegisterUserPrefs(user_prefs::PrefRegistrySyncable* registry);
 
   // Returns the URL filter for the IO thread, for filtering network requests
   // (in ManagedModeResourceThrottle).
@@ -79,15 +87,43 @@ class ManagedUserService : public ProfileKeyedService,
   void SetManualBehaviorForURLs(const std::vector<GURL>& url,
                                 ManualBehavior behavior);
 
+  // Returns all URLS on the given host that have exceptions.
+  void GetManualExceptionsForHost(const std::string& host,
+                                  std::vector<GURL>* urls);
+
+  // Checks if the passphrase dialog can be skipped (the profile is already in
+  // elevated state for the given WebContents or the passphrase is empty).
+  bool CanSkipPassphraseDialog(const content::WebContents* web_contents) const;
+
   // Handles the request to authorize as the custodian of the managed user.
   void RequestAuthorization(content::WebContents* web_contents,
                             const PassphraseCheckedCallback& callback);
 
-  void SetElevated(bool is_elevated);
+  // Add an elevation for a specific extension which allows the managed user to
+  // install/uninstall this specific extension.
+  void AddElevationForExtension(const std::string& extension_id);
+
+  // Remove the elevation for a specific extension.
+  void RemoveElevationForExtension(const std::string& extension_id);
 
   // Initializes this object. This method does nothing if the profile is not
   // managed.
   void Init();
+
+  // Marks the profile as managed and initializes it.
+  void InitForTesting();
+
+  void set_startup_elevation(bool elevation) {
+    startup_elevation_ = elevation;
+  }
+
+  bool startup_elevation() const {
+    return startup_elevation_;
+  }
+
+  void set_skip_dialog_for_testing(bool skip) {
+    skip_dialog_for_testing_ = skip;
+  }
 
   // extensions::ManagementPolicy::Provider implementation:
   virtual std::string GetDebugPolicyProviderName() const OVERRIDE;
@@ -137,7 +173,8 @@ class ManagedUserService : public ProfileKeyedService,
   // Internal implementation for ExtensionManagementPolicy::Delegate methods.
   // If |error| is not NULL, it will be filled with an error message if the
   // requested extension action (install, modify status, etc.) is not permitted.
-  bool ExtensionManagementPolicyImpl(string16* error) const;
+  bool ExtensionManagementPolicyImpl(const std::string& extension_id,
+                                     string16* error) const;
 
   // Returns a list of all installed and enabled site lists in the current
   // managed profile.
@@ -155,16 +192,24 @@ class ManagedUserService : public ProfileKeyedService,
   // corresponding preference is changed.
   void UpdateManualURLs();
 
+  // Returns if the passphrase to authorize as the custodian is empty.
+  bool IsPassphraseEmpty() const;
+
   // Owns us via the ProfileKeyedService mechanism.
   Profile* profile_;
 
-  // If ManagedUserService is in an elevated state, a custodian user has
-  // authorized making changes (to install additional content packs, for
-  // example).
-  bool is_elevated_;
+  // Is true if the managed user should start in elevated mode.
+  bool startup_elevation_;
 
   content::NotificationRegistrar registrar_;
   PrefChangeRegistrar pref_change_registrar_;
+
+  // Stores the extension ids of the extensions which currently can be modified
+  // by the managed user.
+  std::set<std::string> elevated_for_extensions_;
+
+  // Skips the passphrase dialog in tests if set to true.
+  bool skip_dialog_for_testing_;
 
   URLFilterContext url_filter_context_;
 };

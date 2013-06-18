@@ -19,7 +19,8 @@ LauncherItemController::LauncherItemController(
       app_id_(app_id),
       launcher_id_(0),
       launcher_controller_(launcher_controller),
-      locked_(0) {
+      locked_(0),
+      image_set_by_controller_(false) {
 }
 
 LauncherItemController::~LauncherItemController() {
@@ -44,7 +45,6 @@ ash::LauncherItemType LauncherItemController::GetLauncherItemType() const {
     case LauncherItemController::TYPE_WINDOWED_APP:
       return ash::TYPE_APP_SHORTCUT;
     case LauncherItemController::TYPE_APP:
-    case LauncherItemController::TYPE_EXTENSION_PANEL:
       return ash::TYPE_PLATFORM_APP;
     case LauncherItemController::TYPE_APP_PANEL:
       return ash::TYPE_APP_PANEL;

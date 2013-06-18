@@ -6,6 +6,7 @@
 
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/command_buffer/service/buffer_manager.h"
+#include "gpu/command_buffer/service/error_state.h"
 #include "gpu/command_buffer/service/framebuffer_manager.h"
 #include "gpu/command_buffer/service/program_manager.h"
 #include "gpu/command_buffer/service/renderbuffer_manager.h"
@@ -34,14 +35,16 @@ TextureUnit::TextureUnit()
 TextureUnit::~TextureUnit() {
 }
 
-ContextState::ContextState(FeatureInfo* feature_info)
+ContextState::ContextState(FeatureInfo* feature_info, Logger* logger)
     : pack_alignment(4),
       unpack_alignment(4),
       active_texture_unit(0),
       hint_generate_mipmap(GL_DONT_CARE),
       hint_fragment_shader_derivative(GL_DONT_CARE),
       pack_reverse_row_order(false),
-      feature_info_(feature_info) {
+      fbo_binding_for_scissor_workaround_dirty_(false),
+      feature_info_(feature_info),
+      error_state_(ErrorState::Create(logger)) {
   Initialize();
 }
 
@@ -99,30 +102,29 @@ void ContextState::RestoreActiveTexture() const {
   glActiveTexture(GL_TEXTURE0 + active_texture_unit);
 }
 
-void ContextState::RestoreAttribute(GLuint attrib) const {
-  const VertexAttrib* info =
-      vertex_attrib_manager->GetVertexAttrib(attrib);
-  const void* ptr = reinterpret_cast<const void*>(info->offset());
-  Buffer* buffer_info = info->buffer();
-  glBindBuffer(
-      GL_ARRAY_BUFFER, buffer_info ? buffer_info->service_id() : 0);
+void ContextState::RestoreAttribute(GLuint attrib_index) const {
+  const VertexAttrib* attrib =
+      vertex_attrib_manager->GetVertexAttrib(attrib_index);
+  const void* ptr = reinterpret_cast<const void*>(attrib->offset());
+  Buffer* buffer = attrib->buffer();
+  glBindBuffer(GL_ARRAY_BUFFER, buffer ? buffer->service_id() : 0);
   glVertexAttribPointer(
-      attrib, info->size(), info->type(), info->normalized(),
-      info->gl_stride(), ptr);
-  if (info->divisor())
-    glVertexAttribDivisorANGLE(attrib, info->divisor());
+      attrib_index, attrib->size(), attrib->type(), attrib->normalized(),
+      attrib->gl_stride(), ptr);
+  if (attrib->divisor())
+    glVertexAttribDivisorANGLE(attrib_index, attrib->divisor());
   // Never touch vertex attribute 0's state (in particular, never
   // disable it) when running on desktop GL because it will never be
   // re-enabled.
-  if (attrib != 0 ||
+  if (attrib_index != 0 ||
       gfx::GetGLImplementation() == gfx::kGLImplementationEGLGLES2) {
-    if (info->enabled()) {
-      glEnableVertexAttribArray(attrib);
+    if (attrib->enabled()) {
+      glEnableVertexAttribArray(attrib_index);
     } else {
-      glDisableVertexAttribArray(attrib);
+      glDisableVertexAttribArray(attrib_index);
     }
   }
-  glVertexAttrib4fv(attrib, attrib_values[attrib].v);
+  glVertexAttrib4fv(attrib_index, attrib_values[attrib_index].v);
 }
 
 void ContextState::RestoreGlobalState() const {
@@ -159,6 +161,10 @@ void ContextState::RestoreState() const {
   RestoreRenderbufferBindings();
   RestoreProgramBindings();
   RestoreGlobalState();
+}
+
+ErrorState* ContextState::GetErrorState() {
+  return error_state_.get();
 }
 
 // Include the auto-generated part of this file. We split this because it means

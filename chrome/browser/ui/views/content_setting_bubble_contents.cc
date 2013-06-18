@@ -26,14 +26,13 @@
 #include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/simple_menu_model.h"
+#include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/button/menu_button.h"
 #include "ui/views/controls/button/radio_button.h"
-#include "ui/views/controls/button/text_button.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/link.h"
 #include "ui/views/controls/menu/menu.h"
-#include "ui/views/controls/menu/menu_model_adapter.h"
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/controls/separator.h"
 #include "ui/views/layout/grid_layout.h"
@@ -53,9 +52,8 @@ const int kMaxContentsWidth = 500;
 // narrow bubbles with lots of line-wrapping.
 const int kMinMultiLineContentsWidth = 250;
 
-// The minimum and maximum width of the media menu buttons.
+// The minimum width of the media menu buttons.
 const int kMinMediaMenuButtonWidth = 100;
-const int kMaxMediaMenuButtonWidth = 600;
 
 }
 
@@ -144,15 +142,15 @@ ContentSettingBubbleContents::ContentSettingBubbleContents(
     ContentSettingBubbleModel* content_setting_bubble_model,
     WebContents* web_contents,
     views::View* anchor_view,
-    views::BubbleBorder::ArrowLocation arrow_location)
-    : BubbleDelegateView(anchor_view, arrow_location),
+    views::BubbleBorder::Arrow arrow)
+    : BubbleDelegateView(anchor_view, arrow),
       content_setting_bubble_model_(content_setting_bubble_model),
       web_contents_(web_contents),
       custom_link_(NULL),
       manage_link_(NULL),
       close_button_(NULL) {
   // Compensate for built-in vertical padding in the anchor view's image.
-  set_anchor_insets(gfx::Insets(5, 0, 5, 0));
+  set_anchor_view_insets(gfx::Insets(5, 0, 5, 0));
 
   registrar_.Add(this, content::NOTIFICATION_WEB_CONTENTS_DESTROYED,
                  content::Source<WebContents>(web_contents));
@@ -203,6 +201,8 @@ void ContentSettingBubbleContents::Init() {
   if (!bubble_content.title.empty()) {
     views::Label* title_label = new views::Label(UTF8ToUTF16(
         bubble_content.title));
+    title_label->SetMultiLine(true);
+    title_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
     layout->StartRow(0, kSingleColumnSetId);
     layout->AddView(title_label);
     bubble_content_empty = false;
@@ -307,7 +307,7 @@ void ContentSettingBubbleContents::Init() {
       label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
 
       views::MenuButton* menu_button = new views::MenuButton(
-          NULL, UTF8ToUTF16((i->second.selected_device.name)), this, false);
+          NULL, UTF8ToUTF16((i->second.selected_device.name)), this, true);
       menu_button->set_alignment(views::TextButton::ALIGN_LEFT);
       menu_button->set_border(
           new views::TextButtonNativeThemeBorder(menu_button));
@@ -321,6 +321,14 @@ void ContentSettingBubbleContents::Init() {
                      base::Unretained(this))));
       media_menus_[menu_button] = menu_view;
 
+      if (!menu_view->menu_model->GetItemCount()) {
+        // Show a "None available" title and grey out the menu when there is no
+        // available device.
+        menu_button->SetText(
+            l10n_util::GetStringUTF16(IDS_MEDIA_MENU_NO_DEVICE_TITLE));
+        menu_button->SetEnabled(false);
+      }
+
       // Use the longest width of the menus as the width of the menu buttons.
       menu_width = std::max(menu_width,
                             GetPreferredMediaMenuWidth(
@@ -332,10 +340,9 @@ void ContentSettingBubbleContents::Init() {
       bubble_content_empty = false;
     }
 
-    // Make sure the width is within [kMinMediaMenuButtonWidth,
-    // kMaxMediaMenuButtonWidth].
+    // Make sure the width is at least kMinMediaMenuButtonWidth. The
+    // maximum width will be clamped by kMaxContentsWidth of the view.
     menu_width = std::max(kMinMediaMenuButtonWidth, menu_width);
-    menu_width = std::min(kMaxMediaMenuButtonWidth, menu_width);
 
     // Set all the menu buttons to the width we calculated above.
     for (MediaMenuPartsMap::const_iterator i = media_menus_.begin();
@@ -397,8 +404,9 @@ void ContentSettingBubbleContents::Init() {
   manage_link_->set_listener(this);
   layout->AddView(manage_link_);
 
-  close_button_ = new views::NativeTextButton(
+  close_button_ = new views::LabelButton(
       this, l10n_util::GetStringUTF16(IDS_DONE));
+  close_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
   layout->AddView(close_button_);
 }
 
@@ -447,8 +455,7 @@ void ContentSettingBubbleContents::OnMenuButtonClicked(
       static_cast<views::MenuButton*>(source)));
   DCHECK(i != media_menus_.end());
 
-  views::MenuModelAdapter menu_model_adapter(i->second->menu_model.get());
-  menu_runner_.reset(new views::MenuRunner(menu_model_adapter.CreateMenu()));
+  menu_runner_.reset(new views::MenuRunner(i->second->menu_model.get()));
 
   gfx::Point screen_location;
   views::View::ConvertPointToScreen(i->first, &screen_location);

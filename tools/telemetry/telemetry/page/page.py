@@ -20,19 +20,29 @@ class Page(object):
     self.url = url
     self.page_set = page_set
     self.base_dir = base_dir
-    self.credentials = None
-    self.disabled = False
-    self.wait_time_after_navigate = 2
 
+    # These _attributes can be set dynamically by the page.
+    self._attributes = {}
+    self._attributes['credentials'] = None
+    self._attributes['disabled'] = False
+    self._attributes['script_to_evaluate_on_commit'] = None
     if attributes:
-      for k, v in attributes.iteritems():
-        setattr(self, k, v)
+      self._attributes.update(attributes)
+
+  def __getattr__(self, name):
+    if name in self._attributes:
+      return self._attributes[name]
+
+    if self.page_set and hasattr(self.page_set, name):
+      return getattr(self.page_set, name)
+
+    raise AttributeError()
 
   # NOTE: This assumes the page_set file uses 'file:///' instead of 'file://',
   # otherwise the '/' will be missing between page_set.base_dir and
   # parsed_url.path.
   @property
-  def url_base_dir_and_file(self):
+  def serving_dirs_and_file(self):
     parsed_url = urlparse.urlparse(self.url)
 
     # Don't use os.path.join otherwise netloc and path can't point to relative
@@ -41,10 +51,11 @@ class Page(object):
 
     path = self.base_dir + parsed_url.netloc + parsed_url.path
 
-    if hasattr(self, 'url_base_dir'):
-      parsed_url = urlparse.urlparse(self.url_base_dir)
-      base_path = self.base_dir + parsed_url.netloc + parsed_url.path
-      return (base_path, path.replace(base_path, ''))
+    if hasattr(self.page_set, 'serving_dirs'):
+      url_base_dir = os.path.commonprefix(self.page_set.serving_dirs)
+      base_path = self.base_dir + '/' + url_base_dir
+      return ([self.base_dir + '/' + d for d in self.page_set.serving_dirs],
+              path.replace(base_path, ''))
 
     return os.path.split(path)
 
@@ -56,9 +67,13 @@ class Page(object):
 
   @property
   def display_url(self):
-    if self.url.startswith('file://'):
-      return os.path.split(self.url)[1]
-    return re.sub('https?://', '', self.url)
+    if self.url.startswith('http'):
+      return self.url
+    url_paths = ['/'.join(p.url.strip('/').split('/')[:-1])
+                 for p in self.page_set
+                 if p.url.startswith('file://')]
+    common_prefix = os.path.commonprefix(url_paths)
+    return self.url[len(common_prefix):].strip('/')
 
   @property
   def archive_path(self):
@@ -75,9 +90,6 @@ class Page(object):
   @staticmethod
   def WaitForPageToLoad(obj, tab, timeout, poll_interval=0.1):
     """Waits for various wait conditions present in obj."""
-    if hasattr(obj, 'post_navigate_javascript_to_execute'):
-      tab.EvaluateJavaScript(obj.post_navigate_javascript_to_execute)
-
     if hasattr(obj, 'wait_seconds'):
       time.sleep(obj.wait_seconds)
     if hasattr(obj, 'wait_for_element_with_text'):
@@ -90,6 +102,8 @@ class Page(object):
       util.WaitFor(lambda: tab.EvaluateJavaScript(
            'document.querySelector(\'' + obj.wait_for_element_with_selector +
            '\') != null'), timeout, poll_interval)
+    if hasattr(obj, 'post_navigate_javascript_to_execute'):
+      tab.EvaluateJavaScript(obj.post_navigate_javascript_to_execute)
     if hasattr(obj, 'wait_for_javascript_expression'):
       util.WaitFor(
           lambda: tab.EvaluateJavaScript(obj.wait_for_javascript_expression),

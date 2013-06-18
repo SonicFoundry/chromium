@@ -14,12 +14,12 @@
 #include "base/prefs/pref_service.h"
 #include "chrome/browser/content_settings/content_settings_rule.h"
 #include "chrome/browser/content_settings/content_settings_utils.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/content_settings.h"
 #include "chrome/common/content_settings_pattern.h"
 #include "chrome/common/pref_names.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
@@ -87,7 +87,8 @@ class DefaultRuleIterator : public RuleIterator {
 }  // namespace
 
 // static
-void DefaultProvider::RegisterUserPrefs(PrefRegistrySyncable* registry) {
+void DefaultProvider::RegisterUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
   // The registration of the preference prefs::kDefaultContentSettings should
   // also include the default values for default content settings. This allows
   // functional tests to get default content settings by reading the preference
@@ -95,9 +96,10 @@ void DefaultProvider::RegisterUserPrefs(PrefRegistrySyncable* registry) {
   // TODO(markusheintz): Write pyauto hooks for the content settings map as
   // content settings should be read from the host content settings map.
   DictionaryValue* default_content_settings = new DictionaryValue();
-  registry->RegisterDictionaryPref(prefs::kDefaultContentSettings,
-                                   default_content_settings,
-                                   PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterDictionaryPref(
+      prefs::kDefaultContentSettings,
+      default_content_settings,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
 }
 
 DefaultProvider::DefaultProvider(PrefService* prefs, bool incognito)

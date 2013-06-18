@@ -5,9 +5,10 @@
 #ifndef CC_TEST_FAKE_OUTPUT_SURFACE_H_
 #define CC_TEST_FAKE_OUTPUT_SURFACE_H_
 
-#include "cc/compositor_frame.h"
-#include "cc/output_surface.h"
-#include "cc/test/fake_software_output_device.h"
+#include "base/time.h"
+#include "cc/output/compositor_frame.h"
+#include "cc/output/output_surface.h"
+#include "cc/output/software_output_device.h"
 #include "cc/test/test_web_graphics_context_3d.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebGraphicsContext3D.h"
 
@@ -55,13 +56,18 @@ class FakeOutputSurface : public OutputSurface {
         new FakeOutputSurface(software_device.Pass(), true));
   }
 
-  virtual bool BindToClient(OutputSurfaceClient*) OVERRIDE;
-  virtual void SendFrameToParentCompositor(CompositorFrame*) OVERRIDE;
+  virtual void SendFrameToParentCompositor(CompositorFrame* frame) OVERRIDE;
 
   CompositorFrame& last_sent_frame() { return last_sent_frame_; }
   size_t num_sent_frames() { return num_sent_frames_; }
 
-private:
+  virtual void EnableVSyncNotification(bool enable) OVERRIDE;
+  bool vsync_notification_enabled() const {
+    return vsync_notification_enabled_;
+  }
+  void DidVSync(base::TimeTicks frame_time);
+
+ private:
   FakeOutputSurface(
       scoped_ptr<WebKit::WebGraphicsContext3D> context3d,
       bool has_parent);
@@ -72,15 +78,14 @@ private:
 
   CompositorFrame last_sent_frame_;
   size_t num_sent_frames_;
+  bool vsync_notification_enabled_;
 };
 
-static inline scoped_ptr<cc::OutputSurface> createFakeOutputSurface()
-{
-    return FakeOutputSurface::Create3d(
-        TestWebGraphicsContext3D::Create(
-            WebKit::WebGraphicsContext3D::Attributes())
-        .PassAs<WebKit::WebGraphicsContext3D>())
-        .PassAs<cc::OutputSurface>();
+static inline scoped_ptr<cc::OutputSurface> CreateFakeOutputSurface() {
+  return FakeOutputSurface::Create3d(
+      TestWebGraphicsContext3D::Create(
+          WebKit::WebGraphicsContext3D::Attributes())
+          .PassAs<WebKit::WebGraphicsContext3D>()).PassAs<cc::OutputSurface>();
 }
 
 }  // namespace cc

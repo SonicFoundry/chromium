@@ -98,7 +98,7 @@ class VIEWS_EXPORT TrayBubbleView : public views::BubbleDelegateView {
     bool can_activate;
     bool close_on_deactivate;
     SkColor arrow_color;
-    views::BubbleBorder::ArrowLocation arrow_location;
+    views::BubbleBorder::Arrow arrow;
     int arrow_offset;
     views::BubbleBorder::ArrowPaintType arrow_paint_type;
     views::BubbleBorder::Shadow shadow;
@@ -142,16 +142,18 @@ class VIEWS_EXPORT TrayBubbleView : public views::BubbleDelegateView {
 
   // Overridden from views::WidgetDelegate.
   virtual bool CanActivate() const OVERRIDE;
+  virtual views::NonClientFrameView* CreateNonClientFrameView(
+      views::Widget* widget) OVERRIDE;
   virtual bool WidgetHasHitTestMask() const OVERRIDE;
   virtual void GetWidgetHitTestMask(gfx::Path* mask) const OVERRIDE;
 
   // Overridden from views::BubbleDelegateView.
   virtual gfx::Rect GetAnchorRect() OVERRIDE;
-  virtual BubbleFrameView* CreateBubbleFrameView() OVERRIDE;
 
   // Overridden from views::View.
   virtual gfx::Size GetPreferredSize() OVERRIDE;
   virtual gfx::Size GetMaximumSize() OVERRIDE;
+  virtual int GetHeightForWidth(int width) OVERRIDE;
   virtual void OnMouseEntered(const ui::MouseEvent& event) OVERRIDE;
   virtual void OnMouseExited(const ui::MouseEvent& event) OVERRIDE;
   virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;

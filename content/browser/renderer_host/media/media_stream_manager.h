@@ -58,7 +58,7 @@ class VideoCaptureManager;
 // MediaStreamManager::Listener.
 class CONTENT_EXPORT MediaStreamManager
     : public MediaStreamProviderListener,
-      public MessageLoop::DestructionObserver,
+      public base::MessageLoop::DestructionObserver,
       public SettingsRequester,
       public base::SystemMonitor::DevicesChangedObserver {
  public:
@@ -125,14 +125,10 @@ class CONTENT_EXPORT MediaStreamManager
   // Signals the UI that the devices are opened.
   // Users are responsible for calling NotifyUIDevicesClosed when the devices
   // are not used anymore, otherwise UI will leak.
-  void NotifyUIDevicesOpened(int render_process_id,
-                             int render_view_id,
-                             const MediaStreamDevices& devices);
+  void NotifyUIDevicesOpened(const std::string& label);
 
   // Signals the UI that the devices are being closed.
-  void NotifyUIDevicesClosed(int render_process_id,
-                             int render_view_id,
-                             const MediaStreamDevices& devices);
+  void NotifyUIDevicesClosed(const std::string& label);
 
   // Implements MediaStreamProviderListener.
   virtual void Opened(MediaStreamType stream_type,
@@ -149,6 +145,7 @@ class CONTENT_EXPORT MediaStreamManager
   virtual void DevicesAccepted(const std::string& label,
                                const StreamDeviceInfoArray& devices) OVERRIDE;
   virtual void SettingsError(const std::string& label) OVERRIDE;
+  virtual void StopStreamFromUI(const std::string& label) OVERRIDE;
   virtual void GetAvailableDevices(MediaStreamDevices* devices) OVERRIDE;
 
   // Implements base::SystemMonitor::DevicesChangedObserver.
@@ -158,6 +155,10 @@ class CONTENT_EXPORT MediaStreamManager
   // Used by unit test to make sure fake devices are used instead of a real
   // devices, which is needed for server based testing.
   void UseFakeDevice();
+
+  // Called by the unittests to specify fake UI that should be used for next
+  // generated stream.
+  void UseFakeUI(scoped_ptr<MediaStreamUI> fake_ui);
 
   // This object gets deleted on the UI thread after the IO thread has been
   // destroyed. So we need to know when IO thread is being destroyed so that
@@ -177,16 +178,11 @@ class CONTENT_EXPORT MediaStreamManager
     StreamDeviceInfoArray devices;
   };
 
+  typedef std::map<std::string, DeviceRequest*> DeviceRequests;
+
   // Initializes the device managers on IO thread.  Auto-starts the device
   // thread and registers this as a listener with the device managers.
   void InitializeDeviceManagersOnIOThread();
-
-  // Helpers for signaling the media observer that new capture devices are
-  // opened/closed.
-  void NotifyDevicesOpened(const DeviceRequest& request);
-  void NotifyDevicesClosed(const DeviceRequest& request);
-  void DevicesFromRequest(const DeviceRequest& request,
-                          MediaStreamDevices* devices);
 
   // Helper for sending up-to-date device lists to media observer when a
   // capture device is plugged in or unplugged.
@@ -198,6 +194,7 @@ class CONTENT_EXPORT MediaStreamManager
   MediaStreamProvider* GetDeviceManager(MediaStreamType stream_type);
   void StartEnumeration(DeviceRequest* request);
   std::string AddRequest(DeviceRequest* request);
+  void RemoveRequest(DeviceRequests::iterator it);
   void ClearEnumerationCache(EnumerationCache* cache);
   void PostRequestToUI(const std::string& label);
   void HandleRequest(const std::string& label);
@@ -212,6 +209,10 @@ class CONTENT_EXPORT MediaStreamManager
   // Helpers to start and stop monitoring devices.
   void StartMonitoring();
   void StopMonitoring();
+
+  // Callback for UI called when the user requests stream with the specified
+  // |label| to be stopped.
+  void OnStopStreamRequested(const std::string& label);
 
   // Device thread shared by VideoCaptureManager and AudioInputDeviceManager.
   scoped_ptr<base::Thread> device_thread_;
@@ -235,12 +236,13 @@ class CONTENT_EXPORT MediaStreamManager
   int active_enumeration_ref_count_[NUM_MEDIA_TYPES];
 
   // All non-closed request.
-  typedef std::map<std::string, DeviceRequest*> DeviceRequests;
   DeviceRequests requests_;
 
   // Hold a pointer to the IO loop to check we delete the device thread and
   // managers on the right thread.
-  MessageLoop* io_loop_;
+  base::MessageLoop* io_loop_;
+
+  bool screen_capture_active_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaStreamManager);
 };

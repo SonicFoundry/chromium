@@ -446,16 +446,6 @@ bool PanelDragController::TryUnstackFromTop(const gfx::Point& target_position) {
     return false;
   }
 
-  // Move the panel (and all the panels below if in a stack) to the new
-  // position.
-  for (StackedPanelCollection::Panels::const_iterator iter =
-           dragging_stack->panels().begin();
-       iter != dragging_stack->panels().end(); ++iter) {
-    if (!(*iter)->in_preview_mode())
-      break;
-    (*iter)->MoveByInstantly(delta);
-  }
-
   int num_panels_in_stack = dragging_stack->num_panels();
   DCHECK_GE(num_panels_in_stack, 2);
 
@@ -472,6 +462,7 @@ bool PanelDragController::TryUnstackFromTop(const gfx::Point& target_position) {
     MovePanelAndBelowToCollection(dragging_panel_,
                                   detached_collection,
                                   PanelCollection::KNOWN_POSITION);
+    dragging_panel_->MoveByInstantly(delta);
     return true;
   }
 
@@ -480,8 +471,9 @@ bool PanelDragController::TryUnstackFromTop(const gfx::Point& target_position) {
   // If only one panel (top panel) needs to unstack, move it out of the stack.
   if (num_panels_to_unstack == 1) {
     panel_manager_->MovePanelToCollection(dragging_panel_,
-                                          panel_manager_->detached_collection(),
+                                          detached_collection,
                                           PanelCollection::KNOWN_POSITION);
+    dragging_panel_->MoveByInstantly(delta);
     return true;
   }
 
@@ -489,8 +481,9 @@ bool PanelDragController::TryUnstackFromTop(const gfx::Point& target_position) {
   // bottom panel out of the stack.
   if (num_panels_in_stack - num_panels_to_unstack == 1) {
     panel_manager_->MovePanelToCollection(dragging_stack->bottom_panel(),
-                                          panel_manager_->detached_collection(),
+                                          detached_collection,
                                           PanelCollection::KNOWN_POSITION);
+    dragging_panel_->stack()->MoveAllDraggingPanelsInstantly(delta);
     return true;
   }
 
@@ -513,6 +506,7 @@ bool PanelDragController::TryUnstackFromTop(const gfx::Point& target_position) {
                                           new_stack,
                                           PanelCollection::KNOWN_POSITION);
   }
+  dragging_panel_->stack()->MoveAllDraggingPanelsInstantly(delta);
 
   return true;
 }
@@ -546,13 +540,7 @@ bool PanelDragController::TryUnstackFromBottom(
     return false;
   }
 
-  // Move the panel (and all the panels below if in a stack) to the new
-  // position.
   gfx::Vector2d delta = target_position - dragging_panel_->GetBounds().origin();
-  if (dragging_stack)
-    dragging_stack->MoveAllDraggingPanelsInstantly(delta);
-  else
-    dragging_panel_->MoveByInstantly(delta);
 
   // If there're only 2 panels in the stack, both panels should move out the
   // stack and the stack should be removed.
@@ -562,6 +550,7 @@ bool PanelDragController::TryUnstackFromBottom(
     MovePanelAndBelowToCollection(dragging_stack->top_panel(),
                                   detached_collection,
                                   PanelCollection::KNOWN_POSITION);
+    dragging_panel_->MoveByInstantly(delta);
     return true;
   }
 
@@ -573,6 +562,7 @@ bool PanelDragController::TryUnstackFromBottom(
     panel_manager_->MovePanelToCollection(dragging_panel_,
                                           detached_collection,
                                           PanelCollection::KNOWN_POSITION);
+    dragging_panel_->MoveByInstantly(delta);
     return true;
   }
 
@@ -583,6 +573,7 @@ bool PanelDragController::TryUnstackFromBottom(
     panel_manager_->MovePanelToCollection(dragging_stack->top_panel(),
                                           detached_collection,
                                           PanelCollection::KNOWN_POSITION);
+    dragging_panel_->stack()->MoveAllDraggingPanelsInstantly(delta);
     return true;
   }
 
@@ -595,6 +586,7 @@ bool PanelDragController::TryUnstackFromBottom(
   MovePanelAndBelowToCollection(dragging_panel_,
                                 new_stack,
                                 PanelCollection::KNOWN_POSITION);
+  dragging_panel_->stack()->MoveAllDraggingPanelsInstantly(delta);
 
   return true;
 }
@@ -725,12 +717,15 @@ Panel* PanelDragController::FindPanelToGlue(
       }
     } else {
       DCHECK_EQ(STACK, action);
+      StackedPanelCollection* stack = panel->stack();
 
       // Can |dragging_panel_| or the bottom panel in |dragging_panel_|'s stack
-      // stack to top edge of |panel|?
+      // stack to top edge of |panel|? If |panel| is in a stack and not top
+      // panel, its top edge is interior edge and thus cannot be aligned with.
       distance = GetVerticalDistance(potential_bottom_bounds, panel_bounds);
       overlap = GetHorizontalOverlap(panel_bounds, potential_bottom_bounds);
-      if (distance < kGluePanelsDistanceThreshold &&
+      if ((!stack || panel == stack->top_panel()) &&
+          distance < kGluePanelsDistanceThreshold &&
           overlap > kGluePanelsOverlapThreshold &&
           distance < best_distance) {
         best_distance = distance;
@@ -744,10 +739,13 @@ Panel* PanelDragController::FindPanelToGlue(
             potential_dragging_bounds.height());
       }
 
-      // Can |dragging_panel_| stack to bottom edge of |panel|?
+      // Can |dragging_panel_| stack to bottom edge of |panel|? If |panel| is
+      // in a stack and not bottom panel, its bottom edge is interior edge and
+      // thus cannot be aligned with.
       distance = GetVerticalDistance(panel_bounds, potential_dragging_bounds);
       overlap = GetHorizontalOverlap(panel_bounds, potential_dragging_bounds);
-      if (distance < kGluePanelsDistanceThreshold &&
+      if ((!stack || panel == stack->bottom_panel()) &&
+          distance < kGluePanelsDistanceThreshold &&
           overlap > kGluePanelsOverlapThreshold &&
           distance < best_distance) {
         best_distance = distance;

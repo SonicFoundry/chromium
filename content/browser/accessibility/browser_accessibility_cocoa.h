@@ -37,6 +37,9 @@
 // from browserAccessibility_.
 - (content::AccessibilityNodeData::Role)internalRole;
 
+// Return the method name for the given attribute. For testing only.
+- (NSString*)methodNameForAttribute:(NSString*)attribute;
+
 // Internally-used method.
 @property(nonatomic, readonly) NSPoint origin;
 
@@ -49,6 +52,8 @@
 @property(nonatomic, readonly) NSString* ariaRelevant;
 @property(nonatomic, readonly) NSArray* children;
 @property(nonatomic, readonly) NSArray* columns;
+@property(nonatomic, readonly) NSArray* columnHeaders;
+@property(nonatomic, readonly) NSValue* columnIndexRange;
 @property(nonatomic, readonly) NSString* description;
 @property(nonatomic, readonly) NSNumber* disclosing;
 @property(nonatomic, readonly) id disclosedByRow;
@@ -60,6 +65,8 @@
 // isIgnored returns whether or not the accessibility object
 // should be ignored by the accessibility hierarchy.
 @property(nonatomic, readonly, getter=isIgnored) BOOL ignored;
+// Index of a row, column, or tree item.
+@property(nonatomic, readonly) NSNumber* index;
 @property(nonatomic, readonly) NSString* invalid;
 @property(nonatomic, readonly) NSNumber* loaded;
 @property(nonatomic, readonly) NSNumber* loadingProgress;
@@ -74,6 +81,8 @@
 // is concerned.
 @property(nonatomic, readonly) NSString* role;
 @property(nonatomic, readonly) NSString* roleDescription;
+@property(nonatomic, readonly) NSArray* rowHeaders;
+@property(nonatomic, readonly) NSValue* rowIndexRange;
 @property(nonatomic, readonly) NSArray* rows;
 // The size of this object.
 @property(nonatomic, readonly) NSValue* size;
@@ -88,6 +97,9 @@
 @property(nonatomic, readonly) NSString* value;
 @property(nonatomic, readonly) NSString* valueDescription;
 @property(nonatomic, readonly) NSValue* visibleCharacterRange;
+@property(nonatomic, readonly) NSArray* visibleCells;
+@property(nonatomic, readonly) NSArray* visibleColumns;
+@property(nonatomic, readonly) NSArray* visibleRows;
 @property(nonatomic, readonly) NSNumber* visited;
 @property(nonatomic, readonly) id window;
 @end

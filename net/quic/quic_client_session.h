@@ -21,7 +21,9 @@
 
 namespace net {
 
+class DatagramClientSocket;
 class QuicConnectionHelper;
+class QuicCryptoClientStreamFactory;
 class QuicStreamFactory;
 
 class NET_EXPORT_PRIVATE QuicClientSession : public QuicSession {
@@ -30,9 +32,11 @@ class NET_EXPORT_PRIVATE QuicClientSession : public QuicSession {
   // not |stream_factory|, which must outlive this session.
   // TODO(rch): decouple the factory from the session via a Delegate interface.
   QuicClientSession(QuicConnection* connection,
-                    QuicConnectionHelper* helper,
+                    DatagramClientSocket* socket,
                     QuicStreamFactory* stream_factory,
+                    QuicCryptoClientStreamFactory* crypto_client_stream_factory,
                     const std::string& server_hostname,
+                    QuicCryptoClientConfig* crypto_config,
                     NetLog* net_log);
 
   virtual ~QuicClientSession();
@@ -41,7 +45,10 @@ class NET_EXPORT_PRIVATE QuicClientSession : public QuicSession {
   virtual QuicReliableClientStream* CreateOutgoingReliableStream() OVERRIDE;
   virtual QuicCryptoClientStream* GetCryptoStream() OVERRIDE;
   virtual void CloseStream(QuicStreamId stream_id) OVERRIDE;
-  virtual void OnCryptoHandshakeComplete(QuicErrorCode error) OVERRIDE;
+  virtual void OnCryptoHandshakeEvent(CryptoHandshakeEvent event) OVERRIDE;
+
+  // QuicConnectionVisitorInterface methods:
+  virtual void ConnectionClose(QuicErrorCode error, bool from_peer) OVERRIDE;
 
   // Performs a crypto handshake with the server.
   int CryptoConnect(const CompletionCallback& callback);
@@ -67,9 +74,12 @@ class NET_EXPORT_PRIVATE QuicClientSession : public QuicSession {
   void OnReadComplete(int result);
 
   base::WeakPtrFactory<QuicClientSession> weak_factory_;
-  QuicCryptoClientStream crypto_stream_;
-  scoped_ptr<QuicConnectionHelper> helper_;
+  // config_ contains non-crypto configuration options negotiated in the crypto
+  // handshake.
+  QuicConfig config_;
+  scoped_ptr<QuicCryptoClientStream> crypto_stream_;
   QuicStreamFactory* stream_factory_;
+  scoped_ptr<DatagramClientSocket> socket_;
   scoped_refptr<IOBufferWithSize> read_buffer_;
   bool read_pending_;
   CompletionCallback callback_;

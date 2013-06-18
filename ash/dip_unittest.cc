@@ -7,6 +7,7 @@
 
 #include "ash/display/display_manager.h"
 #include "ash/launcher/launcher.h"
+#include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/window_properties.h"
@@ -46,7 +47,7 @@ TEST_F(DIPTest, WorkArea) {
 
   const gfx::Display display_2x = screen->GetDisplayNearestWindow(root);
   const internal::DisplayInfo display_info_2x =
-      Shell::GetInstance()->display_manager()->GetDisplayInfo(display_2x);
+      Shell::GetInstance()->display_manager()->GetDisplayInfo(display_2x.id());
 
   // The |bounds_in_pixel()| should report bounds in pixel coordinate.
   EXPECT_EQ("1,1 2000x1800",
@@ -63,7 +64,7 @@ TEST_F(DIPTest, WorkArea) {
   Launcher* launcher = Launcher::ForPrimaryDisplay();
   EXPECT_EQ(
       display_2x.bounds().InsetsFrom(work_area).height(),
-      launcher->widget()->GetNativeView()->layer()->bounds().height());
+      launcher->shelf_widget()->GetNativeView()->layer()->bounds().height());
 }
 
 }  // namespace ash

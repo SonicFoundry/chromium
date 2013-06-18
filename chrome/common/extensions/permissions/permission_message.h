@@ -58,7 +58,11 @@ class PermissionMessage {
     kUsbDevice,
     kMediaGalleriesAllGalleriesWrite,
     kSystemInfoDisplay,
-    kEnumBoundary
+    kNativeMessaging,
+    kSyncFileSystem,
+    kAudio,
+    kFavicon,
+    kEnumBoundary,
   };
 
   // Creates the corresponding permission message for a list of hosts. This is

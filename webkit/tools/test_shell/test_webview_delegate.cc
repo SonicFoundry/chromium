@@ -12,9 +12,9 @@
 #include "base/file_util.h"
 #include "base/message_loop.h"
 #include "base/process_util.h"
-#include "base/string_number_conversions.h"
 #include "base/string_util.h"
 #include "base/stringprintf.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "media/base/filter_collection.h"
 #include "media/base/media_log.h"
@@ -25,6 +25,7 @@
 #include "third_party/WebKit/Source/Platform/chromium/public/WebDragData.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebImage.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebPoint.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebStorageNamespace.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebURL.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebURLError.h"
@@ -49,7 +50,6 @@
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebPopupMenu.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebRange.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebScreenInfo.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebStorageNamespace.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebView.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebWindowFeatures.h"
 #include "ui/base/window_open_disposition.h"
@@ -61,7 +61,6 @@
 #include "webkit/glue/webkit_glue.h"
 #include "webkit/glue/webpreferences.h"
 #include "webkit/glue/weburlrequest_extradata_impl.h"
-#include "webkit/gpu/webgraphicscontext3d_in_process_impl.h"
 #include "webkit/media/webmediaplayer_impl.h"
 #include "webkit/media/webmediaplayer_params.h"
 #include "webkit/plugins/npapi/plugin_list.h"
@@ -132,7 +131,6 @@ using WebKit::WebWindowFeatures;
 using WebKit::WebWorker;
 using WebKit::WebVector;
 using WebKit::WebView;
-using webkit_glue::WebPreferences;
 
 namespace {
 
@@ -202,20 +200,20 @@ std::string TestWebViewDelegate::GetResourceDescription(uint32 identifier) {
 void TestWebViewDelegate::SetUserStyleSheetEnabled(bool is_enabled) {
   WebPreferences* prefs = shell_->GetWebPreferences();
   prefs->user_style_sheet_enabled = is_enabled;
-  prefs->Apply(shell_->webView());
+  webkit_glue::ApplyWebPreferences(*prefs, shell_->webView());
 }
 
 void TestWebViewDelegate::SetUserStyleSheetLocation(const GURL& location) {
   WebPreferences* prefs = shell_->GetWebPreferences();
   prefs->user_style_sheet_enabled = true;
   prefs->user_style_sheet_location = location;
-  prefs->Apply(shell_->webView());
+  webkit_glue::ApplyWebPreferences(*prefs, shell_->webView());
 }
 
 void TestWebViewDelegate::SetAuthorAndUserStylesEnabled(bool is_enabled) {
   WebPreferences* prefs = shell_->GetWebPreferences();
   prefs->author_and_user_styles_enabled = is_enabled;
-  prefs->Apply(shell_->webView());
+  webkit_glue::ApplyWebPreferences(*prefs, shell_->webView());
 }
 
 // WebViewClient -------------------------------------------------------------
@@ -300,14 +298,6 @@ bool TestWebViewDelegate::shouldApplyStyle(const WebString& style,
   return shell_->AcceptsEditing();
 }
 
-bool TestWebViewDelegate::isSmartInsertDeleteEnabled() {
-  return smart_insert_delete_enabled_;
-}
-
-bool TestWebViewDelegate::isSelectTrailingWhitespaceEnabled() {
-  return select_trailing_whitespace_enabled_;
-}
-
 void TestWebViewDelegate::didBeginEditing() {
 }
 
@@ -340,7 +330,7 @@ void TestWebViewDelegate::spellCheck(const WebString& text,
   // Check the spelling of the given text.
   // TODO(hbono): rebaseline layout-test results of Windows and Linux so we
   // can enable this mock spellchecker on them.
-  string16 word(text);
+  base::string16 word(text);
   mock_spellcheck_.SpellCheckWord(word, &misspelledOffset, &misspelledLength);
 #endif
 }
@@ -566,19 +556,14 @@ void TestWebViewDelegate::loadURLExternally(
 }
 
 WebNavigationPolicy TestWebViewDelegate::decidePolicyForNavigation(
-    WebFrame* frame, const WebURLRequest& request,
-    WebNavigationType type, const WebNode& originating_node,
+    WebFrame* frame, WebDataSource::ExtraData* extraData,
+    const WebURLRequest& request, WebNavigationType type,
     WebNavigationPolicy default_policy, bool is_redirect) {
   WebNavigationPolicy result;
   if (policy_delegate_enabled_) {
-    printf("Policy delegate: attempt to load %s with navigation type '%s'",
+    printf("Policy delegate: attempt to load %s with navigation type '%s'\n",
            GetURLDescription(request.url()).c_str(),
            WebNavigationTypeToString(type));
-    if (!originating_node.isNull()) {
-      printf(" originating from %s",
-          GetNodeDescription(originating_node, 0).c_str());
-    }
-    printf("\n");
     if (policy_delegate_is_permissive_) {
       result = WebKit::WebNavigationPolicyCurrentTab;
     } else {
@@ -588,6 +573,14 @@ WebNavigationPolicy TestWebViewDelegate::decidePolicyForNavigation(
     result = default_policy;
   }
   return result;
+}
+
+WebNavigationPolicy TestWebViewDelegate::decidePolicyForNavigation(
+    WebFrame* frame, const WebURLRequest& request,
+    WebNavigationType type, WebNavigationPolicy default_policy,
+    bool is_redirect) {
+  return decidePolicyForNavigation(frame, 0, request, type,
+                                   default_policy, is_redirect);
 }
 
 bool TestWebViewDelegate::canHandleRequest(
@@ -640,10 +633,6 @@ void TestWebViewDelegate::didCreateDataSource(
 }
 
 void TestWebViewDelegate::didStartProvisionalLoad(WebFrame* frame) {
-  if (!top_loading_frame_) {
-    top_loading_frame_ = frame;
-  }
-
   UpdateAddressBar(frame->view());
 }
 
@@ -654,8 +643,6 @@ void TestWebViewDelegate::didReceiveServerRedirectForProvisionalLoad(
 
 void TestWebViewDelegate::didFailProvisionalLoad(
     WebFrame* frame, const WebURLError& error) {
-  LocationChangeDone(frame);
-
   // Don't display an error page if we're running layout tests, because
   // DumpRenderTree doesn't.
   if (shell_->layout_test_mode())
@@ -712,15 +699,9 @@ void TestWebViewDelegate::didFinishDocumentLoad(WebFrame* frame) {
 void TestWebViewDelegate::didHandleOnloadEvents(WebFrame* frame) {
 }
 
-void TestWebViewDelegate::didFailLoad(
-    WebFrame* frame, const WebURLError& error) {
-  LocationChangeDone(frame);
-}
-
 void TestWebViewDelegate::didFinishLoad(WebFrame* frame) {
   TRACE_EVENT_END_ETW("frame.load", this, frame->document().url().spec());
   UpdateAddressBar(frame->view());
-  LocationChangeDone(frame);
 }
 
 void TestWebViewDelegate::didNavigateWithinPage(
@@ -813,7 +794,9 @@ bool TestWebViewDelegate::allowScript(WebFrame* frame,
 }
 
 void TestWebViewDelegate::openFileSystem(
-    WebFrame* frame, WebFileSystem::Type type, long long size, bool create,
+    WebFrame* frame,
+    WebKit::WebFileSystemType type,
+    long long size, bool create,
     WebFileSystemCallbacks* callbacks) {
   SimpleFileSystem* fileSystem = static_cast<SimpleFileSystem*>(
       WebKit::Platform::current()->fileSystem());
@@ -838,18 +821,11 @@ TestWebViewDelegate::TestWebViewDelegate(TestShell* shell)
       policy_delegate_is_permissive_(false),
       policy_delegate_should_notify_done_(false),
       shell_(shell),
-      top_loading_frame_(NULL),
       page_id_(-1),
       last_page_id_updated_(-1),
       using_fake_rect_(false),
 #if defined(TOOLKIT_GTK)
       cursor_type_(GDK_X_CURSOR),
-#endif
-      smart_insert_delete_enabled_(true),
-#if defined(OS_WIN)
-      select_trailing_whitespace_enabled_(true),
-#else
-      select_trailing_whitespace_enabled_(false),
 #endif
       block_redirects_(false),
       request_return_null_(false) {
@@ -863,20 +839,6 @@ void TestWebViewDelegate::Reset() {
   TestShell* shell = shell_;
   this->~TestWebViewDelegate();
   new (this) TestWebViewDelegate(shell);
-}
-
-void TestWebViewDelegate::SetSmartInsertDeleteEnabled(bool enabled) {
-  smart_insert_delete_enabled_ = enabled;
-  // In upstream WebKit, smart insert/delete is mutually exclusive with select
-  // trailing whitespace, however, we allow both because Chromium on Windows
-  // allows both.
-}
-
-void TestWebViewDelegate::SetSelectTrailingWhitespaceEnabled(bool enabled) {
-  select_trailing_whitespace_enabled_ = enabled;
-  // In upstream WebKit, smart insert/delete is mutually exclusive with select
-  // trailing whitespace, however, we allow both because Chromium on Windows
-  // allows both.
 }
 
 void TestWebViewDelegate::RegisterDragDrop() {
@@ -917,13 +879,6 @@ void TestWebViewDelegate::UpdateAddressBar(WebView* webView) {
     return;
 
   SetAddressBarURL(data_source->request().url());
-}
-
-void TestWebViewDelegate::LocationChangeDone(WebFrame* frame) {
-  if (frame == top_loading_frame_) {
-    top_loading_frame_ = NULL;
-    shell_->TestFinished();
-  }
 }
 
 WebWidgetHost* TestWebViewDelegate::GetWidgetHost() {
@@ -1007,7 +962,7 @@ void TestWebViewDelegate::UpdateSessionHistory(WebFrame* frame) {
   entry->SetContentState(webkit_glue::HistoryItemToString(history_item));
 }
 
-string16 TestWebViewDelegate::GetFrameDescription(WebFrame* webframe) {
+base::string16 TestWebViewDelegate::GetFrameDescription(WebFrame* webframe) {
   std::string name = UTF16ToUTF8(webframe->uniqueName());
 
   if (webframe == shell_->webView()->mainFrame()) {

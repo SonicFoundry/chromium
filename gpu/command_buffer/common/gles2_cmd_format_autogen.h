@@ -9890,20 +9890,23 @@ struct CopyTextureCHROMIUM {
 
   void Init(
       GLenum _target, GLenum _source_id, GLenum _dest_id, GLint _level,
-      GLint _internalformat) {
+      GLint _internalformat, GLenum _dest_type) {
     SetHeader();
     target = _target;
     source_id = _source_id;
     dest_id = _dest_id;
     level = _level;
     internalformat = _internalformat;
+    dest_type = _dest_type;
   }
 
   void* Set(
       void* cmd, GLenum _target, GLenum _source_id, GLenum _dest_id,
-      GLint _level, GLint _internalformat) {
+      GLint _level, GLint _internalformat, GLenum _dest_type) {
     static_cast<ValueType*>(
-        cmd)->Init(_target, _source_id, _dest_id, _level, _internalformat);
+        cmd)->Init(
+            _target, _source_id, _dest_id, _level, _internalformat,
+            _dest_type);
     return NextCmdAddress<ValueType>(cmd);
   }
 
@@ -9913,10 +9916,11 @@ struct CopyTextureCHROMIUM {
   uint32 dest_id;
   int32 level;
   int32 internalformat;
+  uint32 dest_type;
 };
 
-COMPILE_ASSERT(sizeof(CopyTextureCHROMIUM) == 24,
-               Sizeof_CopyTextureCHROMIUM_is_not_24);
+COMPILE_ASSERT(sizeof(CopyTextureCHROMIUM) == 28,
+               Sizeof_CopyTextureCHROMIUM_is_not_28);
 COMPILE_ASSERT(offsetof(CopyTextureCHROMIUM, header) == 0,
                OffsetOf_CopyTextureCHROMIUM_header_not_0);
 COMPILE_ASSERT(offsetof(CopyTextureCHROMIUM, target) == 4,
@@ -9929,6 +9933,8 @@ COMPILE_ASSERT(offsetof(CopyTextureCHROMIUM, level) == 16,
                OffsetOf_CopyTextureCHROMIUM_level_not_16);
 COMPILE_ASSERT(offsetof(CopyTextureCHROMIUM, internalformat) == 20,
                OffsetOf_CopyTextureCHROMIUM_internalformat_not_20);
+COMPILE_ASSERT(offsetof(CopyTextureCHROMIUM, dest_type) == 24,
+               OffsetOf_CopyTextureCHROMIUM_dest_type_not_24);
 
 struct DrawArraysInstancedANGLE {
   typedef DrawArraysInstancedANGLE ValueType;
@@ -10730,6 +10736,40 @@ COMPILE_ASSERT(offsetof(AsyncTexImage2DCHROMIUM, pixels_shm_id) == 36,
 COMPILE_ASSERT(offsetof(AsyncTexImage2DCHROMIUM, pixels_shm_offset) == 40,
                OffsetOf_AsyncTexImage2DCHROMIUM_pixels_shm_offset_not_40);
 
+struct WaitAsyncTexImage2DCHROMIUM {
+  typedef WaitAsyncTexImage2DCHROMIUM ValueType;
+  static const CommandId kCmdId = kWaitAsyncTexImage2DCHROMIUM;
+  static const cmd::ArgFlags kArgFlags = cmd::kFixed;
+
+  static uint32 ComputeSize() {
+    return static_cast<uint32>(sizeof(ValueType));  // NOLINT
+  }
+
+  void SetHeader() {
+    header.SetCmd<ValueType>();
+  }
+
+  void Init(GLenum _target) {
+    SetHeader();
+    target = _target;
+  }
+
+  void* Set(void* cmd, GLenum _target) {
+    static_cast<ValueType*>(cmd)->Init(_target);
+    return NextCmdAddress<ValueType>(cmd);
+  }
+
+  gpu::CommandHeader header;
+  uint32 target;
+};
+
+COMPILE_ASSERT(sizeof(WaitAsyncTexImage2DCHROMIUM) == 8,
+               Sizeof_WaitAsyncTexImage2DCHROMIUM_is_not_8);
+COMPILE_ASSERT(offsetof(WaitAsyncTexImage2DCHROMIUM, header) == 0,
+               OffsetOf_WaitAsyncTexImage2DCHROMIUM_header_not_0);
+COMPILE_ASSERT(offsetof(WaitAsyncTexImage2DCHROMIUM, target) == 4,
+               OffsetOf_WaitAsyncTexImage2DCHROMIUM_target_not_4);
+
 struct DiscardFramebufferEXT {
   typedef DiscardFramebufferEXT ValueType;
   static const CommandId kCmdId = kDiscardFramebufferEXT;
@@ -10901,6 +10941,93 @@ COMPILE_ASSERT(offsetof(WaitSyncPointCHROMIUM, header) == 0,
                OffsetOf_WaitSyncPointCHROMIUM_header_not_0);
 COMPILE_ASSERT(offsetof(WaitSyncPointCHROMIUM, sync_point) == 4,
                OffsetOf_WaitSyncPointCHROMIUM_sync_point_not_4);
+
+struct DrawBuffersEXT {
+  typedef DrawBuffersEXT ValueType;
+  static const CommandId kCmdId = kDrawBuffersEXT;
+  static const cmd::ArgFlags kArgFlags = cmd::kFixed;
+
+  static uint32 ComputeSize() {
+    return static_cast<uint32>(sizeof(ValueType));  // NOLINT
+  }
+
+  void SetHeader() {
+    header.SetCmd<ValueType>();
+  }
+
+  void Init(GLsizei _count, uint32 _bufs_shm_id, uint32 _bufs_shm_offset) {
+    SetHeader();
+    count = _count;
+    bufs_shm_id = _bufs_shm_id;
+    bufs_shm_offset = _bufs_shm_offset;
+  }
+
+  void* Set(
+      void* cmd, GLsizei _count, uint32 _bufs_shm_id,
+      uint32 _bufs_shm_offset) {
+    static_cast<ValueType*>(cmd)->Init(_count, _bufs_shm_id, _bufs_shm_offset);
+    return NextCmdAddress<ValueType>(cmd);
+  }
+
+  gpu::CommandHeader header;
+  int32 count;
+  uint32 bufs_shm_id;
+  uint32 bufs_shm_offset;
+};
+
+COMPILE_ASSERT(sizeof(DrawBuffersEXT) == 16,
+               Sizeof_DrawBuffersEXT_is_not_16);
+COMPILE_ASSERT(offsetof(DrawBuffersEXT, header) == 0,
+               OffsetOf_DrawBuffersEXT_header_not_0);
+COMPILE_ASSERT(offsetof(DrawBuffersEXT, count) == 4,
+               OffsetOf_DrawBuffersEXT_count_not_4);
+COMPILE_ASSERT(offsetof(DrawBuffersEXT, bufs_shm_id) == 8,
+               OffsetOf_DrawBuffersEXT_bufs_shm_id_not_8);
+COMPILE_ASSERT(offsetof(DrawBuffersEXT, bufs_shm_offset) == 12,
+               OffsetOf_DrawBuffersEXT_bufs_shm_offset_not_12);
+
+struct DrawBuffersEXTImmediate {
+  typedef DrawBuffersEXTImmediate ValueType;
+  static const CommandId kCmdId = kDrawBuffersEXTImmediate;
+  static const cmd::ArgFlags kArgFlags = cmd::kAtLeastN;
+
+  static uint32 ComputeDataSize(GLsizei count) {
+    return static_cast<uint32>(
+        sizeof(GLenum) * 1 * count);  // NOLINT
+  }
+
+  static uint32 ComputeSize(GLsizei count) {
+    return static_cast<uint32>(
+        sizeof(ValueType) + ComputeDataSize(count));  // NOLINT
+  }
+
+  void SetHeader(GLsizei count) {
+    header.SetCmdByTotalSize<ValueType>(ComputeSize(count));
+  }
+
+  void Init(GLsizei _count, const GLenum* _bufs) {
+    SetHeader(_count);
+    count = _count;
+    memcpy(ImmediateDataAddress(this),
+           _bufs, ComputeDataSize(_count));
+  }
+
+  void* Set(void* cmd, GLsizei _count, const GLenum* _bufs) {
+    static_cast<ValueType*>(cmd)->Init(_count, _bufs);
+    const uint32 size = ComputeSize(_count);
+    return NextImmediateCmdAddressTotalSize<ValueType>(cmd, size);
+  }
+
+  gpu::CommandHeader header;
+  int32 count;
+};
+
+COMPILE_ASSERT(sizeof(DrawBuffersEXTImmediate) == 8,
+               Sizeof_DrawBuffersEXTImmediate_is_not_8);
+COMPILE_ASSERT(offsetof(DrawBuffersEXTImmediate, header) == 0,
+               OffsetOf_DrawBuffersEXTImmediate_header_not_0);
+COMPILE_ASSERT(offsetof(DrawBuffersEXTImmediate, count) == 4,
+               OffsetOf_DrawBuffersEXTImmediate_count_not_4);
 
 
 #endif  // GPU_COMMAND_BUFFER_COMMON_GLES2_CMD_FORMAT_AUTOGEN_H_

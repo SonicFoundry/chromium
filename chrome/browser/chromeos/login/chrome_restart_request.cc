@@ -19,9 +19,10 @@
 #include "base/strings/string_split.h"
 #include "base/timer.h"
 #include "base/values.h"
-#include "cc/switches.h"
+#include "cc/base/switches.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
@@ -72,28 +73,35 @@ std::string DeriveCommandLine(const GURL& start_url,
       ::switches::kDisableAcceleratedOverflowScroll,
       ::switches::kDisableAcceleratedPlugins,
       ::switches::kDisableAcceleratedVideoDecode,
+      ::switches::kDisableBrowserPluginCompositing,
       ::switches::kDisableEncryptedMedia,
       ::switches::kDisableForceCompositingMode,
+      ::switches::kDisableGpuShaderDiskCache,
       ::switches::kDisableGpuWatchdog,
       ::switches::kDisableLoginAnimations,
-      ::switches::kDisableNonuniformGpuMemPolicy,
       ::switches::kDisableOobeAnimation,
       ::switches::kDisablePanelFitting,
-      ::switches::kDisableThreadedCompositing,
       ::switches::kDisableSeccompFilterSandbox,
-      ::switches::kDisableSeccompSandbox,
+      ::switches::kDisableThreadedCompositing,
+      ::switches::kDisableTouchDragDrop,
+      ::switches::kDisableTouchEditing,
       ::switches::kEnableAcceleratedOverflowScroll,
-      ::switches::kEnableBrowserPluginCompositing,
       ::switches::kEnableCompositingForFixedPosition,
       ::switches::kEnableGestureTapHighlight,
+      ::switches::kDisableGestureTapHighlight,
+      ::switches::kDisableGpuSandbox,
+      ::switches::kEnableGpuSandbox,
       ::switches::kEnableLogging,
       ::switches::kEnablePinch,
+      ::switches::kEnableThreadedCompositing,
+      ::switches::kEnableTouchDragDrop,
+      ::switches::kEnableTouchEditing,
       ::switches::kEnableViewport,
+      ::switches::kEnableVsyncNotification,
       ::switches::kForceDeviceScaleFactor,
       ::switches::kGpuStartupDialog,
       ::switches::kHasChromeOSDiamondKey,
       ::switches::kHasChromeOSKeyboard,
-      ::switches::kLoginProfile,
       ::switches::kNaturalScrollDefault,
       ::switches::kNoSandbox,
       ::switches::kPpapiFlashArgs,
@@ -108,9 +116,8 @@ std::string DeriveCommandLine(const GURL& start_url,
       ::switches::kTouchDevices,
       ::switches::kTouchEvents,
       ::switches::kTouchOptimizedUI,
-      ::switches::kOldCheckboxStyle,
-      ::switches::kUIEnablePartialSwap,
-      ::switches::kUIEnableThreadedCompositing,
+      ::switches::kUIDisableThreadedCompositing,
+      ::switches::kUIMaxFramesPending,
       ::switches::kUIPrioritizeInGpuProcess,
 #if defined(USE_CRAS)
       ::switches::kUseCras,
@@ -118,12 +125,49 @@ std::string DeriveCommandLine(const GURL& start_url,
       ::switches::kUseGL,
       ::switches::kUserDataDir,
       ::switches::kUseExynosVda,
+      ::switches::kV,
       ash::switches::kAshTouchHud,
       ash::switches::kAuraLegacyPowerButton,
-      ash::switches::kAshEnableNewNetworkStatusArea,
+      ash::switches::kAshDisableNewAudioHandler,
+      ash::switches::kAshDisableNewNetworkStatusArea,
+      ash::switches::kAshEnableAudioDeviceMenu,
+      // Please keep these in alphabetical order. Non-UI Compositor switches
+      // here should also be added to
+      // content/browser/renderer_host/render_process_host_impl.cc.
+      cc::switches::kBackgroundColorInsteadOfCheckerboard,
+      cc::switches::kCompositeToMailbox,
+      cc::switches::kDisableColorEstimator,
+      cc::switches::kDisableImplSidePainting,
+      cc::switches::kDisablePinchZoomScrollbars,
       cc::switches::kDisableThreadedAnimation,
+      cc::switches::kEnableCompositorFrameMessage,
+      cc::switches::kEnableImplSidePainting,
       cc::switches::kEnablePartialSwap,
+      cc::switches::kEnablePerTilePainting,
+      cc::switches::kEnablePinchZoomScrollbars,
+      cc::switches::kEnablePredictionBenchmarking,
+      cc::switches::kEnableRightAlignedScheduling,
+      cc::switches::kEnableTopControlsPositionCalculation,
+      cc::switches::kLowResolutionContentsScaleFactor,
+      cc::switches::kMaxTilesForInterestArea,
+      cc::switches::kMaxUnusedResourceMemoryUsagePercentage,
+      cc::switches::kNumRasterThreads,
+      cc::switches::kShowCompositedLayerBorders,
+      cc::switches::kShowCompositedLayerTree,
+      cc::switches::kShowFPSCounter,
+      cc::switches::kShowNonOccludingRects,
+      cc::switches::kShowOccludingRects,
+      cc::switches::kShowPropertyChangedRects,
+      cc::switches::kShowReplicaScreenSpaceRects,
+      cc::switches::kShowScreenSpaceRects,
+      cc::switches::kShowSurfaceDamageRects,
+      cc::switches::kSlowDownRasterScaleFactor,
+      cc::switches::kTraceAllRenderedFrames,
+      cc::switches::kTraceOverdraw,
+      cc::switches::kUIDisablePartialSwap,
+      cc::switches::kUIEnablePerTilePainting,
       chromeos::switches::kDbusStub,
+      chromeos::switches::kLoginProfile,
       gfx::switches::kEnableBrowserTextSubpixelPositioning,
       gfx::switches::kEnableWebkitTextSubpixelPositioning,
       views::corewm::switches::kNoDropShadows,
@@ -154,6 +198,15 @@ std::string DeriveCommandLine(const GURL& start_url,
         ::switches::kRegisterPepperPlugins,
         base_command_line.GetSwitchValueNative(
             ::switches::kRegisterPepperPlugins).c_str());
+  }
+
+  // TODO(zelidrag): Remove this hack that get us around compositing bug from
+  // http://crbug.com/179256 once that bug is resolved.
+  if (command_line->HasSwitch(::switches::kForceAppMode)) {
+    std::string switch_to_remove("--");
+    switch_to_remove.append(cc::switches::kEnablePartialSwap);
+    cmd_line_str = cmd_line_str.replace(cmd_line_str.find(switch_to_remove),
+                                        switch_to_remove.length(), "");
   }
 
   return cmd_line_str;
@@ -228,11 +281,10 @@ void ChromeRestartRequest::Start() {
   // Post a task to local state task runner thus it occurs last on the task
   // queue, so it would be executed after committing pending write on that
   // thread.
-  base::FilePath local_state_path;
-  CHECK(PathService::Get(chrome::FILE_LOCAL_STATE, &local_state_path));
   scoped_refptr<base::SequencedTaskRunner> local_state_task_runner =
-      JsonPrefStore::GetTaskRunnerForFile(local_state_path,
-                                          BrowserThread::GetBlockingPool());
+      JsonPrefStore::GetTaskRunnerForFile(
+          base::FilePath(chrome::kLocalStorePoolName),
+          BrowserThread::GetBlockingPool());
   local_state_task_runner->PostTaskAndReply(
       FROM_HERE,
       base::Bind(&EnsureLocalStateIsWritten),
@@ -255,10 +307,10 @@ std::string GetOffTheRecordCommandLine(
     const CommandLine& base_command_line,
     CommandLine* command_line) {
   base::DictionaryValue otr_switches;
-  otr_switches.SetString(::switches::kGuestSession, std::string());
+  otr_switches.SetString(switches::kGuestSession, std::string());
   otr_switches.SetString(::switches::kIncognito, std::string());
   otr_switches.SetString(::switches::kLoggingLevel, kGuestModeLoggingLevel);
-  otr_switches.SetString(::switches::kLoginUser, kGuestUserName);
+  otr_switches.SetString(switches::kLoginUser, kGuestUserName);
 
   // Override the home page.
   otr_switches.SetString(::switches::kHomePage,
@@ -268,20 +320,6 @@ std::string GetOffTheRecordCommandLine(
                            base_command_line,
                            otr_switches,
                            command_line);
-}
-
-std::string GetKioskAppCommandLine(const std::string& app_id) {
-  base::DictionaryValue app_switches;
-  app_switches.SetString(::switches::kForceAppMode, std::string());
-  app_switches.SetString(::switches::kAppId, app_id);
-  app_switches.SetString(::switches::kLoginUser, std::string());
-
-  const CommandLine& browser_command_line = *CommandLine::ForCurrentProcess();
-  CommandLine new_command_line(browser_command_line.GetProgram());
-  return DeriveCommandLine(GURL(),
-                           browser_command_line,
-                           app_switches,
-                           &new_command_line);
 }
 
 void RestartChrome(const std::string& command_line) {

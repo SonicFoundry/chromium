@@ -15,8 +15,8 @@
 #include "base/gtest_prod_util.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/prefs/public/pref_change_registrar.h"
-#include "base/prefs/public/pref_member.h"
+#include "base/prefs/pref_change_registrar.h"
+#include "base/prefs/pref_member.h"
 #include "base/string16.h"
 #include "chrome/browser/devtools/devtools_toggle_action.h"
 #include "chrome/browser/sessions/session_id.h"
@@ -47,6 +47,7 @@
 #include "ui/shell_dialogs/select_file_dialog.h"
 
 class BrowserContentSettingBubbleModelDelegate;
+class BrowserInstantController;
 class BrowserSyncedWindowDelegate;
 class BrowserToolbarModelDelegate;
 class BrowserTabRestoreServiceDelegate;
@@ -55,21 +56,18 @@ class FindBarController;
 class FullscreenController;
 class PrefService;
 class Profile;
+class SearchDelegate;
+class SearchModel;
 class StatusBubble;
-class TabNavigation;
 class TabStripModel;
 class TabStripModelDelegate;
+struct SearchMode;
 struct WebApplicationInfo;
+class WebContentsModalDialogHost;
 
 namespace chrome {
 class BrowserCommandController;
-class BrowserInstantController;
 class UnloadController;
-namespace search {
-struct Mode;
-class SearchDelegate;
-class SearchModel;
-}
 }
 
 namespace content {
@@ -103,7 +101,7 @@ class Browser : public TabStripModelObserver,
                 public content::PageNavigator,
                 public content::NotificationObserver,
                 public ui::SelectFileDialog::Listener,
-                public chrome::search::SearchModelObserver {
+                public SearchModelObserver {
  public:
   // SessionService::WindowType mirrors these values.  If you add to this
   // enum, look at SessionService::WindowType to see if it needs to be
@@ -112,16 +110,12 @@ class Browser : public TabStripModelObserver,
     // If you add a new type, consider updating the test
     // BrowserTest.StartMaximized.
     TYPE_TABBED = 1,
-    TYPE_POPUP = 2,
-    TYPE_PANEL = 3
+    TYPE_POPUP = 2
   };
 
   // Distinguishes between browsers that host an app (opened from
   // ApplicationLauncher::OpenApplication), and child browsers created by an app
   // from Browser::CreateForApp (e.g. by windows.open or the extension API).
-  // TODO(stevenjb): This is currently only needed by the ash Launcher for
-  // identifying child panels. Remove this once panels are no longer
-  // implemented as Browsers, crbug.com/112198.
   enum AppType {
     APP_TYPE_HOST = 1,
     APP_TYPE_CHILD = 2
@@ -247,11 +241,11 @@ class Browser : public TabStripModelObserver,
   chrome::BrowserCommandController* command_controller() {
     return command_controller_.get();
   }
-  chrome::search::SearchModel* search_model() { return search_model_.get(); }
-  const chrome::search::SearchModel* search_model() const {
+  SearchModel* search_model() { return search_model_.get(); }
+  const SearchModel* search_model() const {
       return search_model_.get();
   }
-  chrome::search::SearchDelegate* search_delegate() {
+  SearchDelegate* search_delegate() {
     return search_delegate_.get();
   }
   const SessionID& session_id() const { return session_id_; }
@@ -265,7 +259,7 @@ class Browser : public TabStripModelObserver,
   BrowserSyncedWindowDelegate* synced_window_delegate() {
     return synced_window_delegate_.get();
   }
-  chrome::BrowserInstantController* instant_controller() {
+  BrowserInstantController* instant_controller() {
     return instant_controller_.get();
   }
 
@@ -415,7 +409,7 @@ class Browser : public TabStripModelObserver,
   virtual void ActiveTabChanged(content::WebContents* old_contents,
                                 content::WebContents* new_contents,
                                 int index,
-                                bool user_gesture) OVERRIDE;
+                                int reason) OVERRIDE;
   virtual void TabMoved(content::WebContents* contents,
                         int from_index,
                         int to_index) OVERRIDE;
@@ -442,7 +436,6 @@ class Browser : public TabStripModelObserver,
 
   bool is_type_tabbed() const { return type_ == TYPE_TABBED; }
   bool is_type_popup() const { return type_ == TYPE_POPUP; }
-  bool is_type_panel() const { return type_ == TYPE_PANEL; }
 
   bool is_app() const;
   bool is_devtools() const;
@@ -456,11 +449,8 @@ class Browser : public TabStripModelObserver,
   // Show the first run search engine bubble on the location bar.
   void ShowFirstRunBubble();
 
-  // If necessary, update the bookmark bar state according to the Instant
-  // overlay state: when Instant overlay shows suggestions and bookmark bar is
-  // still showing attached, hide it.
-  void MaybeUpdateBookmarkBarStateForInstantOverlay(
-      const chrome::search::Mode& mode);
+  // Show a download on the download shelf.
+  void ShowDownload(content::DownloadItem* download);
 
   FullscreenController* fullscreen_controller() const {
     return fullscreen_controller_.get();
@@ -561,8 +551,6 @@ class Browser : public TabStripModelObserver,
   virtual void SetFocusToLocationBar(bool select_all) OVERRIDE;
   virtual void RenderWidgetShowing() OVERRIDE;
   virtual int GetExtraRenderViewHeight() const OVERRIDE;
-  virtual void OnStartDownload(content::WebContents* source,
-                               content::DownloadItem* download) OVERRIDE;
   virtual void ViewSourceForTab(content::WebContents* source,
                                 const GURL& page_url) OVERRIDE;
   virtual void ViewSourceForFrame(
@@ -579,6 +567,7 @@ class Browser : public TabStripModelObserver,
       const GURL& target_url) OVERRIDE;
   virtual void WebContentsCreated(content::WebContents* source_contents,
                                   int64 source_frame_id,
+                                  const string16& frame_name,
                                   const GURL& target_url,
                                   content::WebContents* new_contents) OVERRIDE;
   virtual void ContentRestrictionsChanged(
@@ -653,7 +642,8 @@ class Browser : public TabStripModelObserver,
   // Overridden from WebContentsModalDialogManagerDelegate:
   virtual void SetWebContentsBlocked(content::WebContents* web_contents,
                                      bool blocked) OVERRIDE;
-  virtual bool GetDialogTopCenter(gfx::Point* point) OVERRIDE;
+  virtual WebContentsModalDialogHost*
+      GetWebContentsModalDialogHost() OVERRIDE;
 
   // Overridden from BlockedContentTabHelperDelegate:
   virtual content::WebContents* GetConstrainingWebContents(
@@ -681,9 +671,9 @@ class Browser : public TabStripModelObserver,
                        const content::NotificationSource& source,
                        const content::NotificationDetails& details) OVERRIDE;
 
-  // Overridden from chrome::search::SearchModelObserver:
-  virtual void ModeChanged(const chrome::search::Mode& old_mode,
-                           const chrome::search::Mode& new_mode) OVERRIDE;
+  // Overridden from SearchModelObserver:
+  virtual void ModelChanged(const SearchModel::State& old_state,
+                            const SearchModel::State& new_state) OVERRIDE;
 
   // Command and state updating ///////////////////////////////////////////////
 
@@ -837,7 +827,7 @@ class Browser : public TabStripModelObserver,
   // When a new tab is activated its model state is propagated to this active
   // model.  This way, observers only have to attach to this single model for
   // updates, and don't have to worry about active tab changes directly.
-  scoped_ptr<chrome::search::SearchModel> search_model_;
+  scoped_ptr<SearchModel> search_model_;
 
   // UI update coalescing and handling ////////////////////////////////////////
 
@@ -905,7 +895,7 @@ class Browser : public TabStripModelObserver,
 
   // A delegate that handles the details of updating the "active"
   // |search_model_| state with the tab's state.
-  scoped_ptr<chrome::search::SearchDelegate> search_delegate_;
+  scoped_ptr<SearchDelegate> search_delegate_;
 
   // Helper which implements the TabRestoreServiceDelegate interface.
   scoped_ptr<BrowserTabRestoreServiceDelegate> tab_restore_service_delegate_;
@@ -913,7 +903,7 @@ class Browser : public TabStripModelObserver,
   // Helper which implements the SyncedWindowDelegate interface.
   scoped_ptr<BrowserSyncedWindowDelegate> synced_window_delegate_;
 
-  scoped_ptr<chrome::BrowserInstantController> instant_controller_;
+  scoped_ptr<BrowserInstantController> instant_controller_;
 
   BookmarkBar::State bookmark_bar_state_;
 

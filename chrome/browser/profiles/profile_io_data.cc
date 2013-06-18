@@ -36,6 +36,7 @@
 #include "chrome/browser/net/chrome_http_user_agent_settings.h"
 #include "chrome/browser/net/chrome_net_log.h"
 #include "chrome/browser/net/chrome_network_delegate.h"
+#include "chrome/browser/net/evicted_domain_cookie_counter.h"
 #include "chrome/browser/net/load_time_stats.h"
 #include "chrome/browser/net/proxy_service_factory.h"
 #include "chrome/browser/net/resource_prefetch_predictor_observer.h"
@@ -58,7 +59,7 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/resource_context.h"
 #include "extensions/common/constants.h"
-#include "net/base/server_bound_cert_service.h"
+#include "net/cert/cert_verifier.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_monster.h"
 #include "net/http/http_transaction_factory.h"
@@ -66,6 +67,7 @@
 #include "net/proxy/proxy_config_service_fixed.h"
 #include "net/proxy/proxy_script_fetcher_impl.h"
 #include "net/proxy/proxy_service.h"
+#include "net/ssl/server_bound_cert_service.h"
 #include "net/url_request/data_protocol_handler.h"
 #include "net/url_request/file_protocol_handler.h"
 #include "net/url_request/ftp_protocol_handler.h"
@@ -82,9 +84,11 @@
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/drive/drive_protocol_handler.h"
+#include "chrome/browser/chromeos/policy/policy_cert_verifier.h"
 #include "chrome/browser/chromeos/proxy_config_service_impl.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/cros_settings_names.h"
+#include "chrome/browser/policy/browser_policy_connector.h"
 #endif  // defined(OS_CHROMEOS)
 
 using content::BrowserContext;
@@ -146,7 +150,7 @@ Profile* GetProfileOnUI(ProfileManager* profile_manager, Profile* profile) {
 #if defined(DEBUG_DEVTOOLS)
 bool IsSupportedDevToolsURL(const GURL& url, base::FilePath* path) {
   if (!url.SchemeIs(chrome::kChromeDevToolsScheme) ||
-      url.host() != chrome::kChromeUIDevToolsHost) {
+      url.host() != chrome::kChromeUIDevToolsBundledHost) {
     return false;
   }
 
@@ -226,7 +230,8 @@ void ProfileIOData::InitializeOnUIThread(Profile* profile) {
       base::Bind(&GetProfileOnUI, g_browser_process->profile_manager(),
                  profile);
   params->cookie_monster_delegate =
-      new ChromeCookieMonsterDelegate(profile_getter);
+      new chrome_browser_net::EvictedDomainCookieCounter(
+          new ChromeCookieMonsterDelegate(profile_getter));
   params->extension_info_map =
       extensions::ExtensionSystem::Get(profile)->info_map();
 
@@ -262,6 +267,11 @@ void ProfileIOData::InitializeOnUIThread(Profile* profile) {
       ManagedUserServiceFactory::GetForProfile(profile);
   params->managed_mode_url_filter =
       managed_user_service->GetURLFilterForIOThread();
+#endif
+#if defined(OS_CHROMEOS)
+  policy::BrowserPolicyConnector* connector =
+      g_browser_process->browser_policy_connector();
+  params->trust_anchor_provider = connector->GetCertTrustAnchorProvider();
 #endif
 
   params->profile = profile;
@@ -372,6 +382,9 @@ ProfileIOData::ProfileParams::ProfileParams()
 #if defined(ENABLE_NOTIFICATIONS)
       notification_service(NULL),
 #endif
+#if defined(OS_CHROMEOS)
+      trust_anchor_provider(NULL),
+#endif
       profile(NULL) {
 }
 
@@ -382,8 +395,7 @@ ProfileIOData::ProfileIOData(bool is_incognito)
 #if defined(ENABLE_NOTIFICATIONS)
       notification_service_(NULL),
 #endif
-      ALLOW_THIS_IN_INITIALIZER_LIST(
-          resource_context_(new ResourceContext(this))),
+      resource_context_(new ResourceContext(this)),
       load_time_stats_(NULL),
       initialized_on_UI_thread_(false),
       is_incognito_(is_incognito) {
@@ -431,6 +443,7 @@ bool ProfileIOData::IsHandledProtocol(const std::string& scheme) {
     chrome::kBlobScheme,
     chrome::kFileSystemScheme,
     chrome::kExtensionResourceScheme,
+    chrome::kChromeSearchScheme,
   };
   for (size_t i = 0; i < arraysize(kProtocolList); ++i) {
     if (scheme == kProtocolList[i])
@@ -439,6 +452,7 @@ bool ProfileIOData::IsHandledProtocol(const std::string& scheme) {
   return net::URLRequest::IsHandledProtocol(scheme);
 }
 
+// static
 bool ProfileIOData::IsHandledURL(const GURL& url) {
   if (!url.is_valid()) {
     // We handle error cases.
@@ -446,6 +460,21 @@ bool ProfileIOData::IsHandledURL(const GURL& url) {
   }
 
   return IsHandledProtocol(url.scheme());
+}
+
+// static
+void ProfileIOData::InstallProtocolHandlers(
+    net::URLRequestJobFactoryImpl* job_factory,
+    content::ProtocolHandlerMap* protocol_handlers) {
+  for (content::ProtocolHandlerMap::iterator it =
+           protocol_handlers->begin();
+       it != protocol_handlers->end();
+       ++it) {
+    bool set_protocol = job_factory->SetProtocolHandler(
+        it->first, it->second.release());
+    DCHECK(set_protocol);
+  }
+  protocol_handlers->clear();
 }
 
 content::ResourceContext* ProfileIOData::GetResourceContext() const {
@@ -474,16 +503,7 @@ ChromeURLRequestContext* ProfileIOData::GetIsolatedAppRequestContext(
     const StoragePartitionDescriptor& partition_descriptor,
     scoped_ptr<ProtocolHandlerRegistry::JobInterceptorFactory>
         protocol_handler_interceptor,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        blob_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        file_system_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        developer_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        chrome_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        chrome_devtools_protocol_handler) const {
+    content::ProtocolHandlerMap* protocol_handlers) const {
   DCHECK(initialized_);
   ChromeURLRequestContext* context = NULL;
   if (ContainsKey(app_request_context_map_, partition_descriptor)) {
@@ -491,9 +511,7 @@ ChromeURLRequestContext* ProfileIOData::GetIsolatedAppRequestContext(
   } else {
     context = AcquireIsolatedAppRequestContext(
         main_context, partition_descriptor, protocol_handler_interceptor.Pass(),
-        blob_protocol_handler.Pass(), file_system_protocol_handler.Pass(),
-        developer_protocol_handler.Pass(), chrome_protocol_handler.Pass(),
-        chrome_devtools_protocol_handler.Pass());
+        protocol_handlers);
     app_request_context_map_[partition_descriptor] = context;
   }
   DCHECK(context);
@@ -600,20 +618,10 @@ std::string ProfileIOData::GetSSLSessionCacheShard() {
   // new profile, we'll get a fresh SSL session cache which is separate from
   // the other profiles.
   static unsigned ssl_session_cache_instance = 0;
-  return StringPrintf("profile/%u", ssl_session_cache_instance++);
+  return base::StringPrintf("profile/%u", ssl_session_cache_instance++);
 }
 
-void ProfileIOData::Init(
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        blob_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        file_system_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        developer_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        chrome_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        chrome_devtools_protocol_handler) const {
+void ProfileIOData::Init(content::ProtocolHandlerMap* protocol_handlers) const {
   // The basic logic is implemented here. The specific initialization
   // is done in InitializeInternal(), implemented by subtypes. Static helper
   // functions have been provided to assist in common operations.
@@ -660,10 +668,13 @@ void ProfileIOData::Init(
       new chrome_browser_net::ChromeFraudulentCertificateReporter(
           main_request_context_.get()));
 
+  // NOTE: Proxy service uses the default io thread network delegate, not the
+  // delegate just created.
   proxy_service_.reset(
       ProxyServiceFactory::CreateProxyService(
           io_thread->net_log(),
           io_thread_globals->proxy_script_fetcher_context.get(),
+          io_thread_globals->system_network_delegate.get(),
           profile_params_->proxy_config_service.release(),
           command_line));
 
@@ -695,12 +706,16 @@ void ProfileIOData::Init(
   managed_mode_url_filter_ = profile_params_->managed_mode_url_filter;
 #endif
 
-  InitializeInternal(profile_params_.get(),
-                     blob_protocol_handler.Pass(),
-                     file_system_protocol_handler.Pass(),
-                     developer_protocol_handler.Pass(),
-                     chrome_protocol_handler.Pass(),
-                     chrome_devtools_protocol_handler.Pass());
+#if defined(OS_CHROMEOS)
+  cert_verifier_.reset(new policy::PolicyCertVerifier(
+      profile_params_->profile, profile_params_->trust_anchor_provider));
+  main_request_context_->set_cert_verifier(cert_verifier_.get());
+#else
+  main_request_context_->set_cert_verifier(
+      io_thread_globals->cert_verifier.get());
+#endif
+
+  InitializeInternal(profile_params_.get(), protocol_handlers);
 
   profile_params_.reset();
   initialized_ = true;
@@ -834,7 +849,7 @@ void ProfileIOData::PopulateNetworkSessionParams(
   params->ssl_session_cache_shard = GetSSLSessionCacheShard();
   params->ssl_config_service = context->ssl_config_service();
   params->http_auth_handler_factory = context->http_auth_handler_factory();
-  params->network_delegate = context->network_delegate();
+  params->network_delegate = network_delegate();
   params->http_server_properties = context->http_server_properties();
   params->net_log = context->net_log();
 }

@@ -14,8 +14,6 @@
 
 namespace chromeos {
 
-class KioskAppLauncher;
-
 // KioskAppMenuHandler supplies kiosk apps data to apps menu on sign-in
 // screen when app mode is enabled and handles "launchKioskApp" request
 // from the apps menu.
@@ -35,20 +33,16 @@ class KioskAppMenuHandler : public content::WebUIMessageHandler,
   void SendKioskApps();
 
   // JS callbacks.
-  void HandleGetKioskApps(const base::ListValue* args);
+  void HandleInitializeKioskApps(const base::ListValue* args);
+  void HandleKioskAppsLoaded(const base::ListValue* args);
   void HandleLaunchKioskApps(const base::ListValue* args);
-
-  // App launch callback.
-  void KioskAppLaunchCallback(bool success);
+  void HandleCheckKioskAppLaunchError(const base::ListValue* args);
 
   // KioskAppManagerObserver overrides:
-  virtual void OnKioskAutoLaunchAppChanged() OVERRIDE;
-  virtual void OnKioskAppsChanged() OVERRIDE;
+  virtual void OnKioskAppsSettingsChanged() OVERRIDE;
   virtual void OnKioskAppDataChanged(const std::string& app_id) OVERRIDE;
-  virtual void OnKioskAppDataLoadFailure(const std::string& app_id) OVERRIDE;
 
   bool initialized_;
-  scoped_ptr<KioskAppLauncher> launcher_;
 
   DISALLOW_COPY_AND_ASSIGN(KioskAppMenuHandler);
 };

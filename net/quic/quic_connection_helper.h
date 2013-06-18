@@ -47,18 +47,15 @@ class NET_EXPORT_PRIVATE QuicConnectionHelper
   virtual QuicRandom* GetRandomGenerator() OVERRIDE;
   virtual int WritePacketToWire(const QuicEncryptedPacket& packet,
                                 int* error) OVERRIDE;
+  virtual bool IsWriteBlockedDataBuffered() OVERRIDE;
+  virtual bool IsWriteBlocked(int error) OVERRIDE;
   virtual void SetRetransmissionAlarm(QuicTime::Delta delay) OVERRIDE;
-  virtual void SetSendAlarm(QuicTime::Delta delay) OVERRIDE;
+  virtual void SetSendAlarm(QuicTime alarm_time) OVERRIDE;
   virtual void SetTimeoutAlarm(QuicTime::Delta delay) OVERRIDE;
   virtual bool IsSendAlarmSet() OVERRIDE;
   virtual void UnregisterSendAlarmIfRegistered() OVERRIDE;
   virtual void SetAckAlarm(QuicTime::Delta delay) OVERRIDE;
   virtual void ClearAckAlarm() OVERRIDE;
-
-  int Read(IOBuffer* buf, int buf_len, const CompletionCallback& callback);
-  // TODO(wtc): these two methods should be able to report a failure.
-  void GetLocalAddress(IPEndPoint* local_address);
-  void GetPeerAddress(IPEndPoint* peer_address);
 
  private:
   friend class test::QuicConnectionHelperPeer;
@@ -79,7 +76,7 @@ class NET_EXPORT_PRIVATE QuicConnectionHelper
 
   base::WeakPtrFactory<QuicConnectionHelper> weak_factory_;
   base::TaskRunner* task_runner_;
-  scoped_ptr<DatagramClientSocket> socket_;
+  DatagramClientSocket* socket_;
   QuicConnection* connection_;
   const QuicClock* clock_;
   QuicRandom* random_generator_;

@@ -14,12 +14,15 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/views/accessibility/accessibility_event_router_views.h"
 #include "chrome/common/pref_names.h"
+#include "ui/base/ui_base_switches.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/screen.h"
 #include "ui/views/widget/native_widget.h"
 #include "ui/views/widget/widget.h"
 
 #if defined(OS_WIN)
+#include <dwmapi.h>
+#include "base/win/windows_version.h"
 #include "chrome/browser/app_icon_win.h"
 #endif
 
@@ -181,6 +184,34 @@ void ChromeViewsDelegate::OnBeforeWidgetInit(
   if (params->native_widget)
     return;
 
+#if defined(USE_AURA) && !defined(OS_CHROMEOS)
+  bool use_non_toplevel_window =
+      params->parent && params->type != views::Widget::InitParams::TYPE_MENU;
+#if defined(OS_WIN)
+  // If we're on Vista+ with composition enabled, then we can use toplevel
+  // windows for most things (they get blended via WS_EX_COMPOSITED, which
+  // allows for animation effects, but also exceeding the bounds of the parent
+  // window).
+  if (base::win::GetVersion() >= base::win::VERSION_VISTA) {
+    BOOL composition_enabled = FALSE;
+    HRESULT hr = DwmIsCompositionEnabled(&composition_enabled);
+    if (CommandLine::ForCurrentProcess()->HasSwitch(
+            switches::kDisableDwmComposition))
+      composition_enabled = FALSE;
+    if (SUCCEEDED(hr) && composition_enabled) {
+      if (chrome::GetActiveDesktop() != chrome::HOST_DESKTOP_TYPE_ASH &&
+          params->parent &&
+          params->type != views::Widget::InitParams::TYPE_CONTROL &&
+          params->type != views::Widget::InitParams::TYPE_WINDOW) {
+        // When we set this to false, we get a DesktopNativeWidgetAura from the
+        // default case (not handled in this function).
+        use_non_toplevel_window = false;
+      }
+    }
+  }
+#endif  // OS_WIN
+#endif  // USE_AURA
+
 #if defined(OS_CHROMEOS)
   // When we are doing straight chromeos builds, we still need to handle the
   // toplevel window case.
@@ -214,8 +245,7 @@ void ChromeViewsDelegate::OnBeforeWidgetInit(
       default:
         NOTREACHED();
     }
-  } else if (params->parent &&
-             params->type != views::Widget::InitParams::TYPE_MENU) {
+  } else if (use_non_toplevel_window) {
     params->native_widget = new views::NativeWidgetAura(delegate);
   } else if (params->type != views::Widget::InitParams::TYPE_TOOLTIP) {
     // TODO(erg): Once we've threaded context to everywhere that needs it, we

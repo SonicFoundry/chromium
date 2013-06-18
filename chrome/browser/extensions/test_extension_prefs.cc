@@ -19,11 +19,11 @@
 #include "chrome/browser/extensions/extension_pref_store.h"
 #include "chrome/browser/extensions/extension_pref_value_map.h"
 #include "chrome/browser/extensions/extension_prefs.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/prefs/pref_service_mock_builder.h"
 #include "chrome/browser/prefs/pref_service_syncable.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_manifest_constants.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/browser_thread.h"
 #include "sync/api/string_ordinal.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -77,12 +77,13 @@ PrefService* TestExtensionPrefs::pref_service() {
   return pref_service_.get();
 }
 
-const scoped_refptr<PrefRegistrySyncable>& TestExtensionPrefs::pref_registry() {
+const scoped_refptr<user_prefs::PrefRegistrySyncable>&
+TestExtensionPrefs::pref_registry() {
   return pref_registry_;
 }
 
 void TestExtensionPrefs::ResetPrefRegistry() {
-  pref_registry_ = new PrefRegistrySyncable;
+  pref_registry_ = new user_prefs::PrefRegistrySyncable;
   ExtensionPrefs::RegisterUserPrefs(pref_registry_);
 }
 
@@ -90,7 +91,7 @@ void TestExtensionPrefs::RecreateExtensionPrefs() {
   // We persist and reload the PrefService's PrefStores because this process
   // deletes all empty dictionaries. The ExtensionPrefs implementation
   // needs to be able to handle this situation.
-  if (pref_service_.get()) {
+  if (pref_service_) {
     // Commit a pending write (which posts a task to task_runner_) and wait for
     // it to finish.
     pref_service_->CommitPendingWrite();

@@ -14,11 +14,16 @@ namespace net {
 enum NextProto {
   kProtoUnknown = 0,
   kProtoHTTP11 = 1,
+
   kProtoSPDY1 = 2,
+  kProtoSPDYMinimumVersion = kProtoSPDY1,
   kProtoSPDY2 = 3,
   kProtoSPDY21 = 4,
   kProtoSPDY3 = 5,
   kProtoSPDY31 = 6,
+  kProtoSPDY4a1 = 7,
+  kProtoSPDYMaximumVersion = kProtoSPDY4a1,
+
   kProtoMaximumVersion = 7,
 };
 

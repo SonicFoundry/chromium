@@ -11,7 +11,6 @@
 #include "base/message_loop.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/test_timeouts.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/prefs/pref_service_syncable.h"
 #include "chrome/browser/sync/glue/device_info.h"
 #include "chrome/browser/sync/glue/synced_device_tracker.h"
@@ -19,6 +18,7 @@
 #include "chrome/browser/sync/sync_prefs.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_browser_thread.h"
 #include "google/cacheinvalidation/include/types.h"
@@ -172,7 +172,7 @@ class SyncBackendHostTest : public testing::Test {
   }
 
   virtual void TearDown() OVERRIDE {
-    if (backend_.get()) {
+    if (backend_) {
       backend_->StopSyncingForShutdown();
       backend_->Shutdown(false);
     }
@@ -194,7 +194,7 @@ class SyncBackendHostTest : public testing::Test {
         WillOnce(InvokeWithoutArgs(QuitMessageLoop));
     backend_->Initialize(&mock_frontend_,
                          syncer::WeakHandle<syncer::JsEventHandler>(),
-                         GURL(""),
+                         GURL(std::string()),
                          credentials_,
                          true,
                          &fake_manager_factory_,
@@ -746,6 +746,21 @@ TEST_F(SyncBackendHostTest, AttemptForwardLocalRefreshRequestLate) {
 
   backend_->Shutdown(false);
   backend_.reset();
+}
+
+// Test that configuration on signin sends the proper GU source.
+TEST_F(SyncBackendHostTest, DownloadControlTypesNewClient) {
+  InitializeBackend(true);
+  EXPECT_EQ(syncer::CONFIGURE_REASON_NEW_CLIENT,
+            fake_manager_->GetAndResetConfigureReason());
+}
+
+// Test that configuration on restart sends the proper GU source.
+TEST_F(SyncBackendHostTest, DownloadControlTypesRestart) {
+  sync_prefs_->SetSyncSetupCompleted();
+  InitializeBackend(true);
+  EXPECT_EQ(syncer::CONFIGURE_REASON_NEWLY_ENABLED_DATA_TYPE,
+            fake_manager_->GetAndResetConfigureReason());
 }
 
 }  // namespace

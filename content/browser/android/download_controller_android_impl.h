@@ -75,14 +75,17 @@ class DownloadControllerAndroidImpl : public DownloadControllerAndroid,
   virtual ~DownloadControllerAndroidImpl();
 
   // DownloadControllerAndroid implementation.
-  virtual void CreateGETDownload(RenderViewHost* source,
+  virtual void CreateGETDownload(int render_process_id, int render_view_id,
                                  int request_id) OVERRIDE;
-  virtual void OnPostDownloadStarted(WebContents* web_contents,
-                                     DownloadItem* download_item) OVERRIDE;
+  virtual void OnDownloadStarted(DownloadItem* download_item) OVERRIDE;
+  virtual void StartContextMenuDownload(
+      const ContextMenuParams& params, WebContents* web_contents,
+      bool is_link) OVERRIDE;
+  virtual void DangerousDownloadValidated(
+      WebContents* web_contents, int download_id, bool accept) OVERRIDE;
 
   // DownloadItem::Observer interface.
   virtual void OnDownloadUpdated(DownloadItem* item) OVERRIDE;
-  virtual void OnDownloadOpened(DownloadItem* item) OVERRIDE;
 
   typedef base::Callback<void(const DownloadInfoAndroid&)>
       GetDownloadInfoCB;
@@ -103,6 +106,9 @@ class DownloadControllerAndroidImpl : public DownloadControllerAndroid,
   void StartAndroidDownload(int render_process_id,
                             int render_view_id,
                             const DownloadInfoAndroid& info);
+
+  // The download item contains dangerous file types.
+  void OnDangerousDownload(DownloadItem *item);
 
   base::android::ScopedJavaLocalRef<jobject> GetContentViewCoreFromWebContents(
       WebContents* web_contents);

@@ -89,10 +89,11 @@ URLRequestTestJob::URLRequestTestJob(URLRequest* request,
     : URLRequestJob(request, network_delegate),
       auto_advance_(false),
       stage_(WAITING),
+      priority_(DEFAULT_PRIORITY),
       offset_(0),
       async_buf_(NULL),
       async_buf_size_(0),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+      weak_factory_(this) {
 }
 
 URLRequestTestJob::URLRequestTestJob(URLRequest* request,
@@ -101,10 +102,11 @@ URLRequestTestJob::URLRequestTestJob(URLRequest* request,
     : URLRequestJob(request, network_delegate),
       auto_advance_(auto_advance),
       stage_(WAITING),
+      priority_(DEFAULT_PRIORITY),
       offset_(0),
       async_buf_(NULL),
       async_buf_size_(0),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+      weak_factory_(this) {
 }
 
 URLRequestTestJob::URLRequestTestJob(URLRequest* request,
@@ -115,12 +117,13 @@ URLRequestTestJob::URLRequestTestJob(URLRequest* request,
     : URLRequestJob(request, network_delegate),
       auto_advance_(auto_advance),
       stage_(WAITING),
+      priority_(DEFAULT_PRIORITY),
       response_headers_(new HttpResponseHeaders(response_headers)),
       response_data_(response_data),
       offset_(0),
       async_buf_(NULL),
       async_buf_size_(0),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+      weak_factory_(this) {
 }
 
 URLRequestTestJob::~URLRequestTestJob() {
@@ -135,6 +138,10 @@ bool URLRequestTestJob::GetMimeType(std::string* mime_type) const {
   if (!response_headers_)
     return false;
   return response_headers_->GetMimeType(mime_type);
+}
+
+void URLRequestTestJob::SetPriority(RequestPriority priority) {
+  priority_ = priority;
 }
 
 void URLRequestTestJob::Start() {
@@ -206,6 +213,17 @@ void URLRequestTestJob::GetResponseInfo(HttpResponseInfo* info) {
     info->headers = response_headers_;
 }
 
+void URLRequestTestJob::GetLoadTimingInfo(
+    LoadTimingInfo* load_timing_info) const {
+  // Preserve the times the URLRequest is responsible for, but overwrite all
+  // the others.
+  base::TimeTicks request_start = load_timing_info->request_start;
+  base::Time request_start_time = load_timing_info->request_start_time;
+  *load_timing_info = load_timing_info_;
+  load_timing_info->request_start = request_start;
+  load_timing_info->request_start_time = request_start_time;
+}
+
 int URLRequestTestJob::GetResponseCode() const {
   if (response_headers_)
     return response_headers_->response_code();
@@ -225,7 +243,6 @@ bool URLRequestTestJob::IsRedirectResponse(GURL* location,
   *http_status_code = response_headers_->response_code();
   return true;
 }
-
 
 void URLRequestTestJob::Kill() {
   stage_ = DONE;

@@ -11,13 +11,15 @@
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/ref_counted.h"
+#include "chrome/browser/common/cancelable_request.h"
+#include "chrome/browser/history/history_service.h"
 #include "chrome/browser/history/in_memory_url_index_cache.pb.h"
 #include "chrome/browser/history/in_memory_url_index_types.h"
 #include "chrome/browser/history/scored_history_match.h"
 #include "content/public/browser/notification_details.h"
 
-class HistoryQuickProviderTest;
 class BookmarkService;
+class HistoryQuickProviderTest;
 
 namespace in_memory_url_index {
 class InMemoryURLIndexCacheItem;
@@ -32,7 +34,7 @@ class InMemoryURLIndex;
 class RefCountedBool;
 
 // Current version of the cache file.
-static const int kCurrentCacheFileVersion = 1;
+static const int kCurrentCacheFileVersion = 2;
 
 // A structure private to InMemoryURLIndex describing its internal data and
 // providing for restoring, rebuilding and updating that internal data. As
@@ -77,9 +79,25 @@ class URLIndexPrivateData
   // if the index was actually updated. |languages| gives a list of language
   // encodings by which the URLs and page titles are broken down into words and
   // characters. |scheme_whitelist| is used to filter non-qualifying schemes.
-  bool UpdateURL(const URLRow& row,
+  // |history_service| is used to schedule an update to the recent visits
+  // component of this URL's entry in the index.
+  bool UpdateURL(HistoryService* history_service,
+                 const URLRow& row,
                  const std::string& languages,
                  const std::set<std::string>& scheme_whitelist);
+
+  // Updates the entry for |url_id| in the index, replacing its
+  // recent visits information with |recent_visits|.  If |url_id|
+  // is not in the index, does nothing.
+  void UpdateRecentVisits(URLID url_id,
+                          const VisitVector& recent_visits);
+
+  // Using |history_service| schedules an update (using the historyDB
+  // thread) for the recent visits information for |url_id|.  Unless
+  // something unexpectedly goes wrong, UdpateRecentVisits() should
+  // eventually be called from a callback.
+  void ScheduleUpdateRecentVisits(HistoryService* history_service,
+                                  URLID url_id);
 
   // Deletes index data for the history item with the given |url|.
   // The item may not have actually been indexed, which is the case if it did
@@ -87,12 +105,13 @@ class URLIndexPrivateData
   // was actually updated.
   bool DeleteURL(const GURL& url);
 
-  // Creates a new URLIndexPrivateData object, populates it from the contents
-  // of the cache file stored in |file_path|, and assigns it to |private_data|.
-  // |languages| will be used to break URLs and page titles into words.
-  static void RestoreFromFileTask(
-      const base::FilePath& file_path,
-      scoped_refptr<URLIndexPrivateData> private_data,
+  // Constructs a new object by restoring its contents from the cache file
+  // at |path|. Returns the new URLIndexPrivateData which on success will
+  // contain the restored data but upon failure will be empty.  |languages|
+  // is used to break URLs and page titles into words.  This function
+  // should be run on the the file thread.
+  static scoped_refptr<URLIndexPrivateData> RestoreFromFile(
+      const base::FilePath& path,
       const std::string& languages);
 
   // Constructs a new object by rebuilding its contents from the history
@@ -109,6 +128,10 @@ class URLIndexPrivateData
   static bool WritePrivateDataToCacheFileTask(
       scoped_refptr<URLIndexPrivateData> private_data,
       const base::FilePath& file_path);
+
+  // Stops all pending updates to recent visits fields.  This should be
+  // called during shutdown.
+  void CancelPendingUpdates();
 
   // Creates a copy of ourself.
   scoped_refptr<URLIndexPrivateData> Duplicate() const;
@@ -128,8 +151,8 @@ class URLIndexPrivateData
   friend class ::HistoryQuickProviderTest;
   friend class InMemoryURLIndexTest;
   FRIEND_TEST_ALL_PREFIXES(InMemoryURLIndexTest, CacheSaveRestore);
-  FRIEND_TEST_ALL_PREFIXES(InMemoryURLIndexTest, CursorPositionRetrieval);
   FRIEND_TEST_ALL_PREFIXES(InMemoryURLIndexTest, HugeResultSet);
+  FRIEND_TEST_ALL_PREFIXES(InMemoryURLIndexTest, ReadVisitsFromHistory);
   FRIEND_TEST_ALL_PREFIXES(InMemoryURLIndexTest, Scoring);
   FRIEND_TEST_ALL_PREFIXES(InMemoryURLIndexTest, TitleSearch);
   FRIEND_TEST_ALL_PREFIXES(InMemoryURLIndexTest, TypedCharacterCaching);
@@ -223,8 +246,16 @@ class URLIndexPrivateData
   // Indexes one URL history item as described by |row|. Returns true if the
   // row was actually indexed. |languages| gives a list of language encodings by
   // which the URLs and page titles are broken down into words and characters.
-  // |scheme_whitelist| is used to filter non-qualifying schemes.
-  bool IndexRow(const URLRow& row,
+  // |scheme_whitelist| is used to filter non-qualifying schemes.  If
+  // |history_db| is not NULL then this function uses the history database
+  // synchronously to get the URL's recent visits information.  This mode should
+  // only be used on the historyDB thread.  If |history_db| is NULL, then
+  // this function uses |history_service| to schedule a task on the
+  // historyDB thread to fetch and update the recent visits
+  // information.
+  bool IndexRow(HistoryDatabase* history_db,
+                HistoryService* history_service,
+                const URLRow& row,
                 const std::string& languages,
                 const std::set<std::string>& scheme_whitelist);
 
@@ -274,14 +305,6 @@ class URLIndexPrivateData
   void SaveHistoryInfoMap(imui::InMemoryURLIndexCacheItem* cache) const;
   void SaveWordStartsMap(imui::InMemoryURLIndexCacheItem* cache) const;
 
-  // Constructs a new object by restoring its contents from the file at |path|.
-  // Returns the new URLIndexPrivateData which on success will contain the
-  // restored data but upon failure will be empty.  |languages| will be used to
-  // break URLs and page titles into words
-  static scoped_refptr<URLIndexPrivateData> RestoreFromFile(
-      const base::FilePath& path,
-      const std::string& languages);
-
   // Decode a data structure from the protobuf |cache|. Return false if there
   // is any kind of failure. |languages| will be used to break URLs and page
   // titles into words
@@ -302,10 +325,8 @@ class URLIndexPrivateData
   // Cache of search terms.
   SearchTermCacheMap search_term_cache_;
 
-  // Whether to allow breaking the input at the cursor position.  Set based
-  // on whether the user is in the OmniboxHQPUseCursorPosition field trial
-  // experiment group.
-  bool use_cursor_position_;
+  // Allows canceling pending requests to update recent visits information.
+  CancelableRequestConsumer recent_visits_consumer_;
 
   // Start of data members that are cached -------------------------------------
 

@@ -38,6 +38,8 @@ namespace cloud_print {
 
 namespace {
 
+using base::StringPrintf;
+
 const char kExampleCloudPrintServerURL[] = "https://www.google.com/cloudprint/";
 
 const char kExamplePrintTicket[] = "{\"MediaType\":\"plain\","
@@ -192,7 +194,7 @@ const char kExamplePrinterDescription[] = "Example Description";
 
 // These are functions used to construct the various sample strings.
 std::string JobListResponse(int num_jobs) {
-  std::string job_objects = "";
+  std::string job_objects;
   for (int i = 0; i < num_jobs; i++) {
     job_objects = job_objects + StringPrintf(kExampleJobObject, i+1, i+1, i+1,
                                              i+1);
@@ -248,7 +250,7 @@ class CloudPrintURLFetcherNoServiceProcess
       context_getter_(new net::TestURLRequestContextGetter(
           base::MessageLoopProxy::current())) {}
  protected:
-  virtual net::URLRequestContextGetter* GetRequestContextGetter() {
+  virtual net::URLRequestContextGetter* GetRequestContextGetter() OVERRIDE {
     return context_getter_.get();
   }
 
@@ -261,7 +263,7 @@ class CloudPrintURLFetcherNoServiceProcess
 class CloudPrintURLFetcherNoServiceProcessFactory
     : public CloudPrintURLFetcherFactory {
  public:
-  virtual CloudPrintURLFetcher* CreateCloudPrintURLFetcher() {
+  virtual CloudPrintURLFetcher* CreateCloudPrintURLFetcher() OVERRIDE {
     return new CloudPrintURLFetcherNoServiceProcess;
   }
 
@@ -437,8 +439,8 @@ class MockPrintSystem : public PrintSystem {
 class PrinterJobHandlerTest : public ::testing::Test {
  public:
   PrinterJobHandlerTest();
-  void SetUp() OVERRIDE;
-  void TearDown() OVERRIDE;
+  virtual void SetUp() OVERRIDE;
+  virtual void TearDown() OVERRIDE;
   void IdleOut();
   bool GetPrinterInfo(printing::PrinterBasicInfo* info);
   void SendCapsAndDefaults(
@@ -656,7 +658,8 @@ MockPrintSystem::MockPrintSystem()
 
 // This test simulates an end-to-end printing of a document
 // but tests only non-failure cases.
-TEST_F(PrinterJobHandlerTest, HappyPathTest) {
+// Disabled - http://crbug.com/184245
+TEST_F(PrinterJobHandlerTest, DISABLED_HappyPathTest) {
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonStartup),
                            JobListResponse(1), true);
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonQueryMore),
@@ -670,7 +673,7 @@ TEST_F(PrinterJobHandlerTest, HappyPathTest) {
       .Times(Exactly(1));
 
   SetUpJobSuccessTest(1);
-  BeginTest(1);
+  BeginTest(20);
 }
 
 TEST_F(PrinterJobHandlerTest, TicketDownloadFailureTest) {
@@ -680,7 +683,7 @@ TEST_F(PrinterJobHandlerTest, TicketDownloadFailureTest) {
                            JobListResponse(2), true);
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonQueryMore),
                            JobListResponse(0), true);
-  factory_.SetFakeResponse(TicketURI(1), "", false);
+  factory_.SetFakeResponse(TicketURI(1), std::string(), false);
 
   EXPECT_CALL(url_callback_, OnRequestCreate(GURL(TicketURI(1)), _))
       .Times(AtLeast(1));
@@ -698,7 +701,7 @@ TEST_F(PrinterJobHandlerTest, TicketDownloadFailureTest) {
       .Times(AtLeast(1));
 
   SetUpJobSuccessTest(2);
-  BeginTest(1);
+  BeginTest(20);
 }
 
 // TODO(noamsml): Figure out how to make this test not take 1 second and
@@ -731,7 +734,7 @@ TEST_F(PrinterJobHandlerTest, DISABLED_ManyFailureTest) {
 
   SetUpJobSuccessTest(1);
 
-  factory_.SetFakeResponse(TicketURI(1), "", false);
+  factory_.SetFakeResponse(TicketURI(1), std::string(), false);
 
   loop_.PostDelayedTask(FROM_HERE,
                         base::Bind(&net::FakeURLFetcherFactory::SetFakeResponse,
@@ -756,7 +759,7 @@ TEST_F(PrinterJobHandlerTest, DISABLED_CompleteFailureTest) {
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonRetry),
                            JobListResponse(1), true);
   factory_.SetFakeResponse(ErrorURI(1), StatusResponse(1, "ERROR"), true);
-  factory_.SetFakeResponse(TicketURI(1), "", false);
+  factory_.SetFakeResponse(TicketURI(1), std::string(), false);
 
   EXPECT_CALL(url_callback_,
               OnRequestCreate(GURL(JobListURI(kJobFetchReasonStartup)), _))
@@ -782,4 +785,3 @@ TEST_F(PrinterJobHandlerTest, DISABLED_CompleteFailureTest) {
 }
 
 }  // namespace cloud_print
-

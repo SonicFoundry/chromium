@@ -6,8 +6,6 @@
   {
     "namespace": "app",
     "nodoc": true,
-    "unprivileged": true,
-    "matches": [ "<all_urls>" ],
     "types": [
       {
         "id": "Details",
@@ -62,12 +60,6 @@
           "type": "string",
           "enum": [ "running", "cannot_run", "ready_to_run" ]
         }
-      },
-      {
-        "name": "install",
-        "description": "TODO",
-        "type": "function",
-        "parameters": []
       },
       {
         "name": "getDetails",

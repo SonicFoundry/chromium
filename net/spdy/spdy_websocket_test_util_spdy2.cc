@@ -74,6 +74,7 @@ SpdyFrame* ConstructSpdyWebSocketHandshakeRequestFrame(
     stream_id,
     kDefaultAssociatedStreamId,
     ConvertRequestPriorityToSpdyPriority(request_priority, 2),
+    kSpdyCredentialSlotUnused,
     CONTROL_FLAG_NONE,
     kDefaultCompressed,
     RST_STREAM_INVALID,
@@ -83,7 +84,7 @@ SpdyFrame* ConstructSpdyWebSocketHandshakeRequestFrame(
   };
 
   // Construct SPDY SYN_STREAM control frame.
-  return ConstructSpdyPacket(
+  return ConstructSpdyFrame(
       kSynStreamHeader,
       kDefaultExtraHeaders,
       kDefaultExtraHeaderCount,
@@ -103,6 +104,7 @@ SpdyFrame* ConstructSpdyWebSocketHandshakeResponseFrame(
     stream_id,
     kDefaultAssociatedStreamId,
     ConvertRequestPriorityToSpdyPriority(request_priority, 2),
+    kSpdyCredentialSlotUnused,
     CONTROL_FLAG_NONE,
     kDefaultCompressed,
     RST_STREAM_INVALID,
@@ -112,7 +114,7 @@ SpdyFrame* ConstructSpdyWebSocketHandshakeResponseFrame(
   };
 
   // Construct SPDY SYN_REPLY control frame.
-  return ConstructSpdyPacket(
+  return ConstructSpdyFrame(
       kSynReplyHeader,
       kDefaultExtraHeaders,
       kDefaultExtraHeaderCount,

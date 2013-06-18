@@ -5,7 +5,7 @@
 #ifndef CC_TEST_FAKE_DELEGATED_RENDERER_LAYER_H_
 #define CC_TEST_FAKE_DELEGATED_RENDERER_LAYER_H_
 
-#include "cc/delegated_renderer_layer.h"
+#include "cc/layers/delegated_renderer_layer.h"
 
 namespace cc {
 
@@ -15,7 +15,7 @@ class FakeDelegatedRendererLayer : public DelegatedRendererLayer {
     return make_scoped_refptr(new FakeDelegatedRendererLayer());
   }
 
-  virtual scoped_ptr<LayerImpl> createLayerImpl(LayerTreeImpl* tree_impl)
+  virtual scoped_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl)
       OVERRIDE;
 
  protected:

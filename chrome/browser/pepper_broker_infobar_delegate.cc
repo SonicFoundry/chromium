@@ -5,9 +5,9 @@
 #include "chrome/browser/pepper_broker_infobar_delegate.h"
 
 #include "base/prefs/pref_service.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
 #include "chrome/browser/content_settings/host_content_settings_map.h"
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/plugins/plugin_finder.h"
 #include "chrome/browser/plugins/plugin_metadata.h"
 #include "chrome/browser/profiles/profile.h"
@@ -30,6 +30,7 @@ const char kPpapiBrokerLearnMoreUrl[] =
 
 #if defined(OS_CHROMEOS)
 const char kNetflixPluginFileName[] = "libnetflixplugin2.so";
+const char kWidevinePluginFileName[] = "libwidevinecdmadapter.so";
 #endif
 
 using content::OpenURLParams;
@@ -54,10 +55,11 @@ void PepperBrokerInfoBarDelegate::Create(
       TabSpecificContentSettings::FromWebContents(web_contents);
 
 #if defined(OS_CHROMEOS)
-  // On ChromeOS, we're ok with granting broker access to Netflix plugin, since
-  // it can only come installed with the OS.
-  if (plugin_path.BaseName().value() ==
-          FILE_PATH_LITERAL(kNetflixPluginFileName)) {
+  // On ChromeOS, we're ok with granting broker access to Netflix and Widevine
+  // plugin, since it can only come installed with the OS.
+  base::FilePath plugin_file_name = plugin_path.BaseName();
+  if (plugin_file_name.value() == FILE_PATH_LITERAL(kNetflixPluginFileName) ||
+      plugin_file_name.value() == FILE_PATH_LITERAL(kWidevinePluginFileName)) {
     tab_content_settings->SetPepperBrokerAllowed(true);
     callback.Run(true);
     return;
@@ -102,6 +104,33 @@ void PepperBrokerInfoBarDelegate::Create(
     default:
       NOTREACHED();
   }
+}
+
+PepperBrokerInfoBarDelegate::PepperBrokerInfoBarDelegate(
+    InfoBarService* infobar_service,
+    const GURL& url,
+    const base::FilePath& plugin_path,
+    const std::string& languages,
+    HostContentSettingsMap* content_settings,
+    TabSpecificContentSettings* tab_content_settings,
+    const base::Callback<void(bool)>& callback)
+    : ConfirmInfoBarDelegate(infobar_service),
+      url_(url),
+      plugin_path_(plugin_path),
+      languages_(languages),
+      content_settings_(content_settings),
+      tab_content_settings_(tab_content_settings),
+      callback_(callback) {
+}
+
+PepperBrokerInfoBarDelegate::~PepperBrokerInfoBarDelegate() {
+  if (!callback_.is_null())
+    callback_.Run(false);
+}
+
+gfx::Image* PepperBrokerInfoBarDelegate::GetIcon() const {
+  return &ResourceBundle::GetSharedInstance().GetNativeImageNamed(
+      IDR_INFOBAR_PLUGIN_INSTALL);
 }
 
 string16 PepperBrokerInfoBarDelegate::GetMessageText() const {
@@ -156,35 +185,8 @@ bool PepperBrokerInfoBarDelegate::LinkClicked(
       (disposition == CURRENT_TAB) ? NEW_FOREGROUND_TAB : disposition,
       content::PAGE_TRANSITION_LINK,
       false);
-  owner()->GetWebContents()->OpenURL(params);
+  web_contents()->OpenURL(params);
   return false;
-}
-
-gfx::Image* PepperBrokerInfoBarDelegate::GetIcon() const {
-  return &ResourceBundle::GetSharedInstance().GetNativeImageNamed(
-      IDR_INFOBAR_PLUGIN_INSTALL);
-}
-
-PepperBrokerInfoBarDelegate::PepperBrokerInfoBarDelegate(
-    InfoBarService* infobar_service,
-    const GURL& url,
-    const base::FilePath& plugin_path,
-    const std::string& languages,
-    HostContentSettingsMap* content_settings,
-    TabSpecificContentSettings* tab_content_settings,
-    const base::Callback<void(bool)>& callback)
-    : ConfirmInfoBarDelegate(infobar_service),
-      url_(url),
-      plugin_path_(plugin_path),
-      languages_(languages),
-      content_settings_(content_settings),
-      tab_content_settings_(tab_content_settings),
-      callback_(callback) {
-}
-
-PepperBrokerInfoBarDelegate::~PepperBrokerInfoBarDelegate() {
-  if (!callback_.is_null())
-    callback_.Run(false);
 }
 
 void PepperBrokerInfoBarDelegate::DispatchCallback(bool result) {

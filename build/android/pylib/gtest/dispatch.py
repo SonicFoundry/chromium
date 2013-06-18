@@ -13,6 +13,7 @@ from pylib import constants
 from pylib import ports
 from pylib.base import shard
 from pylib.utils import emulator
+from pylib.utils import report_results
 from pylib.utils import xvfb
 
 import gtest_config
@@ -33,28 +34,30 @@ def _FullyQualifiedTestSuites(exe, option_test_suite, build_type):
           '/tmp/chrome/src/out/Debug/content_unittests_apk/'
           'content_unittests-debug.apk')
   """
+  def GetQualifiedSuite(suite):
+    if suite.is_suite_exe:
+      relpath = suite.name
+    else:
+      # out/(Debug|Release)/$SUITE_apk/$SUITE-debug.apk
+      relpath = os.path.join(suite.name + '_apk', suite.name + '-debug.apk')
+    return suite.name, os.path.join(test_suite_dir, relpath)
+
   test_suite_dir = os.path.join(cmd_helper.OutDirectory.get(), build_type)
   if option_test_suite:
-    all_test_suites = [option_test_suite]
+    all_test_suites = [gtest_config.Suite(exe, option_test_suite)]
   else:
     all_test_suites = gtest_config.STABLE_TEST_SUITES
 
-  if exe:
-    qualified_test_suites = [os.path.join(test_suite_dir, t)
-                             for t in all_test_suites]
-  else:
-    # out/(Debug|Release)/$SUITE_apk/$SUITE-debug.apk
-    qualified_test_suites = [os.path.join(test_suite_dir,
-                                          t + '_apk',
-                                          t + '-debug.apk')
-                             for t in all_test_suites]
-  for t, q in zip(all_test_suites, qualified_test_suites):
+  # List of tuples (suite_name, suite_path)
+  qualified_test_suites = map(GetQualifiedSuite, all_test_suites)
+
+  for t, q in qualified_test_suites:
     if not os.path.exists(q):
       raise Exception('Test suite %s not found in %s.\n'
                       'Supported test suites:\n %s\n'
                       'Ensure it has been built.\n' %
                       (t, q, gtest_config.STABLE_TEST_SUITES))
-  return zip(all_test_suites, qualified_test_suites)
+  return qualified_test_suites
 
 
 def GetTestsFromDevice(runner):
@@ -91,7 +94,7 @@ def GetAllEnabledTests(runner_factory, devices):
   for device in devices:
     try:
       logging.info('Obtaining tests from %s', device)
-      runner = runner_factory(device)
+      runner = runner_factory(device, 0)
       return GetTestsFromDevice(runner)
     except Exception as e:
       logging.warning('Failed obtaining tests from %s with exception: %s',
@@ -119,6 +122,7 @@ def _RunATestSuite(options, suite_name):
 
   if options.use_emulator:
     buildbot_emulators = emulator.LaunchEmulators(options.emulator_count,
+                                                  options.abi,
                                                   wait_for_boot=True)
     attached_devices = [e.device for e in buildbot_emulators]
   elif options.test_device:
@@ -136,7 +140,7 @@ def _RunATestSuite(options, suite_name):
     raise Exception('Failed to reset test server port.')
 
   # Constructs a new TestRunner with the current options.
-  def RunnerFactory(device):
+  def RunnerFactory(device, shard_index):
     return test_runner.TestRunner(
         device,
         options.test_suite,
@@ -161,19 +165,21 @@ def _RunATestSuite(options, suite_name):
 
   # Run tests.
   test_results = shard.ShardAndRunTests(RunnerFactory, attached_devices, tests,
-                                        options.build_type)
+                                        options.build_type, test_timeout=None,
+                                        num_retries=options.num_retries)
 
-  test_results.LogFull(
+  report_results.LogFull(
+      results=test_results,
       test_type='Unit test',
       test_package=suite_name,
       build_type=options.build_type,
       flakiness_server=options.flakiness_dashboard_server)
-  test_results.PrintAnnotation()
+  report_results.PrintAnnotation(test_results)
 
   for buildbot_emulator in buildbot_emulators:
     buildbot_emulator.Shutdown()
 
-  return len(test_results.GetAllBroken())
+  return len(test_results.GetNotPass())
 
 
 def _ListTestSuites():

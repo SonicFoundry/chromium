@@ -20,12 +20,19 @@
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop.h"
+#include "base/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/signin_manager.h"
+#include "chrome/browser/signin/signin_manager_base.h"
+#include "chrome/browser/signin/token_service.h"
+#include "chrome/browser/signin/token_service_factory.h"
 #include "chrome/browser/sync/about_sync_util.h"
 #include "chrome/browser/sync/glue/data_type_controller.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
+#include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/pref_names.h"
+#include "content/public/browser/notification_service.h"
+#include "google_apis/gaia/gaia_constants.h"
 #include "sync/internal_api/public/base/progress_marker_map.h"
 #include "sync/internal_api/public/sessions/sync_session_snapshot.h"
 #include "sync/internal_api/public/util/sync_string_conversions.h"
@@ -134,7 +141,7 @@ ProfileSyncServiceHarness* ProfileSyncServiceHarness::CreateAndAttach(
     NOTREACHED() << "Profile has never signed into sync.";
     return NULL;
   }
-  return new ProfileSyncServiceHarness(profile, "", "");
+  return new ProfileSyncServiceHarness(profile, std::string(), std::string());
 }
 
 void ProfileSyncServiceHarness::SetCredentials(const std::string& username,
@@ -162,15 +169,33 @@ bool ProfileSyncServiceHarness::SetupSync() {
 
 bool ProfileSyncServiceHarness::SetupSync(
     syncer::ModelTypeSet synced_datatypes) {
-  if (!InitializeSync())
+  // Initialize the sync client's profile sync service object.
+  service_ =
+      ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile_);
+  if (service_ == NULL) {
+    LOG(ERROR) << "SetupSync(): service_ is null.";
     return false;
+  }
+
+  // Subscribe sync client to notifications from the profile sync service.
+  if (!service_->HasObserver(this))
+    service_->AddObserver(this);
 
   // Tell the sync service that setup is in progress so we don't start syncing
   // until we've finished configuration.
   service_->SetSetupInProgress(true);
 
   // Authenticate sync client using GAIA credentials.
-  service_->signin()->StartSignIn(username_, password_, "", "");
+  service_->signin()->SetAuthenticatedUsername(username_);
+  profile_->GetPrefs()->SetString(prefs::kGoogleServicesUsername,
+                                  username_);
+  GoogleServiceSigninSuccessDetails details(username_, password_);
+  content::NotificationService::current()->Notify(
+      chrome::NOTIFICATION_GOOGLE_SIGNIN_SUCCESSFUL,
+      content::Source<Profile>(profile_),
+      content::Details<const GoogleServiceSigninSuccessDetails>(&details));
+  TokenServiceFactory::GetForProfile(profile_)->IssueAuthTokenForTest(
+      GaiaConstants::kSyncService, "sync_token");
 
   // Wait for the OnBackendInitialized() callback.
   if (!AwaitBackendInitialized()) {
@@ -192,8 +217,6 @@ bool ProfileSyncServiceHarness::SetupSync(
     LOG(ERROR) << "Credentials were rejected. Sync cannot proceed.";
     return false;
   }
-
-  DVLOG(2) << "Done waiting for sync backend";
 
   // Choose the datatypes to be synced. If all datatypes are to be synced,
   // set sync_everything to true; otherwise, set it to false.
@@ -223,10 +246,8 @@ bool ProfileSyncServiceHarness::SetupSync(
   }
 
   // Wait for initial sync cycle to be completed.
-  DCHECK(wait_state_ == WAITING_FOR_INITIAL_SYNC ||
-         wait_state_ == FULLY_SYNCED);
-  if (wait_state_ != FULLY_SYNCED &&
-      !AwaitStatusChangeWithTimeout(kLiveSyncOperationTimeoutMs,
+  DCHECK_EQ(wait_state_, WAITING_FOR_INITIAL_SYNC);
+  if (!AwaitStatusChangeWithTimeout(kLiveSyncOperationTimeoutMs,
       "Waiting for initial sync cycle to complete.")) {
     LOG(ERROR) << "Initial sync cycle did not complete after "
                << kLiveSyncOperationTimeoutMs / 1000
@@ -253,33 +274,14 @@ bool ProfileSyncServiceHarness::SetupSync(
   return true;
 }
 
-bool ProfileSyncServiceHarness::InitializeSync() {
-  // Initialize the sync client's profile sync service object.
-  service_ =
-      ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile_);
-  if (service_ == NULL) {
-    LOG(ERROR) << "InitializeSync(): service_ is null.";
-    return false;
-  }
-
-  // Subscribe sync client to notifications from the profile sync service.
-  if (!service_->HasObserver(this))
-    service_->AddObserver(this);
-
-  return true;
-}
-
 bool ProfileSyncServiceHarness::TryListeningToMigrationEvents() {
   browser_sync::BackendMigrator* migrator =
       service_->GetBackendMigratorForTest();
-
-  if (!migrator)
-    return false;
-
-  if (!migrator->HasMigrationObserver(this)) {
+  if (migrator && !migrator->HasMigrationObserver(this)) {
     migrator->AddMigrationObserver(this);
+    return true;
   }
-  return true;
+  return false;
 }
 
 void ProfileSyncServiceHarness::SignalStateCompleteWithNextState(
@@ -298,6 +300,12 @@ bool ProfileSyncServiceHarness::RunStateChangeMachine() {
   switch (wait_state_) {
     case WAITING_FOR_ON_BACKEND_INITIALIZED: {
       DVLOG(1) << GetClientInfoString("WAITING_FOR_ON_BACKEND_INITIALIZED");
+      if (service()->GetAuthError().state() ==
+          GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS) {
+        // Our credentials were rejected. Do not wait any more.
+        SignalStateCompleteWithNextState(CREDENTIALS_REJECTED);
+        break;
+      }
       if (service()->sync_initialized()) {
         // The sync backend is initialized.
         SignalStateCompleteWithNextState(WAITING_FOR_INITIAL_SYNC);
@@ -1022,7 +1030,7 @@ std::string ProfileSyncServiceHarness::GetSerializedProgressMarker(
 
   syncer::ProgressMarkerMap::const_iterator it =
       markers_map.find(model_type);
-  return (it != markers_map.end()) ? it->second : "";
+  return (it != markers_map.end()) ? it->second : std::string();
 }
 
 std::string ProfileSyncServiceHarness::GetClientInfoString(

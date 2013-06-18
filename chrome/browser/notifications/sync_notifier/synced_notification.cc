@@ -4,302 +4,494 @@
 
 #include "chrome/browser/notifications/sync_notifier/synced_notification.h"
 
+#include "base/basictypes.h"
+#include "base/utf_string_conversions.h"
+#include "base/values.h"
+#include "chrome/browser/browser_process.h"
+#include "chrome/browser/notifications/notification.h"
+#include "chrome/browser/notifications/notification_ui_manager.h"
+#include "chrome/browser/notifications/sync_notifier/chrome_notifier_delegate.h"
 #include "sync/protocol/sync.pb.h"
 #include "sync/protocol/synced_notification_specifics.pb.h"
+#if defined(ENABLE_MESSAGE_CENTER)
+#include "ui/message_center/message_center_util.h"
+#include "ui/message_center/notification_types.h"
+#endif  // ENABLE_MESSAGE_CENTER
 
 namespace {
 const char kExtensionScheme[] = "chrome-extension://";
+
+bool UseRichNotifications() {
+#if defined(ENABLE_MESSAGE_CENTER)
+  return message_center::IsRichNotificationEnabled();
+#else  // ENABLE_MESSAGE_CENTER
+  return false;
+#endif  // ENABLE_MESSAGE_CENTER
+}
+
 }  // namespace
 
 namespace notifier {
 
-// An important side effect of the constructor is that it keeps the
-// SyncNotificationSpecifics alive by putting it into the contained sync entity.
-// At construction time, copy the data we might need from the sync_data
-// protobuf object.
-SyncedNotification::SyncedNotification(const syncer::SyncData& sync_data)
-    : sync_data_(sync_data),
-      has_local_changes_(false),
-      title_(ExtractTitle(sync_data)),
-      app_id_(ExtractAppId(sync_data)),
-      coalescing_key_(ExtractCoalescingKey(sync_data)),
-      first_external_id_(ExtractFirstExternalId(sync_data)),
-      notification_id_(ExtractNotificationId(sync_data)),
-      body_(ExtractBody(sync_data)),
-      origin_url_(ExtractOriginUrl(sync_data)),
-      icon_url_(ExtractIconUrl(sync_data)),
-      image_url_(ExtractImageUrl(sync_data)) {
+COMPILE_ASSERT(static_cast<sync_pb::CoalescedSyncedNotification_ReadState>(
+                   SyncedNotification::kUnread) ==
+               sync_pb::CoalescedSyncedNotification_ReadState_UNREAD,
+               local_enum_must_match_protobuf_enum);
+COMPILE_ASSERT(static_cast<sync_pb::CoalescedSyncedNotification_ReadState>(
+                   SyncedNotification::kRead) ==
+               sync_pb::CoalescedSyncedNotification_ReadState_READ,
+               local_enum_must_match_protobuf_enum);
+COMPILE_ASSERT(static_cast<sync_pb::CoalescedSyncedNotification_ReadState>(
+                   SyncedNotification::kDismissed) ==
+               sync_pb::CoalescedSyncedNotification_ReadState_DISMISSED,
+               local_enum_must_match_protobuf_enum);
+
+SyncedNotification::SyncedNotification(const syncer::SyncData& sync_data) {
+  Update(sync_data);
 }
 
 SyncedNotification::~SyncedNotification() {}
 
-const std::string& SyncedNotification::title() const {
-  return title_;
+void SyncedNotification::Update(const syncer::SyncData& sync_data) {
+  // TODO(petewil): Let's add checking that the notification looks valid.
+  specifics_.CopyFrom(sync_data.GetSpecifics().synced_notification());
 }
 
-const std::string& SyncedNotification::app_id() const {
-  return app_id_;
+sync_pb::EntitySpecifics SyncedNotification::GetEntitySpecifics() const {
+  sync_pb::EntitySpecifics entity_specifics;
+  entity_specifics.mutable_synced_notification()->CopyFrom(specifics_);
+  return entity_specifics;
 }
 
-const std::string& SyncedNotification::coalescing_key() const {
-  return coalescing_key_;
-}
+void SyncedNotification::Show(NotificationUIManager* notification_manager,
+                              ChromeNotifierService* notifier_service,
+                              Profile* profile) {
+  // Set up the fields we need to send and create a Notification object.
+  GURL image_url = GetImageUrl();
+  string16 text = UTF8ToUTF16(GetText());
+  string16 heading = UTF8ToUTF16(GetHeading());
+  // TODO(petewil): Eventually put the display name of the sending service here.
+  string16 display_source = UTF8ToUTF16(GetOriginUrl().spec());
+  string16 replace_key = UTF8ToUTF16(GetKey());
 
-const GURL& SyncedNotification::origin_url() const {
-  return origin_url_;
-}
+  // The delegate will eventually catch calls that the notification
+  // was read or deleted, and send the changes back to the server.
+  scoped_refptr<NotificationDelegate> delegate =
+      new ChromeNotifierDelegate(GetKey(), notifier_service);
 
-const GURL& SyncedNotification::icon_url() const {
-  return icon_url_;
-}
+  // TODO(petewil): For now, just punt on dismissed notifications until
+  // I change the interface to let NotificationUIManager know the right way.
+  if (SyncedNotification::kRead == GetReadState() ||
+      SyncedNotification::kDismissed == GetReadState() ) {
+    DVLOG(2) << "Dismissed notification arrived"
+             << GetHeading() << " " << GetText();
+    return;
+  }
 
-const GURL& SyncedNotification::image_url() const {
-  return image_url_;
-}
+  // Some inputs and fields are only used if there is a notification center.
+  if (UseRichNotifications()) {
 
-const std::string& SyncedNotification::first_external_id() const {
-  return first_external_id_;
-}
+#if defined(ENABLE_MESSAGE_CENTER)
+    double creation_time = static_cast<double>(GetCreationTime());
+    int priority = GetPriority();
+    int notification_count = GetNotificationCount();
+    int button_count = GetButtonCount();
+    // TODO(petewil): Refactor this for an arbitrary number of buttons.
+    std::string button_one_title = GetButtonOneTitle();
+    std::string button_one_icon_url = GetButtonOneIconUrl();
+    std::string button_two_title = GetButtonTwoTitle();
+    std::string button_two_icon_url = GetButtonTwoIconUrl();
 
-const std::string& SyncedNotification::notification_id() const {
-  return notification_id_;
-}
+    // Deduce which notification template to use from the data.
+    message_center::NotificationType notification_type =
+        message_center::NOTIFICATION_TYPE_SIMPLE;
+    if (!image_url.is_empty()) {
+      notification_type = message_center::NOTIFICATION_TYPE_IMAGE;
+    } else if (notification_count > 1) {
+      notification_type = message_center::NOTIFICATION_TYPE_MULTIPLE;
+    } else if (button_count > 0) {
+      notification_type = message_center::NOTIFICATION_TYPE_BASE_FORMAT;
+    }
 
-const std::string& SyncedNotification::body() const {
-  return body_;
+    // Fill the optional fields with the information we need to make a
+    // notification.
+    DictionaryValue optional_fields;
+    optional_fields.SetDouble(message_center::kTimestampKey, creation_time);
+    if (priority != SyncedNotification::kUndefinedPriority)
+      optional_fields.SetInteger(message_center::kPriorityKey, priority);
+    if (!button_one_title.empty())
+      optional_fields.SetString(message_center::kButtonOneTitleKey,
+                                button_one_title);
+    if (!button_one_icon_url.empty())
+      optional_fields.SetString(message_center::kButtonOneIconUrlKey,
+                                button_one_icon_url);
+    if (!button_two_title.empty())
+      optional_fields.SetString(message_center::kButtonTwoTitleKey,
+                                button_two_title);
+    if (!button_two_icon_url.empty())
+      optional_fields.SetString(message_center::kButtonTwoIconUrlKey,
+                                button_two_icon_url);
+
+    // Fill the individual notification fields for a multiple notification.
+    if (notification_count > 1) {
+      base::ListValue* items = new base::ListValue();
+
+      for (int ii = 0; ii < notification_count; ++ii) {
+        DictionaryValue* item = new DictionaryValue();
+        item->SetString(message_center::kItemTitleKey,
+                        UTF8ToUTF16(GetContainedNotificationTitle(
+                            ii)));
+        item->SetString(message_center::kItemMessageKey,
+                        UTF8ToUTF16(GetContainedNotificationMessage(
+                            ii)));
+        items->Append(item);
+      }
+
+      optional_fields.Set(message_center::kItemsKey, items);
+    }
+
+    Notification ui_notification(notification_type,
+                                 GetOriginUrl(),
+                                 GetAppIconUrl(),
+                                 heading,
+                                 text,
+                                 WebKit::WebTextDirectionDefault,
+                                 display_source,
+                                 replace_key,
+                                 &optional_fields,
+                                 delegate);
+
+    notification_manager->Add(ui_notification, profile);
+#endif  // ENABLE_MESSAGE_CENTER
+
+  } else {
+
+    Notification ui_notification(GetOriginUrl(),
+                                 GetAppIconUrl(),
+                                 heading,
+                                 text,
+                                 WebKit::WebTextDirectionDefault,
+                                 display_source,
+                                 replace_key,
+                                 delegate);
+
+    notification_manager->Add(ui_notification, profile);
+
+  }
+
+  DVLOG(1) << "Showing Synced Notification! " << heading << " " << text
+           << " " << GetAppIconUrl() << " " << replace_key << " "
+           << GetReadState();
+
+  return;
 }
 
 // TODO(petewil): Consider the timestamp too once it gets added to the protobuf.
-bool SyncedNotification::Equals(const SyncedNotification& other) const {
-  // Two notifications are equal if the <appId/coalescingKey> pair matches.
-  return (notification_id() == other.notification_id());
+// TODO: add more fields in here
+bool SyncedNotification::EqualsIgnoringReadState(
+    const SyncedNotification& other) const {
+  return (GetTitle() == other.GetTitle() &&
+          GetAppId() == other.GetAppId() &&
+          GetKey() == other.GetKey() &&
+          GetText() == other.GetText() &&
+          GetOriginUrl() == other.GetOriginUrl() &&
+          GetAppIconUrl() == other.GetAppIconUrl() &&
+          GetImageUrl() == other.GetImageUrl() );
 }
 
 // Set the read state on the notification, returns true for success.
-bool SyncedNotification::SetReadState(
-    const sync_pb::CoalescedSyncedNotification_ReadState& readState) {
+void SyncedNotification::SetReadState(const ReadState& read_state) {
 
-  // TODO(petewil): implement
-  return true;
+  // convert the read state to the protobuf type for read state
+  if (kDismissed == read_state)
+    specifics_.mutable_coalesced_notification()->set_read_state(
+        sync_pb::CoalescedSyncedNotification_ReadState_DISMISSED);
+  else if (kUnread == read_state)
+    specifics_.mutable_coalesced_notification()->set_read_state(
+        sync_pb::CoalescedSyncedNotification_ReadState_UNREAD);
+  else if (kRead == read_state)
+    specifics_.mutable_coalesced_notification()->set_read_state(
+        sync_pb::CoalescedSyncedNotification_ReadState_READ);
+  else
+    NOTREACHED();
 }
 
-// Mark this notification as having been read locally.
-void SyncedNotification::NotificationHasBeenRead() {
-  // We set the is_local_ flag to true since we modified it locally
-  // then we create a sync change object to pass back up.
-  has_local_changes_ = true;
-
-  bool success = SetReadState(
-      sync_pb::CoalescedSyncedNotification_ReadState_READ);
-  DCHECK(success);
+void SyncedNotification::NotificationHasBeenDismissed() {
+  SetReadState(kDismissed);
 }
 
-// mark this notification as having been dismissed locally
-void SyncedNotification::NotificationHasBeenDeleted() {
-  // We set the is_deleted_ flag to true since we modified it locally
-  // then we create a sync change object to pass back up.
-  has_local_changes_ = true;
+std::string SyncedNotification::GetTitle() const {
+  if (!specifics_.coalesced_notification().render_info().expanded_info().
+      simple_expanded_layout().has_title())
+    return std::string();
 
-  bool success = SetReadState(
-      sync_pb::CoalescedSyncedNotification_ReadState_DISMISSED);
-  DCHECK(success);
+  return specifics_.coalesced_notification().render_info().expanded_info().
+      simple_expanded_layout().title();
 }
 
-// TODO(petewil): Consider whether the repeated code below can be re-used.
-// A first attempt to do so failed.
+std::string SyncedNotification::GetHeading() const {
+  if (!specifics_.coalesced_notification().render_info().collapsed_info().
+      simple_collapsed_layout().has_heading())
+    return std::string();
 
-const sync_pb::SyncedNotificationSpecifics*
-SyncedNotification::GetSyncedNotificationSpecifics() {
-  return &(sync_data_.GetSpecifics().synced_notification());
+  return specifics_.coalesced_notification().render_info().collapsed_info().
+      simple_collapsed_layout().heading();
 }
 
-std::string SyncedNotification::ExtractFirstExternalId(
-    const syncer::SyncData& sync_data) const {
-  if (!sync_data.GetSpecifics().synced_notification().
-      has_coalesced_notification())
-    return "";
-  if (sync_data.GetSpecifics().synced_notification().
-      coalesced_notification().notification_size() < 1)
-    return "";
-  if (!sync_data.GetSpecifics().synced_notification().
-      coalesced_notification().notification(0).has_external_id())
-    return "";
+std::string SyncedNotification::GetDescription() const {
+  if (!specifics_.coalesced_notification().render_info().collapsed_info().
+      simple_collapsed_layout().has_description())
+    return std::string();
 
-  return sync_data.GetSpecifics().synced_notification().
-      coalesced_notification().notification(0).external_id();
+  return specifics_.coalesced_notification().render_info().collapsed_info().
+      simple_collapsed_layout().description();
 }
 
-std::string SyncedNotification::ExtractTitle(
-    const syncer::SyncData& sync_data) const {
-  if (!sync_data.GetSpecifics().synced_notification().
-      coalesced_notification().render_info().layout().has_layout_type())
-    return "";
-
-  const sync_pb::SyncedNotificationRenderInfo_Layout_LayoutType layout_type =
-      sync_data.GetSpecifics().synced_notification().
-      coalesced_notification().render_info().layout().layout_type();
-
-  // Depending on the layout type, get the proper title.
-  switch (layout_type) {
-    case sync_pb::
-        SyncedNotificationRenderInfo_Layout_LayoutType_TITLE_AND_SUBTEXT: {
-      // If we have title and subtext, get that title.
-      if (!sync_data.GetSpecifics().synced_notification().
-          coalesced_notification().render_info().layout().
-          title_and_subtext_data().has_title())
-        return "";
-
-      return sync_data.GetSpecifics().synced_notification().
-          coalesced_notification().render_info().layout().
-          title_and_subtext_data().title();
-    }
-
-    case sync_pb::
-        SyncedNotificationRenderInfo_Layout_LayoutType_TITLE_AND_IMAGE: {
-      // If we have title and image, get that title.
-      if (!sync_data.GetSpecifics().synced_notification().
-          coalesced_notification().render_info().layout().
-          title_and_image_data().has_title())
-        return "";
-
-      return sync_data.GetSpecifics().synced_notification().
-          coalesced_notification().render_info().layout().
-          title_and_image_data().title();
-    }
-    default: {
-      // This is an error case, we should never get here unless the protobuf
-      // is bad, or a new type is introduced and this code does not get updated.
-      NOTREACHED();
-      return "";
-    }
-  }
+std::string SyncedNotification::GetAppId() const {
+  if (!specifics_.coalesced_notification().has_app_id())
+    return std::string();
+  return specifics_.coalesced_notification().app_id();
 }
 
-std::string SyncedNotification::ExtractAppId(
-    const syncer::SyncData& sync_data) const {
-  if (!sync_data.GetSpecifics().synced_notification().
-      coalesced_notification().id().
-      has_app_id())
-    return "";
-  return sync_data.GetSpecifics().synced_notification().
-      coalesced_notification().id().app_id();
+std::string SyncedNotification::GetKey() const {
+  if (!specifics_.coalesced_notification().has_key())
+    return std::string();
+  return specifics_.coalesced_notification().key();
 }
 
-std::string SyncedNotification::ExtractCoalescingKey(
-    const syncer::SyncData& sync_data) const {
-  if (!sync_data.GetSpecifics().synced_notification().
-      coalesced_notification().id().
-      has_coalescing_key())
-    return "";
-  return sync_data.GetSpecifics().synced_notification().
-      coalesced_notification().id().coalescing_key();
-}
-
-GURL SyncedNotification::ExtractOriginUrl(
-    const syncer::SyncData& sync_data) const {
+GURL SyncedNotification::GetOriginUrl() const {
   std::string origin_url(kExtensionScheme);
-  origin_url += app_id_;
+  origin_url += GetAppId();
   return GURL(origin_url);
 }
 
-GURL SyncedNotification::ExtractIconUrl(const syncer::SyncData& sync_data)
-    const {
-  if (!sync_data.GetSpecifics().synced_notification().
-      coalesced_notification().render_info().layout().has_layout_type())
+// TODO(petewil): This only returns the first icon. We should make all the
+// icons available.
+GURL SyncedNotification::GetAppIconUrl() const {
+  if (specifics_.coalesced_notification().render_info().expanded_info().
+      collapsed_info_size() == 0)
     return GURL();
 
-  const sync_pb::SyncedNotificationRenderInfo_Layout_LayoutType layout_type =
-      sync_data.GetSpecifics().synced_notification().
-      coalesced_notification().render_info().layout().layout_type();
-
-  // Depending on the layout type, get the icon.
-  if (sync_pb::SyncedNotificationRenderInfo_Layout_LayoutType_TITLE_AND_SUBTEXT
-      == layout_type) {
-    // If we have title and subtext, get that icon.
-    if (!sync_data.GetSpecifics().synced_notification().
-        coalesced_notification().render_info().layout().
-        title_and_subtext_data().icon().has_url())
-      return GURL();
-
-    return GURL(sync_data.GetSpecifics().synced_notification().
-        coalesced_notification().render_info().layout().
-                title_and_subtext_data().icon().url());
-  }
-  return GURL();
-}
-
-GURL SyncedNotification::ExtractImageUrl(const syncer::SyncData& sync_data)
-    const {
-  if (!sync_data.GetSpecifics().synced_notification().
-      coalesced_notification().render_info().layout().has_layout_type())
+  if (!specifics_.coalesced_notification().render_info().expanded_info().
+      collapsed_info(0).simple_collapsed_layout().has_app_icon())
     return GURL();
 
-  const sync_pb::SyncedNotificationRenderInfo_Layout_LayoutType layout_type =
-      sync_data.GetSpecifics().synced_notification().
-      coalesced_notification().render_info().layout().layout_type();
-
-  // Depending on the layout type, get the image.
-  if (sync_pb::SyncedNotificationRenderInfo_Layout_LayoutType_TITLE_AND_IMAGE
-      == layout_type) {
-    // If we have title and subtext, get that image.
-    if (!sync_data.GetSpecifics().synced_notification().
-        coalesced_notification().render_info().layout().
-        title_and_image_data().image().has_url())
-      return GURL();
-
-    return GURL(sync_data.GetSpecifics().synced_notification().
-        coalesced_notification().render_info().layout().
-                title_and_image_data().image().url());
-  }
-  return GURL();
+  return GURL(specifics_.coalesced_notification().render_info().
+              expanded_info().collapsed_info(0).simple_collapsed_layout().
+              app_icon().url());
 }
 
-std::string SyncedNotification::ExtractBody(
-    const syncer::SyncData& sync_data) const {
-  // If we have subtext data, concatenate the text lines and return it.
-  if (!sync_data.GetSpecifics().synced_notification().
-      coalesced_notification().render_info().layout().has_layout_type())
-    return "";
+// TODO(petewil): This currenly only handles the first image from the first
+// collapsed item, someday return all images.
+GURL SyncedNotification::GetImageUrl() const {
+  if (specifics_.coalesced_notification().render_info().expanded_info().
+      simple_expanded_layout().media_size() == 0)
+    return GURL();
 
-  const sync_pb::SyncedNotificationRenderInfo_Layout_LayoutType layout_type =
-      sync_data.GetSpecifics().synced_notification().
-      coalesced_notification().render_info().layout().layout_type();
+  if (!specifics_.coalesced_notification().render_info().expanded_info().
+      simple_expanded_layout().media(0).image().has_url())
+    return GURL();
 
-  // Check if this layout type includes body text.
-  if (sync_pb::SyncedNotificationRenderInfo_Layout_LayoutType_TITLE_AND_SUBTEXT
-      == layout_type) {
-    // If we have title and subtext, get the text.
-    if (!sync_data.GetSpecifics().synced_notification().
-        coalesced_notification().render_info().layout().
-        has_title_and_subtext_data())
-      return "";
-    int subtext_lines = sync_data.GetSpecifics().synced_notification().
-        coalesced_notification().render_info().layout().
-        title_and_subtext_data().subtext_size();
-    if (subtext_lines < 1)
-      return "";
-
-    std::string subtext;
-    for (int ii = 0; ii < subtext_lines; ++ii) {
-      subtext += sync_data.GetSpecifics().synced_notification().
-          coalesced_notification().render_info().layout().
-          title_and_subtext_data().subtext(ii);
-      if (ii < subtext_lines - 1)
-        subtext += '\n';
-    }
-    return subtext;
-  }
-  return "";
+  return GURL(specifics_.coalesced_notification().render_info().
+              expanded_info().simple_expanded_layout().media(0).image().url());
 }
 
-std::string SyncedNotification::ExtractNotificationId(
-    const syncer::SyncData& sync_data) const {
-  // Append the coalescing key to the app id to get the unique id.
-  std::string id = app_id_;
-  id += "/";
-  id += coalescing_key_;
+std::string SyncedNotification::GetText() const {
+  if (!specifics_.coalesced_notification().render_info().expanded_info().
+      simple_expanded_layout().has_text())
+    return std::string();
 
-  return id;
+  return specifics_.coalesced_notification().render_info().expanded_info().
+      simple_expanded_layout().text();
+}
+
+SyncedNotification::ReadState SyncedNotification::GetReadState() const {
+  DCHECK(specifics_.coalesced_notification().has_read_state());
+
+  sync_pb::CoalescedSyncedNotification_ReadState found_read_state =
+      specifics_.coalesced_notification().read_state();
+
+  if (found_read_state ==
+      sync_pb::CoalescedSyncedNotification_ReadState_DISMISSED) {
+    return kDismissed;
+  } else if (found_read_state ==
+             sync_pb::CoalescedSyncedNotification_ReadState_UNREAD) {
+    return kUnread;
+  } else if (found_read_state ==
+             sync_pb::CoalescedSyncedNotification_ReadState_READ) {
+    return kRead;
+  } else {
+    NOTREACHED();
+    return static_cast<SyncedNotification::ReadState>(found_read_state);
+  }
+}
+
+// Time in milliseconds since the unix epoch, or 0 if not available.
+uint64 SyncedNotification::GetCreationTime() const {
+  if (!specifics_.coalesced_notification().has_creation_time_msec())
+    return 0;
+
+  return specifics_.coalesced_notification().creation_time_msec();
+}
+
+int SyncedNotification::GetPriority() const {
+  if (!specifics_.coalesced_notification().has_priority())
+    return kUndefinedPriority;
+  int protobuf_priority = specifics_.coalesced_notification().priority();
+
+#if defined(ENABLE_MESSAGE_CENTER)
+  // Convert the prioroty to the scheme used by the notification center.
+  if (protobuf_priority ==
+      sync_pb::CoalescedSyncedNotification_Priority_LOW) {
+    return message_center::LOW_PRIORITY;
+  } else if (protobuf_priority ==
+             sync_pb::CoalescedSyncedNotification_Priority_STANDARD) {
+    return message_center::DEFAULT_PRIORITY;
+  } else if (protobuf_priority ==
+             sync_pb::CoalescedSyncedNotification_Priority_HIGH) {
+    return message_center::HIGH_PRIORITY;
+  } else {
+    // Complain if this is a new priority we have not seen before.
+    DCHECK(protobuf_priority <
+           sync_pb::CoalescedSyncedNotification_Priority_LOW  ||
+           sync_pb::CoalescedSyncedNotification_Priority_HIGH <
+           protobuf_priority);
+    return kUndefinedPriority;
+  }
+
+#else // ENABLE_MESSAGE_CENTER
+  return protobuf_priority;
+
+#endif // ENABLE_MESSAGE_CENTER
+}
+
+int SyncedNotification::GetNotificationCount() const {
+  return specifics_.coalesced_notification().render_info().
+      expanded_info().collapsed_info_size();
+}
+
+int SyncedNotification::GetButtonCount() const {
+  return specifics_.coalesced_notification().render_info().collapsed_info().
+      target_size();
+}
+
+std::string SyncedNotification::GetDefaultDestinationTitle() const {
+  if (!specifics_.coalesced_notification().render_info().collapsed_info().
+      default_destination().icon().has_alt_text()) {
+    return std::string();
+  }
+  return specifics_.coalesced_notification().render_info().collapsed_info().
+      default_destination().icon().alt_text();
+}
+
+std::string SyncedNotification::GetDefaultDestinationIconUrl() const {
+  if (!specifics_.coalesced_notification().render_info().collapsed_info().
+      default_destination().icon().has_url()) {
+    return std::string();
+  }
+  return specifics_.coalesced_notification().render_info().collapsed_info().
+      default_destination().icon().url();
+}
+
+std::string SyncedNotification::GetDefaultDestinationUrl() const {
+  if (!specifics_.coalesced_notification().render_info().collapsed_info().
+      default_destination().has_url()) {
+    return std::string();
+  }
+  return specifics_.coalesced_notification().render_info().collapsed_info().
+      default_destination().url();
+}
+
+std::string SyncedNotification::GetButtonOneTitle() const {
+  // Must ensure that we have a target before trying to access it.
+  if (GetButtonCount() < 1)
+    return std::string();
+  if (!specifics_.coalesced_notification().render_info().collapsed_info().
+      target(0).action().icon().has_alt_text()) {
+    return std::string();
+  }
+  return specifics_.coalesced_notification().render_info().collapsed_info().
+      target(0).action().icon().alt_text();
+}
+
+std::string SyncedNotification::GetButtonOneIconUrl() const {
+  // Must ensure that we have a target before trying to access it.
+  if (GetButtonCount() < 1)
+    return std::string();
+  if (!specifics_.coalesced_notification().render_info().collapsed_info().
+      target(0).action().icon().has_url()) {
+    return std::string();
+  }
+  return specifics_.coalesced_notification().render_info().collapsed_info().
+      target(0).action().icon().url();
+}
+
+std::string SyncedNotification::GetButtonOneUrl() const {
+  // Must ensure that we have a target before trying to access it.
+  if (GetButtonCount() < 1)
+    return std::string();
+  if (!specifics_.coalesced_notification().render_info().collapsed_info().
+      target(0).action().has_url()) {
+    return std::string();
+  }
+  return specifics_.coalesced_notification().render_info().collapsed_info().
+      target(0).action().url();
+}
+
+std::string SyncedNotification::GetButtonTwoTitle() const {
+  // Must ensure that we have a target before trying to access it.
+  if (GetButtonCount() < 2)
+    return std::string();
+  if (!specifics_.coalesced_notification().render_info().collapsed_info().
+      target(1).action().icon().has_alt_text()) {
+    return std::string();
+  }
+  return specifics_.coalesced_notification().render_info().collapsed_info().
+      target(1).action().icon().alt_text();
+}
+
+std::string SyncedNotification::GetButtonTwoIconUrl() const {
+  // Must ensure that we have a target before trying to access it.
+  if (GetButtonCount() < 2)
+    return std::string();
+  if (!specifics_.coalesced_notification().render_info().collapsed_info().
+      target(1).action().icon().has_url()) {
+    return std::string();
+  }
+  return specifics_.coalesced_notification().render_info().collapsed_info().
+      target(1).action().icon().url();
+}
+
+std::string SyncedNotification::GetButtonTwoUrl() const {
+  // Must ensure that we have a target before trying to access it.
+  if (GetButtonCount() < 2)
+    return std::string();
+  if (!specifics_.coalesced_notification().render_info().collapsed_info().
+      target(1).action().has_url()) {
+    return std::string();
+  }
+  return specifics_.coalesced_notification().render_info().collapsed_info().
+      target(1).action().url();
+}
+
+std::string SyncedNotification::GetContainedNotificationTitle(
+    int index) const {
+  if (specifics_.coalesced_notification().render_info().expanded_info().
+      collapsed_info_size() < index + 1)
+    return std::string();
+
+  return specifics_.coalesced_notification().render_info().expanded_info().
+      collapsed_info(index).simple_collapsed_layout().heading();
+}
+
+std::string SyncedNotification::GetContainedNotificationMessage(
+    int index) const {
+  if (specifics_.coalesced_notification().render_info().expanded_info().
+      collapsed_info_size() < index + 1)
+    return std::string();
+
+  return specifics_.coalesced_notification().render_info().expanded_info().
+      collapsed_info(index).simple_collapsed_layout().description();
 }
 
 }  // namespace notifier

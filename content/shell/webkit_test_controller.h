@@ -12,11 +12,11 @@
 #include "base/files/file_path.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/non_thread_safe.h"
+#include "content/public/browser/gpu_data_manager_observer.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/render_view_host_observer.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "ui/gfx/rect.h"
 #include "webkit/glue/webpreferences.h"
 
 class SkBitmap;
@@ -74,7 +74,8 @@ class WebKitTestResultPrinter {
 
 class WebKitTestController : public base::NonThreadSafe,
                              public WebContentsObserver,
-                             public NotificationObserver {
+                             public NotificationObserver,
+                             public GpuDataManagerObserver {
  public:
   static WebKitTestController* Get();
 
@@ -90,9 +91,10 @@ class WebKitTestController : public base::NonThreadSafe,
   bool ResetAfterLayoutTest();
 
   void SetTempPath(const base::FilePath& temp_path);
-
   void RendererUnresponsive();
-  void OverrideWebkitPrefs(webkit_glue::WebPreferences* prefs);
+  void OverrideWebkitPrefs(WebPreferences* prefs);
+  void OpenURL(const GURL& url);
+  void TestFinishedInSecondaryWindow();
 
   WebKitTestResultPrinter* printer() { return printer_.get(); }
   void set_printer(WebKitTestResultPrinter* printer) {
@@ -112,16 +114,14 @@ class WebKitTestController : public base::NonThreadSafe,
                        const NotificationSource& source,
                        const NotificationDetails& details) OVERRIDE;
 
- private:
-  enum WhetherToQuitMessageLoop {
-    QUIT_MESSAGE_LOOP,
-    DO_NOT_QUIT_MESSAGE_LOOP,
-  };
+  // GpuDataManagerObserver implementation.
+  virtual void OnGpuProcessCrashed(base::TerminationStatus exit_code) OVERRIDE;
 
+ private:
   static WebKitTestController* instance_;
 
   void TimeoutHandler();
-  void DiscardMainWindow(WhetherToQuitMessageLoop quit_message_loop);
+  void DiscardMainWindow();
   void SendTestConfiguration();
 
   // Message handlers.
@@ -129,16 +129,16 @@ class WebKitTestController : public base::NonThreadSafe,
   void OnImageDump(const std::string& actual_pixel_hash, const SkBitmap& image);
   void OnTextDump(const std::string& dump);
   void OnPrintMessage(const std::string& message);
-  void OnOverridePreferences(const webkit_glue::WebPreferences& prefs);
+  void OnOverridePreferences(const WebPreferences& prefs);
   void OnTestFinished(bool did_timeout);
   void OnShowDevTools();
   void OnCloseDevTools();
   void OnGoToOffset(int offset);
   void OnReload();
   void OnLoadURLForFrame(const GURL& url, const std::string& frame_name);
-  void OnSetClientWindowRect(const gfx::Rect& rect);
   void OnCaptureSessionHistory();
   void OnCloseRemainingWindows();
+  void OnResetDone();
 
   scoped_ptr<WebKitTestResultPrinter> printer_;
 
@@ -147,16 +147,29 @@ class WebKitTestController : public base::NonThreadSafe,
 
   Shell* main_window_;
 
+  // The PID of the render process of the render view host of main_window_.
   int current_pid_;
 
+  // True if we should set the test configuration to the next RenderViewHost
+  // created.
+  bool send_configuration_to_next_host_;
+
+  // True if we are currently running a layout test, and false during the setup
+  // phase between two layout tests.
+  bool is_running_test_;
+
+  // True if the currently running test is a compositing test.
   bool is_compositing_test_;
 
+  // Per test config.
   bool enable_pixel_dumping_;
   std::string expected_pixel_hash_;
   GURL test_url_;
 
-  webkit_glue::WebPreferences prefs_;
+  // True if the WebPreferences of newly created RenderViewHost should be
+  // overridden with prefs_.
   bool should_override_prefs_;
+  WebPreferences prefs_;
 
   base::CancelableClosure watchdog_;
 

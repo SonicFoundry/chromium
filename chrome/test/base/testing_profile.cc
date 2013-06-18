@@ -35,9 +35,12 @@
 #include "chrome/browser/history/shortcuts_backend.h"
 #include "chrome/browser/history/shortcuts_backend_factory.h"
 #include "chrome/browser/history/top_sites.h"
+#include "chrome/browser/history/web_history_service_factory.h"
 #include "chrome/browser/net/proxy_service_factory.h"
 #include "chrome/browser/notifications/desktop_notification_service.h"
 #include "chrome/browser/notifications/desktop_notification_service_factory.h"
+#include "chrome/browser/policy/profile_policy_connector.h"
+#include "chrome/browser/policy/profile_policy_connector_factory.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/prefs/pref_service_syncable.h"
 #include "chrome/browser/prerender/prerender_manager.h"
@@ -55,6 +58,7 @@
 #include "chrome/test/base/history_index_restore_observer.h"
 #include "chrome/test/base/testing_pref_service_syncable.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/user_prefs/user_prefs.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_process_host.h"
@@ -69,6 +73,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 
 #if defined(ENABLE_CONFIGURATION_POLICY)
+#include "chrome/browser/policy/configuration_policy_provider.h"
 #include "chrome/browser/policy/policy_service_impl.h"
 #else
 #include "chrome/browser/policy/policy_service_stub.h"
@@ -140,9 +145,10 @@ class TestExtensionURLRequestContextGetter
   scoped_ptr<net::URLRequestContext> context_;
 };
 
-ProfileKeyedService* CreateTestDesktopNotificationService(Profile* profile) {
+ProfileKeyedService* CreateTestDesktopNotificationService(
+    content::BrowserContext* profile) {
 #if defined(ENABLE_NOTIFICATIONS)
-  return new DesktopNotificationService(profile, NULL);
+  return new DesktopNotificationService(static_cast<Profile*>(profile), NULL);
 #else
   return NULL;
 #endif
@@ -271,8 +277,18 @@ void TestingProfile::CreateTempProfileDir() {
 }
 
 void TestingProfile::Init() {
+  if (prefs_.get())
+    components::UserPrefs::Set(this, prefs_.get());
+  else
+    CreateTestingPrefService();
+
   if (!file_util::PathExists(profile_path_))
     file_util::CreateDirectory(profile_path_);
+
+  // TODO(joaodasilva): remove this once this PKS isn't created in ProfileImpl
+  // anymore, after converting the PrefService to a PKS. Until then it must
+  // be associated with a TestingProfile too.
+  CreateProfilePolicyConnector();
 
   extensions::ExtensionSystemFactory::GetInstance()->SetTestingFactory(
       this, extensions::TestExtensionSystem::Build);
@@ -311,9 +327,11 @@ TestingProfile::~TestingProfile() {
     pref_proxy_config_tracker_->DetachFromPrefService();
 }
 
-static ProfileKeyedService* BuildFaviconService(Profile* profile) {
+static ProfileKeyedService* BuildFaviconService(
+    content::BrowserContext* profile) {
   return new FaviconService(
-      HistoryServiceFactory::GetForProfileWithoutCreating(profile));
+      HistoryServiceFactory::GetForProfileWithoutCreating(
+          static_cast<Profile*>(profile)));
 }
 
 void TestingProfile::CreateFaviconService() {
@@ -322,8 +340,9 @@ void TestingProfile::CreateFaviconService() {
       this, BuildFaviconService);
 }
 
-static ProfileKeyedService* BuildHistoryService(Profile* profile) {
-  return new HistoryService(profile);
+static ProfileKeyedService* BuildHistoryService(
+    content::BrowserContext* profile) {
+  return new HistoryService(static_cast<Profile*>(profile));
 }
 
 void TestingProfile::CreateHistoryService(bool delete_file, bool no_db) {
@@ -342,6 +361,8 @@ void TestingProfile::CreateHistoryService(bool delete_file, bool no_db) {
                              no_db)) {
     HistoryServiceFactory::GetInstance()->SetTestingFactoryAndUse(this, NULL);
   }
+  // Disable WebHistoryService by default, since it makes network requests.
+  WebHistoryServiceFactory::GetInstance()->SetTestingFactory(this, NULL);
 }
 
 void TestingProfile::DestroyHistoryService() {
@@ -369,73 +390,58 @@ void TestingProfile::DestroyHistoryService() {
 
 void TestingProfile::CreateTopSites() {
   DestroyTopSites();
-  top_sites_ = new history::TopSites(this);
-  base::FilePath file_name = GetPath().Append(chrome::kTopSitesFilename);
-  top_sites_->Init(file_name);
+  top_sites_ = history::TopSites::Create(
+      this, GetPath().Append(chrome::kTopSitesFilename));
 }
 
 void TestingProfile::DestroyTopSites() {
   if (top_sites_.get()) {
     top_sites_->Shutdown();
     top_sites_ = NULL;
-    // TopSites::Shutdown schedules some tasks (from TopSitesBackend) that need
-    // to be run to properly shutdown. Run all pending tasks now. This is
+    // TopSitesImpl::Shutdown schedules some tasks (from TopSitesBackend) that
+    // need to be run to properly shutdown. Run all pending tasks now. This is
     // normally handled by browser_process shutdown.
     if (MessageLoop::current())
       MessageLoop::current()->RunUntilIdle();
   }
 }
 
-static ProfileKeyedService* BuildBookmarkModel(Profile* profile) {
+static ProfileKeyedService* BuildBookmarkModel(
+    content::BrowserContext* context) {
+  Profile* profile = static_cast<Profile*>(context);
   BookmarkModel* bookmark_model = new BookmarkModel(profile);
-  bookmark_model->Load();
+  bookmark_model->Load(profile->GetIOTaskRunner());
   return bookmark_model;
 }
 
 
 void TestingProfile::CreateBookmarkModel(bool delete_file) {
-
   if (delete_file) {
-    base::FilePath path = GetPath();
-    path = path.Append(chrome::kBookmarksFileName);
+    base::FilePath path = GetPath().Append(chrome::kBookmarksFileName);
     file_util::Delete(path, false);
   }
   // This will create a bookmark model.
-  BookmarkModel* bookmark_service =
-      static_cast<BookmarkModel*>(
-          BookmarkModelFactory::GetInstance()->SetTestingFactoryAndUse(
-              this, BuildBookmarkModel));
+  BookmarkModel* bookmark_service = static_cast<BookmarkModel*>(
+      BookmarkModelFactory::GetInstance()->SetTestingFactoryAndUse(
+          this, BuildBookmarkModel));
 
   HistoryService* history_service =
       HistoryServiceFactory::GetForProfileWithoutCreating(this);
   if (history_service) {
-    history_service->history_backend_->bookmark_service_ =
-        bookmark_service;
+    history_service->history_backend_->bookmark_service_ = bookmark_service;
     history_service->history_backend_->expirer_.bookmark_service_ =
         bookmark_service;
   }
 }
 
-static scoped_refptr<RefcountedProfileKeyedService> BuildWebDataService(
-    Profile* profile) {
-  WebDataService* web_data_service = new WebDataService();
-  if (web_data_service)
-    web_data_service->Init(profile->GetPath());
-  return web_data_service;
+static ProfileKeyedService* BuildWebDataService(
+    content::BrowserContext* profile) {
+  return new WebDataServiceWrapper(static_cast<Profile*>(profile));
 }
 
 void TestingProfile::CreateWebDataService() {
   WebDataServiceFactory::GetInstance()->SetTestingFactory(
       this, BuildWebDataService);
-}
-
-void TestingProfile::BlockUntilBookmarkModelLoaded() {
-  // Only get the bookmark model if it actually exists since the caller of the
-  // test should explicitly call CreateBookmarkModel to build it.
-  BookmarkModel* bookmark_model =
-      BookmarkModelFactory::GetForProfileIfExists(this);
-  DCHECK(bookmark_model);
-  ui_test_utils::WaitForBookmarkModelToLoad(bookmark_model);
 }
 
 void TestingProfile::BlockUntilHistoryIndexIsRefreshed() {
@@ -538,28 +544,29 @@ net::CookieMonster* TestingProfile::GetCookieMonster() {
       GetCookieMonster();
 }
 
-policy::ManagedModePolicyProvider*
-TestingProfile::GetManagedModePolicyProvider() {
-  return NULL;
-}
-
-policy::PolicyService* TestingProfile::GetPolicyService() {
-  if (!policy_service_.get()) {
-#if defined(ENABLE_CONFIGURATION_POLICY)
-    policy::PolicyServiceImpl::Providers providers;
-    policy_service_.reset(new policy::PolicyServiceImpl(providers));
-#else
-    policy_service_.reset(new policy::PolicyServiceStub());
-#endif
-  }
-  return policy_service_.get();
-}
-
 void TestingProfile::CreateTestingPrefService() {
   DCHECK(!prefs_.get());
   testing_prefs_ = new TestingPrefServiceSyncable();
   prefs_.reset(testing_prefs_);
+  components::UserPrefs::Set(this, prefs_.get());
   chrome::RegisterUserPrefs(testing_prefs_->registry());
+}
+
+void TestingProfile::CreateProfilePolicyConnector() {
+  scoped_ptr<policy::PolicyService> service;
+#if defined(ENABLE_CONFIGURATION_POLICY)
+  std::vector<policy::ConfigurationPolicyProvider*> providers;
+  service.reset(new policy::PolicyServiceImpl(providers));
+#else
+  service.reset(new policy::PolicyServiceStub());
+#endif
+  profile_policy_connector_.reset(
+      new policy::ProfilePolicyConnector(this));
+  profile_policy_connector_->InitForTesting(service.Pass());
+  policy::ProfilePolicyConnectorFactory::GetInstance()->SetServiceForTesting(
+      this, profile_policy_connector_.get());
+  CHECK_EQ(profile_policy_connector_.get(),
+           policy::ProfilePolicyConnectorFactory::GetForProfile(this));
 }
 
 PrefService* TestingProfile::GetPrefs() {
@@ -586,16 +593,7 @@ net::URLRequestContextGetter* TestingProfile::GetRequestContext() {
 }
 
 net::URLRequestContextGetter* TestingProfile::CreateRequestContext(
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        blob_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        file_system_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        developer_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        chrome_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        chrome_devtools_protocol_handler) {
+    content::ProtocolHandlerMap* protocol_handlers) {
   return request_context_.get();
 }
 
@@ -654,16 +652,7 @@ net::URLRequestContextGetter*
 TestingProfile::CreateRequestContextForStoragePartition(
     const base::FilePath& partition_path,
     bool in_memory,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        blob_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        file_system_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        developer_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        chrome_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        chrome_devtools_protocol_handler) {
+    content::ProtocolHandlerMap* protocol_handlers) {
   // We don't test storage partitions here yet, so returning the same dummy
   // context is sufficient for now.
   return GetRequestContext();
@@ -719,10 +708,6 @@ bool TestingProfile::IsSameProfile(Profile *p) {
 
 base::Time TestingProfile::GetStartTime() const {
   return start_time_;
-}
-
-ProtocolHandlerRegistry* TestingProfile::GetProtocolHandlerRegistry() {
-  return NULL;
 }
 
 base::FilePath TestingProfile::last_selected_directory() {

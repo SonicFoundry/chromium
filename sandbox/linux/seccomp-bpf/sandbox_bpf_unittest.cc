@@ -8,7 +8,9 @@
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
+#include <sys/types.h>
 #include <sys/utsname.h>
+#include <unistd.h>
 
 #if defined(ANDROID)
 // Work-around for buggy headers in Android's NDK
@@ -19,6 +21,7 @@
 #include <ostream>
 
 #include "base/memory/scoped_ptr.h"
+#include "build/build_config.h"
 #include "sandbox/linux/seccomp-bpf/bpf_tests.h"
 #include "sandbox/linux/seccomp-bpf/syscall.h"
 #include "sandbox/linux/seccomp-bpf/trap.h"
@@ -43,6 +46,14 @@ namespace {
 
 const int  kExpectedReturnValue   = 42;
 const char kSandboxDebuggingEnv[] = "CHROME_SANDBOX_DEBUGGING";
+
+inline bool IsAndroid() {
+#if defined(OS_ANDROID)
+  return true;
+#else
+  return false;
+#endif
+}
 
 // This test should execute no matter whether we have kernel support. So,
 // we make it a TEST() instead of a BPF_TEST().
@@ -214,7 +225,7 @@ ErrorCode ErrnoTestPolicy(Sandbox *, int sysno, void *) {
 #if defined(__NR_setuid32)
   case __NR_setuid32:
 #endif
-    // Return errno = 1
+    // Return errno = 1.
     return ErrorCode(1);
   case __NR_setgid:
 #if defined(__NR_setgid32)
@@ -222,6 +233,9 @@ ErrorCode ErrnoTestPolicy(Sandbox *, int sysno, void *) {
 #endif
     // Return maximum errno value (typically 4095).
     return ErrorCode(ErrorCode::ERR_MAX_ERRNO);
+  case __NR_uname:
+    // Return errno = 42;
+    return ErrorCode(42);
   default:
     return ErrorCode(ErrorCode::ERR_ALLOWED);
   }
@@ -243,10 +257,28 @@ BPF_TEST(SandboxBpf, ErrnoTest, ErrnoTestPolicy) {
   BPF_ASSERT(buf[0] == '\x55');
 
   // Verify that we can return the minimum and maximum errno values.
+  errno = 0;
   BPF_ASSERT(setuid(0) == -1);
   BPF_ASSERT(errno == 1);
-  BPF_ASSERT(setgid(0) == -1);
-  BPF_ASSERT(errno == ErrorCode::ERR_MAX_ERRNO);
+
+  // On Android, errno is only supported up to 255, otherwise errno
+  // processing is skipped.
+  // We work around this (crbug.com/181647).
+  if (IsAndroid() && setgid(0) != -1) {
+    errno = 0;
+    BPF_ASSERT(setgid(0) == -ErrorCode::ERR_MAX_ERRNO);
+    BPF_ASSERT(errno == 0);
+  } else {
+    errno = 0;
+    BPF_ASSERT(setgid(0) == -1);
+    BPF_ASSERT(errno == ErrorCode::ERR_MAX_ERRNO);
+  }
+
+  // Finally, test an errno in between the minimum and maximum.
+  errno = 0;
+  struct utsname uts_buf;
+  BPF_ASSERT(uname(&uts_buf) == -1);
+  BPF_ASSERT(errno == 42);
 }
 
 // Testing the stacking of two sandboxes
@@ -661,6 +693,9 @@ intptr_t BrokerOpenTrapHandler(const struct arch_seccomp_data& args,
   BPF_ASSERT(aux);
   BrokerProcess* broker_process = static_cast<BrokerProcess*>(aux);
   switch(args.nr) {
+    case __NR_access:
+      return broker_process->Access(reinterpret_cast<const char*>(args.args[0]),
+          static_cast<int>(args.args[1]));
     case __NR_open:
       return broker_process->Open(reinterpret_cast<const char*>(args.args[0]),
           static_cast<int>(args.args[1]));
@@ -683,6 +718,7 @@ ErrorCode DenyOpenPolicy(Sandbox *sandbox, int sysno, void *aux) {
   }
 
   switch (sysno) {
+    case __NR_access:
     case __NR_open:
     case __NR_openat:
       // We get a InitializedOpenBroker class, but our trap handler wants
@@ -704,7 +740,9 @@ BPF_TEST(SandboxBpf, UseOpenBroker, DenyOpenPolicy,
 
   // First, use the broker "manually"
   BPF_ASSERT(broker_process->Open("/proc/denied", O_RDONLY) == -EPERM);
+  BPF_ASSERT(broker_process->Access("/proc/denied", R_OK) == -EPERM);
   BPF_ASSERT(broker_process->Open("/proc/allowed", O_RDONLY) == -ENOENT);
+  BPF_ASSERT(broker_process->Access("/proc/allowed", R_OK) == -ENOENT);
 
   // Now use glibc's open() as an external library would.
   BPF_ASSERT(open("/proc/denied", O_RDONLY) == -1);
@@ -721,8 +759,16 @@ BPF_TEST(SandboxBpf, UseOpenBroker, DenyOpenPolicy,
   BPF_ASSERT(openat(AT_FDCWD, "/proc/allowed", O_RDONLY) == -1);
   BPF_ASSERT(errno == ENOENT);
 
+  // And test glibc's access().
+  BPF_ASSERT(access("/proc/denied", R_OK) == -1);
+  BPF_ASSERT(errno == EPERM);
+
+  BPF_ASSERT(access("/proc/allowed", R_OK) == -1);
+  BPF_ASSERT(errno == ENOENT);
 
   // This is also white listed and does exist.
+  int cpu_info_access = access("/proc/cpuinfo", R_OK);
+  BPF_ASSERT(cpu_info_access == 0);
   int cpu_info_fd = open("/proc/cpuinfo", O_RDONLY);
   BPF_ASSERT(cpu_info_fd >= 0);
   char buf[1024];

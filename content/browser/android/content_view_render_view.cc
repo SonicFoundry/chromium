@@ -11,7 +11,7 @@
 #include "base/lazy_instance.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop.h"
-#include "cc/layer.h"
+#include "cc/layers/layer.h"
 #include "content/browser/android/content_view_core_impl.h"
 #include "content/public/browser/android/compositor.h"
 #include "content/public/browser/android/content_view_layer_renderer.h"
@@ -31,7 +31,7 @@ bool ContentViewRenderView::RegisterContentViewRenderView(JNIEnv* env) {
 
 ContentViewRenderView::ContentViewRenderView()
     : scheduled_composite_(false),
-      weak_factory_(ALLOW_THIS_IN_INITIALIZER_LIST(this)) {
+      weak_factory_(this) {
 }
 
 ContentViewRenderView::~ContentViewRenderView() {
@@ -60,16 +60,11 @@ void ContentViewRenderView::SetCurrentContentView(
 void ContentViewRenderView::SurfaceCreated(
     JNIEnv* env, jobject obj, jobject jsurface) {
   InitCompositor();
-  ANativeWindow* native_window = ANativeWindow_fromSurface(env, jsurface);
-  if (!native_window)
-    return;
-
-  compositor_->SetWindowSurface(native_window);
-  ANativeWindow_release(native_window);
+  compositor_->SetSurface(jsurface);
 }
 
 void ContentViewRenderView::SurfaceDestroyed(JNIEnv* env, jobject obj) {
-  compositor_->SetWindowSurface(NULL);
+  compositor_->SetSurface(NULL);
 }
 
 void ContentViewRenderView::SurfaceSetSize(
@@ -82,19 +77,19 @@ void ContentViewRenderView::ScheduleComposite() {
     return;
 
   scheduled_composite_ = true;
-  MessageLoop::current()->PostTask(
+  base::MessageLoop::current()->PostTask(
       FROM_HERE,
       base::Bind(&ContentViewRenderView::Composite,
                  weak_factory_.GetWeakPtr()));
 }
 
 void ContentViewRenderView::InitCompositor() {
-  if (!compositor_.get())
+  if (!compositor_)
     compositor_.reset(Compositor::Create(this));
 }
 
 void ContentViewRenderView::Composite() {
-  if (!compositor_.get())
+  if (!compositor_)
     return;
 
   scheduled_composite_ = false;

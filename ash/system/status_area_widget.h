@@ -6,8 +6,7 @@
 #define ASH_SYSTEM_STATUS_AREA_WIDGET_H_
 
 #include "ash/ash_export.h"
-#include "ash/launcher/background_animator.h"
-#include "ash/shelf_types.h"
+#include "ash/shelf/shelf_types.h"
 #include "ash/system/user/login_status.h"
 #include "ui/views/widget/widget.h"
 
@@ -23,6 +22,8 @@ class StatusAreaWidgetDelegate;
 
 class ASH_EXPORT StatusAreaWidget : public views::Widget {
  public:
+  static const char kNativeViewName[];
+
   explicit StatusAreaWidget(aura::Window* status_container);
   virtual ~StatusAreaWidget();
 
@@ -35,11 +36,6 @@ class ASH_EXPORT StatusAreaWidget : public views::Widget {
 
   // Update the alignment of the widget and tray views.
   void SetShelfAlignment(ShelfAlignment alignment);
-
-  // Update whether to paint a background for each tray view.
-  void SetPaintsBackground(
-      bool value,
-      internal::BackgroundAnimator::ChangeType change_type);
 
   // Set the visibility state of web notifications.
   void SetHideWebNotifications(bool hide);
@@ -72,6 +68,9 @@ class ASH_EXPORT StatusAreaWidget : public views::Widget {
 
   // True if any message bubble is shown.
   bool IsMessageBubbleShown() const;
+
+  // Overridden from views::Widget:
+  virtual void OnNativeWidgetActivationChanged(bool active) OVERRIDE;
 
  private:
   void AddSystemTray();

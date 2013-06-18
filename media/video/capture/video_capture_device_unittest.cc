@@ -58,6 +58,7 @@ namespace media {
 
 class MockFrameObserver : public media::VideoCaptureDevice::EventHandler {
  public:
+  MOCK_METHOD0(ReserveOutputBuffer, scoped_refptr<media::VideoFrame>());
   MOCK_METHOD0(OnErr, void());
   MOCK_METHOD4(OnFrameInfo, void(int width, int height, int frame_rate,
                                  VideoCaptureCapability::Format format));
@@ -84,8 +85,9 @@ class MockFrameObserver : public media::VideoCaptureDevice::EventHandler {
     wait_event_->Signal();
   }
 
-  virtual void OnIncomingCapturedVideoFrame(media::VideoFrame* frame,
-                                            base::Time timestamp) OVERRIDE {
+  virtual void OnIncomingCapturedVideoFrame(
+      const scoped_refptr<media::VideoFrame>& frame,
+      base::Time timestamp) OVERRIDE {
     wait_event_->Signal();
   }
 
@@ -98,14 +100,14 @@ class VideoCaptureDeviceTest : public testing::Test {
   VideoCaptureDeviceTest(): wait_event_(false, false) { }
 
   void PostQuitTask() {
-    loop_->PostTask(FROM_HERE, MessageLoop::QuitClosure());
+    loop_->PostTask(FROM_HERE, base::MessageLoop::QuitClosure());
     loop_->Run();
   }
 
  protected:
   virtual void SetUp() {
     frame_observer_.reset(new MockFrameObserver(&wait_event_));
-    loop_.reset(new MessageLoopForUI());
+    loop_.reset(new base::MessageLoopForUI());
 #if defined(OS_ANDROID)
     media::VideoCaptureDeviceAndroid::RegisterVideoCaptureDevice(
         base::android::AttachCurrentThread());
@@ -121,7 +123,7 @@ class VideoCaptureDeviceTest : public testing::Test {
   base::WaitableEvent wait_event_;
   scoped_ptr<MockFrameObserver> frame_observer_;
   VideoCaptureDevice::Names names_;
-  scoped_ptr<MessageLoop> loop_;
+  scoped_ptr<base::MessageLoop> loop_;
 };
 
 TEST_F(VideoCaptureDeviceTest, OpenInvalidDevice) {

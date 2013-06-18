@@ -5,10 +5,13 @@
 #include "chrome/renderer/extensions/user_script_scheduler.h"
 
 #include "base/bind.h"
+#include "base/logging.h"
 #include "base/message_loop.h"
 #include "chrome/common/extensions/extension_manifest_constants.h"
 #include "chrome/common/extensions/extension_messages.h"
+#include "chrome/renderer/chrome_render_process_observer.h"
 #include "chrome/renderer/extensions/dispatcher.h"
+#include "chrome/renderer/extensions/dom_activity_logger.h"
 #include "chrome/renderer/extensions/extension_groups.h"
 #include "chrome/renderer/extensions/extension_helper.h"
 #include "chrome/renderer/extensions/user_script_slave.h"
@@ -38,7 +41,7 @@ namespace extensions {
 
 UserScriptScheduler::UserScriptScheduler(WebFrame* frame,
                                          Dispatcher* dispatcher)
-    : ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)),
+    : weak_factory_(this),
       frame_(frame),
       current_location_(UserScript::UNDEFINED),
       has_run_idle_(false),
@@ -144,13 +147,13 @@ void UserScriptScheduler::ExecuteCodeImpl(
   // Since extension info is sent separately from user script info, they can
   // be out of sync. We just ignore this situation.
   if (!extension) {
-    render_view->Send(new ExtensionHostMsg_ExecuteCodeFinished(
-        render_view->GetRoutingID(),
-        params.request_id,
-        "",  // no error
-        -1,
-        GURL(""),
-        execution_results));
+    render_view->Send(
+        new ExtensionHostMsg_ExecuteCodeFinished(render_view->GetRoutingID(),
+                                                 params.request_id,
+                                                 std::string(),  // no error
+                                                 -1,
+                                                 GURL(std::string()),
+                                                 execution_results));
     return;
   }
 
@@ -192,31 +195,41 @@ void UserScriptScheduler::ExecuteCodeImpl(
       }
 
       WebScriptSource source(WebString::fromUTF8(params.code));
-      v8::HandleScope scope;
-      v8::Persistent<v8::Context> persistent_context = v8::Context::New();
-      v8::Local<v8::Context> context =
-          v8::Local<v8::Context>::New(persistent_context);
-      persistent_context.Dispose(context->GetIsolate());
+      v8::Isolate* isolate = v8::Isolate::GetCurrent();
+      v8::HandleScope scope(isolate);
 
       scoped_ptr<content::V8ValueConverter> v8_converter(
           content::V8ValueConverter::create());
       v8::Handle<v8::Value> script_value;
+
       if (params.in_main_world) {
+        DOMActivityLogger::AttachToWorld(
+            DOMActivityLogger::kMainWorldId,
+            extension->id(),
+            UserScriptSlave::GetDataSourceURLForFrame(child_frame),
+            child_frame->document().title());
         script_value = child_frame->executeScriptAndReturnValue(source);
       } else {
         WebKit::WebVector<v8::Local<v8::Value> > results;
         std::vector<WebScriptSource> sources;
         sources.push_back(source);
+        int isolated_world_id =
+            dispatcher_->user_script_slave()->GetIsolatedWorldIdForExtension(
+                extension, child_frame);
+        DOMActivityLogger::AttachToWorld(
+            isolated_world_id,
+            extension->id(),
+            UserScriptSlave::GetDataSourceURLForFrame(child_frame),
+            child_frame->document().title());
         child_frame->executeScriptInIsolatedWorld(
-            dispatcher_->user_script_slave()->
-                GetIsolatedWorldIdForExtension(extension, child_frame),
-            &sources.front(), sources.size(), EXTENSION_GROUP_CONTENT_SCRIPTS,
-            &results);
+            isolated_world_id, &sources.front(),
+            sources.size(), EXTENSION_GROUP_CONTENT_SCRIPTS, &results);
         // We only expect one value back since we only pushed one source
         if (results.size() == 1 && !results[0].IsEmpty())
           script_value = results[0];
       }
       if (!script_value.IsEmpty()) {
+        v8::Local<v8::Context> context = v8::Context::New(isolate);
         base::Value* base_val =
             v8_converter->FromV8Value(script_value, context);
         // Always append an execution result (i.e. no result == null result) so

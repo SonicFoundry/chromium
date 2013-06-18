@@ -28,14 +28,9 @@ class VIEWS_EXPORT NativeFrameView : public NonClientFrameView {
   virtual void UpdateWindowTitle() OVERRIDE;
 
   // View overrides:
+  virtual gfx::Size GetPreferredSize() OVERRIDE;
   virtual gfx::Size GetMinimumSize() OVERRIDE;
   virtual gfx::Size GetMaximumSize() OVERRIDE;
-
-  // Returns the client size. On Windows, this is the expected behavior for
-  // native frames (see |NativeWidgetWin::WidgetSizeIsClientSize()|), while
-  // other platforms currently always return client bounds from
-  // |GetWindowBoundsForClientBounds()|.
-  virtual gfx::Size GetPreferredSize() OVERRIDE;
 
  private:
   // Our containing frame.

@@ -9,6 +9,7 @@
 #include "media/base/gmock_callback_support.h"
 #include "media/base/mock_filters.h"
 #include "media/filters/audio_decoder_selector.h"
+#include "media/filters/decrypting_demuxer_stream.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using ::testing::_;
@@ -16,7 +17,6 @@ using ::testing::IsNull;
 using ::testing::NiceMock;
 using ::testing::NotNull;
 using ::testing::Return;
-using ::testing::ReturnRef;
 using ::testing::StrictMock;
 
 namespace media {
@@ -30,37 +30,38 @@ class AudioDecoderSelectorTest : public ::testing::Test {
   };
 
   AudioDecoderSelectorTest()
-      : clear_audio_config_(
-            kCodecVorbis, kSampleFormatPlanarF32, CHANNEL_LAYOUT_STEREO, 44100,
-            NULL, 0, false),
-        encrypted_audio_config_(
-            kCodecVorbis, kSampleFormatPlanarF32, CHANNEL_LAYOUT_STEREO, 44100,
-            NULL, 0, true),
-        demuxer_stream_(new StrictMock<MockDemuxerStream>()),
+      : demuxer_stream_(
+            new StrictMock<MockDemuxerStream>(DemuxerStream::AUDIO)),
         decryptor_(new NiceMock<MockDecryptor>()),
         decoder_1_(new StrictMock<MockAudioDecoder>()),
         decoder_2_(new StrictMock<MockAudioDecoder>()) {
     all_decoders_.push_back(decoder_1_);
     all_decoders_.push_back(decoder_2_);
-
-    EXPECT_CALL(*demuxer_stream_, type())
-        .WillRepeatedly(Return(DemuxerStream::AUDIO));
   }
 
   MOCK_METHOD1(OnStatistics, void(const PipelineStatistics&));
   MOCK_METHOD1(SetDecryptorReadyCallback, void(const media::DecryptorReadyCB&));
   MOCK_METHOD2(OnDecoderSelected,
-               void(const scoped_refptr<AudioDecoder>&,
-                    const scoped_refptr<DecryptingDemuxerStream>&));
+               void(AudioDecoder*, DecryptingDemuxerStream*));
+
+  void MockOnDecoderSelected(
+      scoped_ptr<AudioDecoder> decoder,
+      scoped_ptr<DecryptingDemuxerStream> stream) {
+    OnDecoderSelected(decoder.get(), stream.get());
+  }
 
   void UseClearStream() {
-    EXPECT_CALL(*demuxer_stream_, audio_decoder_config())
-        .WillRepeatedly(ReturnRef(clear_audio_config_));
+    AudioDecoderConfig clear_audio_config(
+        kCodecVorbis, kSampleFormatPlanarF32, CHANNEL_LAYOUT_STEREO, 44100,
+        NULL, 0, false);
+    demuxer_stream_->set_audio_decoder_config(clear_audio_config);
   }
 
   void UseEncryptedStream() {
-    EXPECT_CALL(*demuxer_stream_, audio_decoder_config())
-        .WillRepeatedly(ReturnRef(encrypted_audio_config_));
+    AudioDecoderConfig encrypted_audio_config(
+        kCodecVorbis, kSampleFormatPlanarF32, CHANNEL_LAYOUT_STEREO, 44100,
+        NULL, 0, true);
+    demuxer_stream_->set_audio_decoder_config(encrypted_audio_config);
   }
 
   void InitializeDecoderSelector(DecryptorCapability decryptor_capability,
@@ -76,46 +77,44 @@ class AudioDecoderSelectorTest : public ::testing::Test {
           .WillRepeatedly(RunCallback<0>(decryptor_.get()));
 
       if (decryptor_capability == kDecryptOnly) {
-        EXPECT_CALL(*decryptor_, InitializeAudioDecoderMock(_, _))
+        EXPECT_CALL(*decryptor_, InitializeAudioDecoder(_, _))
             .WillRepeatedly(RunCallback<1>(false));
       } else {
-        EXPECT_CALL(*decryptor_, InitializeAudioDecoderMock(_, _))
+        EXPECT_CALL(*decryptor_, InitializeAudioDecoder(_, _))
             .WillRepeatedly(RunCallback<1>(true));
       }
     }
 
     DCHECK_GE(all_decoders_.size(), static_cast<size_t>(num_decoders));
-    AudioDecoderSelector::AudioDecoderList decoders(
-        all_decoders_.begin(), all_decoders_.begin() + num_decoders);
+    all_decoders_.erase(
+        all_decoders_.begin() + num_decoders, all_decoders_.end());
 
     decoder_selector_.reset(new AudioDecoderSelector(
         message_loop_.message_loop_proxy(),
-        decoders,
+        all_decoders_.Pass(),
         set_decryptor_ready_cb));
   }
 
   void SelectDecoder() {
     decoder_selector_->SelectAudioDecoder(
-        demuxer_stream_,
+        demuxer_stream_.get(),
         base::Bind(&AudioDecoderSelectorTest::OnStatistics,
                    base::Unretained(this)),
-        base::Bind(&AudioDecoderSelectorTest::OnDecoderSelected,
+        base::Bind(&AudioDecoderSelectorTest::MockOnDecoderSelected,
                    base::Unretained(this)));
     message_loop_.RunUntilIdle();
   }
 
   // Fixture members.
   scoped_ptr<AudioDecoderSelector> decoder_selector_;
-  AudioDecoderConfig clear_audio_config_;
-  AudioDecoderConfig encrypted_audio_config_;
-  scoped_refptr<StrictMock<MockDemuxerStream> > demuxer_stream_;
+  scoped_ptr<StrictMock<MockDemuxerStream> > demuxer_stream_;
   // Use NiceMock since we don't care about most of calls on the decryptor, e.g.
   // RegisterNewKeyCB().
   scoped_ptr<NiceMock<MockDecryptor> > decryptor_;
-  scoped_refptr<StrictMock<MockAudioDecoder> > decoder_1_;
-  scoped_refptr<StrictMock<MockAudioDecoder> > decoder_2_;
-  std::vector<scoped_refptr<AudioDecoder> > all_decoders_;
-  MessageLoop message_loop_;
+  StrictMock<MockAudioDecoder>* decoder_1_;
+  StrictMock<MockAudioDecoder>* decoder_2_;
+  ScopedVector<AudioDecoder> all_decoders_;
+  base::MessageLoop message_loop_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(AudioDecoderSelectorTest);
@@ -140,8 +139,7 @@ TEST_F(AudioDecoderSelectorTest, ClearStream_NoDecryptor_OneClearDecoder) {
 
   EXPECT_CALL(*decoder_1_, Initialize(_, _, _))
       .WillOnce(RunCallback<1>(PIPELINE_OK));
-  EXPECT_CALL(*this, OnDecoderSelected(scoped_refptr<AudioDecoder>(decoder_1_),
-                                       IsNull()));
+  EXPECT_CALL(*this, OnDecoderSelected(decoder_1_, IsNull()));
 
   SelectDecoder();
 }
@@ -156,8 +154,7 @@ TEST_F(AudioDecoderSelectorTest, ClearStream_NoDecryptor_MultipleClearDecoder) {
       .WillOnce(RunCallback<1>(DECODER_ERROR_NOT_SUPPORTED));
   EXPECT_CALL(*decoder_2_, Initialize(_, _, _))
       .WillOnce(RunCallback<1>(PIPELINE_OK));
-  EXPECT_CALL(*this, OnDecoderSelected(scoped_refptr<AudioDecoder>(decoder_2_),
-                                       IsNull()));
+  EXPECT_CALL(*this, OnDecoderSelected(decoder_2_, IsNull()));
 
   SelectDecoder();
 }
@@ -170,8 +167,7 @@ TEST_F(AudioDecoderSelectorTest, ClearStream_HasDecryptor) {
 
   EXPECT_CALL(*decoder_1_, Initialize(_, _, _))
       .WillOnce(RunCallback<1>(PIPELINE_OK));
-  EXPECT_CALL(*this, OnDecoderSelected(scoped_refptr<AudioDecoder>(decoder_1_),
-                                       IsNull()));
+  EXPECT_CALL(*this, OnDecoderSelected(decoder_1_, IsNull()));
 
   SelectDecoder();
 }
@@ -205,8 +201,7 @@ TEST_F(AudioDecoderSelectorTest, EncryptedStream_DecryptOnly_OneClearDecoder) {
 
   EXPECT_CALL(*decoder_1_, Initialize(_, _, _))
       .WillOnce(RunCallback<1>(PIPELINE_OK));
-  EXPECT_CALL(*this, OnDecoderSelected(scoped_refptr<AudioDecoder>(decoder_1_),
-                                       NotNull()));
+  EXPECT_CALL(*this, OnDecoderSelected(decoder_1_, NotNull()));
 
   SelectDecoder();
 }
@@ -223,8 +218,7 @@ TEST_F(AudioDecoderSelectorTest,
       .WillOnce(RunCallback<1>(DECODER_ERROR_NOT_SUPPORTED));
   EXPECT_CALL(*decoder_2_, Initialize(_, _, _))
       .WillOnce(RunCallback<1>(PIPELINE_OK));
-  EXPECT_CALL(*this, OnDecoderSelected(scoped_refptr<AudioDecoder>(decoder_2_),
-                                       NotNull()));
+  EXPECT_CALL(*this, OnDecoderSelected(decoder_2_, NotNull()));
 
   SelectDecoder();
 }

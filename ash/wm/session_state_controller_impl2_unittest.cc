@@ -5,6 +5,7 @@
 #include "ash/wm/session_state_controller_impl2.h"
 
 #include "ash/ash_switches.h"
+#include "ash/session_state_delegate.h"
 #include "ash/shell.h"
 #include "ash/shell_window_ids.h"
 #include "ash/test/ash_test_base.h"
@@ -19,6 +20,7 @@
 #include "ui/aura/root_window.h"
 #include "ui/aura/test/event_generator.h"
 #include "ui/compositor/layer_animator.h"
+#include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/compositor/test/compositor_test_support.h"
 #include "ui/gfx/rect.h"
@@ -112,13 +114,15 @@ class SessionStateControllerImpl2Test : public AshTestBase {
     AshTestBase::SetUp();
 
     // We would control animations in a fine way:
-    ui::LayerAnimator::set_disable_animations_for_test(false);
+    animation_duration_mode_.reset(new ui::ScopedAnimationDurationScaleMode(
+        ui::ScopedAnimationDurationScaleMode::NORMAL_DURATION));
     // TODO(antrim) : restore
     // animator_helper_ = ui::test::CreateLayerAnimatorHelperForTest();
 
     // Temporary disable animations so that observer is always called, and
     // no leaks happen during tests.
-    ui::LayerAnimator::set_disable_animations_for_test(true);
+    animation_duration_mode_.reset(new ui::ScopedAnimationDurationScaleMode(
+        ui::ScopedAnimationDurationScaleMode::ZERO_DURATION));
     // TODO(antrim): once there is a way to mock time and run animations, make
     // sure that animations are finished even in simple tests.
 
@@ -134,6 +138,7 @@ class SessionStateControllerImpl2Test : public AshTestBase {
             animator_.get()));
     shell_delegate_ = reinterpret_cast<TestShellDelegate*>(
         ash::Shell::GetInstance()->delegate());
+    state_delegate_ = Shell::GetInstance()->session_state_delegate();
   }
 
   virtual void TearDown() {
@@ -307,7 +312,7 @@ class SessionStateControllerImpl2Test : public AshTestBase {
 
   void ExpectUnlockedState() {
     //TODO (antrim) : restore EXPECT_FALSE(animator_helper_->IsAnimating());
-    EXPECT_FALSE(shell_delegate_->IsScreenLocked());
+    EXPECT_FALSE(state_delegate_->IsScreenLocked());
 
     aura::Window::Windows containers;
 
@@ -328,7 +333,7 @@ class SessionStateControllerImpl2Test : public AshTestBase {
 
   void ExpectLockedState() {
     //TODO (antrim) : restore EXPECT_FALSE(animator_helper_->IsAnimating());
-    EXPECT_TRUE(shell_delegate_->IsScreenLocked());
+    EXPECT_TRUE(state_delegate_->IsScreenLocked());
 
     aura::Window::Windows containers;
 
@@ -367,7 +372,7 @@ class SessionStateControllerImpl2Test : public AshTestBase {
 
   void SystemLocks() {
     state_controller_->OnLockStateChanged(true);
-    shell_delegate_->LockScreen();
+    state_delegate_->LockScreen();
     //TODO (antrim) : restore animator_helper_->Advance(base::TimeDelta());
   }
 
@@ -379,7 +384,7 @@ class SessionStateControllerImpl2Test : public AshTestBase {
 
   void SystemUnlocks() {
     state_controller_->OnLockStateChanged(false);
-    shell_delegate_->UnlockScreen();
+    state_delegate_->UnlockScreen();
     //TODO (antrim) : restore animator_helper_->Advance(base::TimeDelta());
   }
 
@@ -396,7 +401,9 @@ class SessionStateControllerImpl2Test : public AshTestBase {
   SessionStateControllerImpl2* state_controller_;  // not owned
   TestSessionStateControllerDelegate* delegate_;  // not owned
   TestShellDelegate* shell_delegate_;  // not owned
+  SessionStateDelegate* state_delegate_;  // not owned
 
+  scoped_ptr<ui::ScopedAnimationDurationScaleMode> animation_duration_mode_;
   scoped_ptr<SessionStateControllerImpl2::TestApi> test_api_;
   scoped_ptr<SessionStateAnimator::TestApi> animator_api_;
   // TODO(antrim) : restore
@@ -719,7 +726,8 @@ TEST_F(SessionStateControllerImpl2Test, CancelLockToShutdown) {
 // TODO(antrim): Reenable this: http://crbug.com/167048
 TEST_F(SessionStateControllerImpl2Test, DISABLED_Lock) {
   // We require animations to have a duration for this test.
-  ui::LayerAnimator::set_disable_animations_for_test(false);
+  ui::ScopedAnimationDurationScaleMode normal_duration_mode(
+      ui::ScopedAnimationDurationScaleMode::NORMAL_DURATION);
 
   Initialize(false, user::LOGGED_IN_USER);
 

@@ -16,13 +16,13 @@
 #include "content/browser/appcache/chrome_appcache_service.h"
 #include "content/browser/fileapi/browser_file_system_helper.h"
 #include "content/browser/fileapi/chrome_blob_storage_context.h"
-#include "content/browser/histogram_internals_request_job.h"
 #include "content/browser/loader/resource_request_info_impl.h"
-#include "content/browser/net/view_blob_internals_job_factory.h"
-#include "content/browser/net/view_http_cache_job_factory.h"
 #include "content/browser/resource_context_impl.h"
 #include "content/browser/storage_partition_impl.h"
-#include "content/browser/tcmalloc_internals_request_job.h"
+#include "content/browser/streams/stream.h"
+#include "content/browser/streams/stream_context.h"
+#include "content/browser/streams/stream_registry.h"
+#include "content/browser/streams/stream_url_request_job.h"
 #include "content/browser/webui/url_data_manager_backend.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -33,7 +33,6 @@
 #include "crypto/sha2.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "webkit/appcache/view_appcache_internals_job.h"
 #include "webkit/blob/blob_data.h"
 #include "webkit/blob/blob_url_request_job_factory.h"
 #include "webkit/fileapi/file_system_url_request_job_factory.h"
@@ -49,8 +48,10 @@ namespace {
 class BlobProtocolHandler : public net::URLRequestJobFactory::ProtocolHandler {
  public:
   BlobProtocolHandler(ChromeBlobStorageContext* blob_storage_context,
+                      StreamContext* stream_context,
                       fileapi::FileSystemContext* file_system_context)
       : blob_storage_context_(blob_storage_context),
+        stream_context_(stream_context),
         file_system_context_(file_system_context) {}
 
   virtual ~BlobProtocolHandler() {}
@@ -62,6 +63,7 @@ class BlobProtocolHandler : public net::URLRequestJobFactory::ProtocolHandler {
     if (!webkit_blob_protocol_handler_impl_) {
       webkit_blob_protocol_handler_impl_.reset(
           new WebKitBlobProtocolHandlerImpl(blob_storage_context_->controller(),
+                                            stream_context_,
                                             file_system_context_));
     }
     return webkit_blob_protocol_handler_impl_->MaybeCreateJob(request,
@@ -76,13 +78,27 @@ class BlobProtocolHandler : public net::URLRequestJobFactory::ProtocolHandler {
    public:
     WebKitBlobProtocolHandlerImpl(
         webkit_blob::BlobStorageController* blob_storage_controller,
+        StreamContext* stream_context,
         fileapi::FileSystemContext* file_system_context)
         : webkit_blob::BlobProtocolHandler(
               blob_storage_controller, file_system_context,
               BrowserThread::GetMessageLoopProxyForThread(
-                  BrowserThread::FILE)) {}
+                  BrowserThread::FILE)),
+          stream_context_(stream_context) {}
 
     virtual ~WebKitBlobProtocolHandlerImpl() {}
+
+    virtual net::URLRequestJob* MaybeCreateJob(
+        net::URLRequest* request,
+        net::NetworkDelegate* network_delegate) const OVERRIDE {
+      scoped_refptr<Stream> stream =
+          stream_context_->registry()->GetStream(request->url());
+      if (stream)
+        return new StreamURLRequestJob(request, network_delegate, stream);
+
+      return webkit_blob::BlobProtocolHandler::MaybeCreateJob(
+          request, network_delegate);
+    }
 
    private:
     // webkit_blob::BlobProtocolHandler implementation.
@@ -95,72 +111,18 @@ class BlobProtocolHandler : public net::URLRequestJobFactory::ProtocolHandler {
       return info->requested_blob_data();
     }
 
+    const scoped_refptr<StreamContext> stream_context_;
     DISALLOW_COPY_AND_ASSIGN(WebKitBlobProtocolHandlerImpl);
   };
 
   const scoped_refptr<ChromeBlobStorageContext> blob_storage_context_;
+  const scoped_refptr<StreamContext> stream_context_;
   const scoped_refptr<fileapi::FileSystemContext> file_system_context_;
 
   mutable scoped_ptr<WebKitBlobProtocolHandlerImpl>
   webkit_blob_protocol_handler_impl_;
 
   DISALLOW_COPY_AND_ASSIGN(BlobProtocolHandler);
-};
-
-// Adds a bunch of debugging urls. We use an interceptor instead of a protocol
-// handler because we want to reuse the chrome://scheme (everyone is familiar
-// with it, and no need to expose the content/chrome separation through our UI).
-class DeveloperProtocolHandler
-    : public net::URLRequestJobFactory::ProtocolHandler {
- public:
-  DeveloperProtocolHandler(
-      AppCacheService* appcache_service,
-      ChromeBlobStorageContext* blob_storage_context)
-      : appcache_service_(appcache_service),
-        blob_storage_context_(blob_storage_context) {}
-  virtual ~DeveloperProtocolHandler() {}
-
-  virtual net::URLRequestJob* MaybeCreateJob(
-      net::URLRequest* request,
-      net::NetworkDelegate* network_delegate) const OVERRIDE {
-    // Check for chrome://view-http-cache/*, which uses its own job type.
-    if (ViewHttpCacheJobFactory::IsSupportedURL(request->url()))
-      return ViewHttpCacheJobFactory::CreateJobForRequest(request,
-                                                          network_delegate);
-
-    // Next check for chrome://appcache-internals/, which uses its own job type.
-    if (request->url().SchemeIs(chrome::kChromeUIScheme) &&
-        request->url().host() == chrome::kChromeUIAppCacheInternalsHost) {
-      return appcache::ViewAppCacheInternalsJobFactory::CreateJobForRequest(
-          request, network_delegate, appcache_service_);
-    }
-
-    // Next check for chrome://blob-internals/, which uses its own job type.
-    if (ViewBlobInternalsJobFactory::IsSupportedURL(request->url())) {
-      return ViewBlobInternalsJobFactory::CreateJobForRequest(
-          request, network_delegate, blob_storage_context_->controller());
-    }
-
-#if defined(USE_TCMALLOC)
-    // Next check for chrome://tcmalloc/, which uses its own job type.
-    if (request->url().SchemeIs(chrome::kChromeUIScheme) &&
-        request->url().host() == chrome::kChromeUITcmallocHost) {
-      return new TcmallocInternalsRequestJob(request, network_delegate);
-    }
-#endif
-
-    // Next check for chrome://histograms/, which uses its own job type.
-    if (request->url().SchemeIs(chrome::kChromeUIScheme) &&
-        request->url().host() == chrome::kChromeUIHistogramHost) {
-      return new HistogramInternalsRequestJob(request, network_delegate);
-    }
-
-    return NULL;
-  }
-
- private:
-  AppCacheService* appcache_service_;
-  ChromeBlobStorageContext* blob_storage_context_;
 };
 
 // These constants are used to create the directory structure under the profile
@@ -292,7 +254,7 @@ void BlockingObliteratePath(
     const std::vector<base::FilePath>& paths_to_keep,
     const scoped_refptr<base::TaskRunner>& closure_runner,
     const base::Closure& on_gc_required) {
-  // Early exit required because file_util::AbsolutePath() will fail on POSIX
+  // Early exit required because MakeAbsoluteFilePath() will fail on POSIX
   // if |unnormalized_root| does not exist. This is safe because there is
   // nothing to do in this situation anwyays.
   if (!file_util::PathExists(unnormalized_root)) {
@@ -301,12 +263,12 @@ void BlockingObliteratePath(
 
   // Never try to obliterate things outside of the browser context root or the
   // browser context root itself. Die hard.
-  base::FilePath root = unnormalized_root;
-  base::FilePath browser_context_root = unnormalized_browser_context_root;
-  CHECK(file_util::AbsolutePath(&root));
-  CHECK(file_util::AbsolutePath(&browser_context_root));
-  CHECK(file_util::ContainsPath(browser_context_root, root) &&
-        browser_context_root != root);
+  base::FilePath root = base::MakeAbsoluteFilePath(unnormalized_root);
+  base::FilePath browser_context_root =
+      base::MakeAbsoluteFilePath(unnormalized_browser_context_root);
+  CHECK(!root.empty());
+  CHECK(!browser_context_root.empty());
+  CHECK(browser_context_root.IsParent(root) && browser_context_root != root);
 
   // Reduce |paths_to_keep| set to those under the root and actually on disk.
   std::vector<base::FilePath> valid_paths_to_keep;
@@ -447,40 +409,54 @@ StoragePartitionImpl* StoragePartitionImplMap::Get(
 
   ChromeBlobStorageContext* blob_storage_context =
       ChromeBlobStorageContext::GetFor(browser_context_);
-  scoped_ptr<net::URLRequestJobFactory::ProtocolHandler> blob_protocol_handler(
-      new BlobProtocolHandler(blob_storage_context,
-                              partition->GetFileSystemContext()));
-  scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-      file_system_protocol_handler(
-            CreateFileSystemProtocolHandler(partition->GetFileSystemContext()));
-  scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-      developer_protocol_handler(
-          new DeveloperProtocolHandler(partition->GetAppCacheService(),
-                                       blob_storage_context));
-  scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-      chrome_protocol_handler(
+  StreamContext* stream_context = StreamContext::GetFor(browser_context_);
+  ProtocolHandlerMap protocol_handlers;
+  protocol_handlers[chrome::kBlobScheme] =
+      linked_ptr<net::URLRequestJobFactory::ProtocolHandler>(
+          new BlobProtocolHandler(blob_storage_context,
+                                  stream_context,
+                                  partition->GetFileSystemContext()));
+  protocol_handlers[chrome::kFileSystemScheme] =
+      linked_ptr<net::URLRequestJobFactory::ProtocolHandler>(
+          CreateFileSystemProtocolHandler(partition->GetFileSystemContext()));
+  protocol_handlers[chrome::kChromeUIScheme] =
+      linked_ptr<net::URLRequestJobFactory::ProtocolHandler>(
           URLDataManagerBackend::CreateProtocolHandler(
               browser_context_->GetResourceContext(),
-              browser_context_->IsOffTheRecord()));
-  scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-      chrome_devtools_protocol_handler(
+              browser_context_->IsOffTheRecord(),
+              partition->GetAppCacheService(),
+              blob_storage_context));
+  std::vector<std::string> additional_webui_schemes;
+  GetContentClient()->browser()->GetAdditionalWebUISchemes(
+      &additional_webui_schemes);
+  for (std::vector<std::string>::const_iterator it =
+           additional_webui_schemes.begin();
+       it != additional_webui_schemes.end();
+       ++it) {
+    protocol_handlers[*it] =
+        linked_ptr<net::URLRequestJobFactory::ProtocolHandler>(
+            URLDataManagerBackend::CreateProtocolHandler(
+                browser_context_->GetResourceContext(),
+                browser_context_->IsOffTheRecord(),
+                partition->GetAppCacheService(),
+                blob_storage_context));
+  }
+  protocol_handlers[chrome::kChromeDevToolsScheme] =
+      linked_ptr<net::URLRequestJobFactory::ProtocolHandler>(
           CreateDevToolsProtocolHandler(browser_context_->GetResourceContext(),
                                         browser_context_->IsOffTheRecord()));
 
   // These calls must happen after StoragePartitionImpl::Create().
   if (partition_domain.empty()) {
     partition->SetURLRequestContext(
-        GetContentClient()->browser()->CreateRequestContext(browser_context_,
-            blob_protocol_handler.Pass(), file_system_protocol_handler.Pass(),
-            developer_protocol_handler.Pass(), chrome_protocol_handler.Pass(),
-            chrome_devtools_protocol_handler.Pass()));
+        GetContentClient()->browser()->CreateRequestContext(
+            browser_context_,
+            &protocol_handlers));
   } else {
     partition->SetURLRequestContext(
         GetContentClient()->browser()->CreateRequestContextForStoragePartition(
             browser_context_, partition->GetPath(), in_memory,
-            blob_protocol_handler.Pass(), file_system_protocol_handler.Pass(),
-            developer_protocol_handler.Pass(), chrome_protocol_handler.Pass(),
-            chrome_devtools_protocol_handler.Pass()));
+            &protocol_handlers));
   }
   partition->SetMediaURLRequestContext(
       partition_domain.empty() ?

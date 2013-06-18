@@ -67,7 +67,7 @@ class AURA_EXPORT Env : public ui::EventTarget {
   // base::RunLoop(dispatcher), or used to dispatch an event by
   // |Dispatch(const NativeEvent&)| on it. It must never be stored.
 #if !defined(OS_MACOSX)
-  MessageLoop::Dispatcher* GetDispatcher();
+  base::MessageLoop::Dispatcher* GetDispatcher();
 #endif
 
   // Invoked by RootWindow when its host is activated.
@@ -75,11 +75,15 @@ class AURA_EXPORT Env : public ui::EventTarget {
 
  private:
   friend class Window;
+  friend class RootWindow;
 
   void Init();
 
   // Called by the Window when it is initialized. Notifies observers.
   void NotifyWindowInitialized(Window* window);
+
+  // Called by the RootWindow when it is initialized. Notifies observers.
+  void NotifyRootWindowInitialized(RootWindow* root_window);
 
   // Overridden from ui::EventTarget:
   virtual bool CanAcceptEvent(const ui::Event& event) OVERRIDE;
@@ -87,7 +91,7 @@ class AURA_EXPORT Env : public ui::EventTarget {
 
   ObserverList<EnvObserver> observers_;
 #if !defined(USE_X11)
-  scoped_ptr<MessageLoop::Dispatcher> dispatcher_;
+  scoped_ptr<base::MessageLoop::Dispatcher> dispatcher_;
 #endif
 
   static Env* instance_;

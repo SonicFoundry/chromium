@@ -15,7 +15,14 @@
 #include "chrome/common/extensions/extension.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/test_browser_thread.h"
+#include "extensions/common/constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/login/user_manager.h"
+#include "chrome/browser/chromeos/settings/cros_settings.h"
+#include "chrome/browser/chromeos/settings/device_settings_service.h"
+#endif
 
 using extensions::Extension;
 using extensions::Manifest;
@@ -24,7 +31,7 @@ class ExtensionUITest : public testing::Test {
  public:
   ExtensionUITest()
       : ui_thread_(content::BrowserThread::UI, &message_loop_),
-        file_thread_(content::BrowserThread::FILE, &message_loop_) {}
+        file_thread_(content::BrowserThread::FILE, &message_loop_)  {}
 
  protected:
   virtual void SetUp() OVERRIDE {
@@ -66,7 +73,7 @@ class ExtensionUITest : public testing::Test {
     std::string error;
 
     base::FilePath manifest_path = extension_path.Append(
-        Extension::kManifestFilename);
+        extensions::kManifestFilename);
     scoped_ptr<DictionaryValue> extension_data(DeserializeJSONTestData(
         manifest_path, &error));
     EXPECT_EQ("", error);
@@ -100,21 +107,14 @@ class ExtensionUITest : public testing::Test {
     std::string paths_details = " - expected (" +
         expected_output_path.MaybeAsASCII() + ") vs. actual (" +
         extension_path.MaybeAsASCII() + ")";
-    for (DictionaryValue::key_iterator key = expected_output_data->begin_keys();
-        key != expected_output_data->end_keys();
-        ++key) {
-      Value* expected_value = NULL;
+    for (DictionaryValue::Iterator field(*expected_output_data);
+         !field.IsAtEnd(); field.Advance()) {
+      const Value* expected_value = &field.value();
       Value* actual_value = NULL;
-      EXPECT_TRUE(expected_output_data->Get(*key, &expected_value)) <<
-          *key + " is missing" + paths_details;
-      EXPECT_TRUE(actual_output_data->Get(*key, &actual_value)) <<
-          *key + " is missing" + paths_details;
-      if (expected_value == NULL) {
-        EXPECT_EQ(NULL, actual_value) << *key + paths_details;
-      } else {
-        EXPECT_TRUE(expected_value->Equals(actual_value)) << *key +
-            paths_details;
-      }
+      EXPECT_TRUE(actual_output_data->Get(field.key(), &actual_value)) <<
+          field.key() + " is missing" + paths_details;
+      EXPECT_TRUE(expected_value->Equals(actual_value)) << field.key() +
+          paths_details;
     }
   }
 
@@ -125,6 +125,12 @@ class ExtensionUITest : public testing::Test {
   ExtensionService* extension_service_;
   extensions::ManagementPolicy* management_policy_;
   scoped_ptr<ExtensionSettingsHandler> handler_;
+
+#if defined OS_CHROMEOS
+  chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
+  chromeos::ScopedTestCrosSettings test_cros_settings_;
+  chromeos::ScopedTestUserManager test_user_manager_;
+#endif
 };
 
 TEST_F(ExtensionUITest, GenerateExtensionsJSONData) {

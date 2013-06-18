@@ -13,23 +13,6 @@ namespace chrome {
 
 static StorageMonitor* g_storage_monitor = NULL;
 
-StorageMonitor::StorageInfo::StorageInfo()
-    : total_size_in_bytes(0) {
-}
-
-StorageMonitor::StorageInfo::StorageInfo(
-    const std::string& id,
-    const string16& device_name,
-    const base::FilePath::StringType& device_location)
-    : device_id(id),
-      name(device_name),
-      location(device_location),
-      total_size_in_bytes(0) {
-}
-
-StorageMonitor::StorageInfo::~StorageInfo() {
-}
-
 StorageMonitor::Receiver::~Receiver() {
 }
 
@@ -40,31 +23,33 @@ class StorageMonitor::ReceiverImpl : public StorageMonitor::Receiver {
 
   virtual ~ReceiverImpl() {}
 
-  virtual void ProcessAttach(
-      const StorageMonitor::StorageInfo& info) OVERRIDE;
+  virtual void ProcessAttach(const StorageInfo& info) OVERRIDE;
 
   virtual void ProcessDetach(const std::string& id) OVERRIDE;
+
+  virtual void MarkInitialized() OVERRIDE;
 
  private:
   StorageMonitor* notifications_;
 };
 
-void StorageMonitor::ReceiverImpl::ProcessAttach(
-    const StorageMonitor::StorageInfo& info) {
+void StorageMonitor::ReceiverImpl::ProcessAttach(const StorageInfo& info) {
   notifications_->ProcessAttach(info);
 }
 
-void StorageMonitor::ReceiverImpl::ProcessDetach(
-    const std::string& id) {
+void StorageMonitor::ReceiverImpl::ProcessDetach(const std::string& id) {
   notifications_->ProcessDetach(id);
+}
+
+void StorageMonitor::ReceiverImpl::MarkInitialized() {
+  notifications_->MarkInitialized();
 }
 
 StorageMonitor* StorageMonitor::GetInstance() {
   return g_storage_monitor;
 }
 
-std::vector<StorageMonitor::StorageInfo>
-StorageMonitor::GetAttachedStorage() const {
+std::vector<StorageInfo> StorageMonitor::GetAttachedStorage() const {
   std::vector<StorageInfo> results;
 
   base::AutoLock lock(storage_lock_);
@@ -74,6 +59,24 @@ StorageMonitor::GetAttachedStorage() const {
     results.push_back(it->second);
   }
   return results;
+}
+
+void StorageMonitor::Initialize(base::Closure callback) {
+  if (initialized_) {
+    if (!callback.is_null())
+      callback.Run();
+    return;
+  }
+
+  if (!callback.is_null()) {
+    on_initialize_callbacks_.push_back(callback);
+  }
+
+  Init();
+}
+
+bool StorageMonitor::IsInitialized() {
+  return initialized_;
 }
 
 void StorageMonitor::AddObserver(RemovableStorageObserver* obs) {
@@ -105,6 +108,7 @@ void StorageMonitor::EjectDevice(
 
 StorageMonitor::StorageMonitor()
     : observer_list_(new ObserverListThreadSafe<RemovableStorageObserver>()),
+      initialized_(false),
       transient_device_ids_(new TransientDeviceIds) {
   receiver_.reset(new ReceiverImpl(this));
 
@@ -125,8 +129,17 @@ StorageMonitor::Receiver* StorageMonitor::receiver() const {
   return receiver_.get();
 }
 
-void StorageMonitor::ProcessAttach(
-    const StorageInfo& info) {
+void StorageMonitor::MarkInitialized() {
+  initialized_ = true;
+  for (std::vector<base::Closure>::iterator iter =
+           on_initialize_callbacks_.begin();
+       iter != on_initialize_callbacks_.end(); ++iter) {
+    iter->Run();
+  }
+  on_initialize_callbacks_.clear();
+}
+
+void StorageMonitor::ProcessAttach(const StorageInfo& info) {
   {
     base::AutoLock lock(storage_lock_);
     if (ContainsKey(storage_map_, info.device_id)) {

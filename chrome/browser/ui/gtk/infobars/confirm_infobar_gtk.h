@@ -6,7 +6,7 @@
 #define CHROME_BROWSER_UI_GTK_INFOBARS_CONFIRM_INFOBAR_GTK_H_
 
 #include "base/basictypes.h"
-#include "chrome/browser/api/infobars/confirm_infobar_delegate.h"
+#include "chrome/browser/infobars/confirm_infobar_delegate.h"
 #include "chrome/browser/ui/gtk/infobars/infobar_gtk.h"
 #include "ui/base/gtk/gtk_signal.h"
 
@@ -23,6 +23,11 @@ class ConfirmInfoBarGtk : public InfoBarGtk {
 
  private:
   virtual ~ConfirmInfoBarGtk();
+
+  // InfoBarGtk:
+  virtual void InitWidgets() OVERRIDE;
+
+  ConfirmInfoBarDelegate* GetDelegate();
 
   // Adds a button to the info bar by type. It will do nothing if the delegate
   // doesn't specify a button of the given type.

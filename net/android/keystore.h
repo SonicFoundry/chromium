@@ -11,9 +11,9 @@
 #include <vector>
 
 #include "base/basictypes.h"
-#include "base/string_piece.h"
+#include "base/strings/string_piece.h"
 #include "net/base/net_export.h"
-#include "net/base/ssl_client_cert_type.h"
+#include "net/ssl/ssl_client_cert_type.h"
 
 // Avoid including <openssl/evp.h> here.
 typedef struct evp_pkey_st EVP_PKEY;
@@ -81,7 +81,7 @@ bool GetPrivateKeyEncodedBytes(jobject private_key,
 // |signature| will receive the signature on success.
 // Returns true on success, false on failure.
 //
-bool RawSignDigestWithPrivateKey(
+NET_EXPORT bool RawSignDigestWithPrivateKey(
     jobject private_key,
     const base::StringPiece& digest,
     std::vector<uint8>* signature);

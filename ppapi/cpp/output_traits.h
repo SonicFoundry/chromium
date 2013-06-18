@@ -9,7 +9,7 @@
 
 #include "ppapi/c/pp_resource.h"
 #include "ppapi/cpp/array_output.h"
-#include "ppapi/cpp/dev/directory_entry_dev.h"
+#include "ppapi/cpp/resource.h"
 
 /// @file
 /// This file defines internal templates for defining how data is passed to the
@@ -23,7 +23,6 @@ struct PP_Var;
 
 namespace pp {
 
-class Resource;
 class Var;
 
 namespace internal {
@@ -232,24 +231,6 @@ struct CallbackOutputTraits< std::vector<pp::Var> > {
 
   // Retrieves the underlying vector that can be passed to the plugin.
   static inline std::vector<pp::Var>& StorageToPluginArg(StorageType& t) {
-    return t.output();
-  }
-};
-
-// A specialization of CallbackOutputTraits to provide the callback system the
-// information on how to handle vectors of pp::DirectoryEntry_Dev. This converts
-// PP_DirectoryEntry_Dev to pp::DirectoryEntry_Dev when passing to the plugin.
-template<>
-struct CallbackOutputTraits< std::vector<pp::DirectoryEntry_Dev> > {
-  typedef PP_ArrayOutput APIArgType;
-  typedef DirectoryEntryArrayOutputAdapterWithStorage StorageType;
-
-  static inline APIArgType StorageToAPIArg(StorageType& t) {
-    return t.pp_array_output();
-  }
-
-  static inline std::vector<pp::DirectoryEntry_Dev>& StorageToPluginArg(
-      StorageType& t) {
     return t.output();
   }
 };

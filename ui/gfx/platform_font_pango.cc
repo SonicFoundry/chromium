@@ -11,8 +11,8 @@
 #include <string>
 
 #include "base/logging.h"
-#include "base/string_piece.h"
-#include "base/string_split.h"
+#include "base/strings/string_piece.h"
+#include "base/strings/string_split.h"
 #include "base/utf_string_conversions.h"
 #include "grit/app_locale_settings.h"
 #include "third_party/skia/include/core/SkPaint.h"

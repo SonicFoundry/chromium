@@ -4,42 +4,13 @@
 
 #include "remoting/host/resizing_host_observer.h"
 
-#include <set>
+#include <list>
 
 #include "base/logging.h"
 #include "remoting/host/desktop_resizer.h"
-#include "remoting/host/host_status_monitor.h"
+#include "remoting/host/screen_resolution.h"
 
-namespace remoting {
-
-ResizingHostObserver::ResizingHostObserver(
-    DesktopResizer* desktop_resizer,
-    base::WeakPtr<HostStatusMonitor> monitor)
-    : desktop_resizer_(desktop_resizer),
-      monitor_(monitor),
-      original_size_(SkISize::Make(0, 0)) {
-  monitor_->AddStatusObserver(this);
-}
-
-ResizingHostObserver::~ResizingHostObserver() {
-  if (monitor_)
-    monitor_->RemoveStatusObserver(this);
-}
-
-void ResizingHostObserver::OnClientAuthenticated(const std::string& jid) {
-  // This implementation assumes a single connected client, which is what the
-  // host currently supports
-  DCHECK(client_jid_.empty());
-  original_size_ = desktop_resizer_->GetCurrentSize();
-}
-
-void ResizingHostObserver::OnClientDisconnected(const std::string& jid) {
-  if (!original_size_.isZero()) {
-    desktop_resizer_->RestoreSize(original_size_);
-    original_size_.set(0, 0);
-  }
-  client_jid_.clear();
-}
+namespace {
 
 class CandidateSize {
  public:
@@ -123,25 +94,37 @@ class CandidateSize {
   SkISize size_;
 };
 
-void ResizingHostObserver::OnClientResolutionChanged(
-    const std::string& jid,
-    const SkISize& preferred_size,
-    const SkIPoint& dpi) {
-  if (preferred_size.isEmpty()) {
+}  // namespace
+
+namespace remoting {
+
+ResizingHostObserver::ResizingHostObserver(
+    scoped_ptr<DesktopResizer> desktop_resizer)
+    : desktop_resizer_(desktop_resizer.Pass()),
+      original_size_(desktop_resizer_->GetCurrentSize()) {
+}
+
+ResizingHostObserver::~ResizingHostObserver() {
+  if (!original_size_.isZero())
+    desktop_resizer_->RestoreSize(original_size_);
+}
+
+void ResizingHostObserver::SetScreenResolution(
+    const ScreenResolution& resolution) {
+  if (resolution.IsEmpty())
     return;
-  }
 
   // If the implementation returns any sizes, pick the best one according to
   // the algorithm described in CandidateSize::IsBetterThen.
   std::list<SkISize> sizes =
-      desktop_resizer_->GetSupportedSizes(preferred_size);
+      desktop_resizer_->GetSupportedSizes(resolution.dimensions_);
   if (sizes.empty()) {
     return;
   }
-  CandidateSize best_size(sizes.front(), preferred_size);
+  CandidateSize best_size(sizes.front(), resolution.dimensions_);
   for (std::list<SkISize>::const_iterator i = ++sizes.begin();
        i != sizes.end(); ++i) {
-    CandidateSize candidate_size(*i, preferred_size);
+    CandidateSize candidate_size(*i, resolution.dimensions_);
     if (candidate_size.IsBetterThan(best_size)) {
       best_size = candidate_size;
     }

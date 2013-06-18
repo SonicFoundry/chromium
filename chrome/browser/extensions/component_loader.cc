@@ -8,12 +8,10 @@
 #include "base/file_util.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/path_service.h"
+#include "base/prefs/pref_change_registrar.h"
 #include "base/prefs/pref_notifier.h"
 #include "base/prefs/pref_service.h"
-#include "base/prefs/public/pref_change_registrar.h"
-#include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/chrome_paths.h"
@@ -22,17 +20,31 @@
 #include "chrome/common/extensions/extension_file_util.h"
 #include "chrome/common/extensions/extension_manifest_constants.h"
 #include "chrome/common/pref_names.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
+#include "extensions/common/id_util.h"
 #include "grit/browser_resources.h"
 #include "ui/base/resource/resource_bundle.h"
 
-#if defined(OFFICIAL_BUILD)
+#if defined(USE_AURA)
+#include "grit/keyboard_resources.h"
+#endif
+
+#if defined(GOOGLE_CHROME_BUILD)
 #include "chrome/browser/defaults.h"
 #endif
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/login/user_manager.h"
+#include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_manager.h"
+#include "chromeos/chromeos_switches.h"
+#include "content/public/browser/storage_partition.h"
+#include "webkit/fileapi/file_system_context.h"
+#include "webkit/fileapi/sandbox_mount_point_provider.h"
 #endif
 
 #if defined(ENABLE_APP_LIST)
@@ -50,10 +62,9 @@ std::string GenerateId(const DictionaryValue* manifest,
                        const base::FilePath& path) {
   std::string raw_key;
   std::string id_input;
-  std::string id;
   CHECK(manifest->GetString(extension_manifest_keys::kPublicKey, &raw_key));
   CHECK(Extension::ParsePEMKeyBytes(raw_key, &id_input));
-  CHECK(Extension::GenerateId(id_input, &id));
+  std::string id = id_util::GenerateId(id_input);
   return id;
 }
 
@@ -136,7 +147,7 @@ std::string ComponentLoader::Add(const std::string& manifest_contents,
   DictionaryValue* manifest = ParseManifest(manifest_contents);
   if (manifest)
     return Add(manifest, root_directory);
-  return "";
+  return std::string();
 }
 
 std::string ComponentLoader::Add(const DictionaryValue* parsed_manifest,
@@ -149,12 +160,11 @@ std::string ComponentLoader::Add(const DictionaryValue* parsed_manifest,
 }
 
 std::string ComponentLoader::AddOrReplace(const base::FilePath& path) {
-  base::FilePath absolute_path = path;
-  file_util::AbsolutePath(&absolute_path);
+  base::FilePath absolute_path = base::MakeAbsoluteFilePath(path);
   std::string error;
   scoped_ptr<DictionaryValue> manifest(
       extension_file_util::LoadManifest(absolute_path, &error));
-  if (!manifest.get()) {
+  if (!manifest) {
     LOG(ERROR) << "Could not load extension from '" <<
                   absolute_path.value() << "'. " << error;
     return NULL;
@@ -188,7 +198,7 @@ void ComponentLoader::Load(const ComponentExtensionInfo& info) {
       *info.manifest,
       flags,
       &error));
-  if (!extension.get()) {
+  if (!extension) {
     LOG(ERROR) << error;
     return;
   }
@@ -239,9 +249,13 @@ bool ComponentLoader::Exists(const std::string& id) const {
 void ComponentLoader::AddFileManagerExtension() {
 #if defined(FILE_MANAGER_EXTENSION)
   const CommandLine* command_line = CommandLine::ForCurrentProcess();
-  int manifest_id = command_line->HasSwitch(switches::kFileManagerPackaged) ?
-      IDR_FILEMANAGER_MANIFEST :
-      IDR_FILEMANAGER_MANIFEST_V1;
+  int manifest_id;
+  if (command_line->HasSwitch(switches::kFileManagerLegacy))
+    manifest_id = IDR_FILEMANAGER_MANIFEST_V1;
+  else if (command_line->HasSwitch(switches::kFileManagerLegacyUI))
+    manifest_id = IDR_FILEMANAGER_MANIFEST;
+  else
+    manifest_id = IDR_FILEMANAGER_MANIFEST_NEW_UI;
 #ifndef NDEBUG
   if (command_line->HasSwitch(switches::kFileManagerExtensionPath)) {
     base::FilePath filemgr_extension_path(
@@ -269,19 +283,6 @@ void ComponentLoader::AddImageLoaderExtension() {
       base::FilePath(FILE_PATH_LITERAL("image_loader")));
 #endif  // defined(IMAGE_LOADER_EXTENSION)
 }
-
-#if defined(OS_CHROMEOS)
-void ComponentLoader::AddGaiaAuthExtension() {
-  const CommandLine* command_line = CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(switches::kAuthExtensionPath)) {
-    base::FilePath auth_extension_path =
-        command_line->GetSwitchValuePath(switches::kAuthExtensionPath);
-    Add(IDR_GAIA_TEST_AUTH_MANIFEST, auth_extension_path);
-    return;
-  }
-  Add(IDR_GAIA_AUTH_MANIFEST, base::FilePath(FILE_PATH_LITERAL("gaia_auth")));
-}
-#endif  // NDEBUG
 
 void ComponentLoader::AddOrReloadEnterpriseWebStore() {
   base::FilePath path(FILE_PATH_LITERAL("enterprise_web_store"));
@@ -329,6 +330,12 @@ void ComponentLoader::AddChromeApp() {
 #endif
 }
 
+void ComponentLoader::AddKeyboardApp() {
+#if defined(USE_AURA)
+  Add(IDR_KEYBOARD_MANIFEST, base::FilePath(FILE_PATH_LITERAL("keyboard")));
+#endif
+}
+
 // static
 void ComponentLoader::EnableBackgroundExtensionsForTesting() {
   enable_background_extensions_during_testing = true;
@@ -342,10 +349,7 @@ void ComponentLoader::AddDefaultComponentExtensions(
   Add(IDR_MOBILE_MANIFEST,
       base::FilePath(FILE_PATH_LITERAL("/usr/share/chromeos-assets/mobile")));
 
-  if (skip_session_components)
-    AddGaiaAuthExtension();
-
-#if defined(OFFICIAL_BUILD)
+#if defined(GOOGLE_CHROME_BUILD)
   if (browser_defaults::enable_help_app) {
     Add(IDR_HELP_MANIFEST, base::FilePath(FILE_PATH_LITERAL(
                                "/usr/share/chromeos-assets/helpapp")));
@@ -355,7 +359,7 @@ void ComponentLoader::AddDefaultComponentExtensions(
   // Skip all other extensions that require user session presence.
   if (!skip_session_components) {
     const CommandLine* command_line = CommandLine::ForCurrentProcess();
-    if (!command_line->HasSwitch(switches::kGuestSession))
+    if (!command_line->HasSwitch(chromeos::switches::kGuestSession))
       Add(IDR_BOOKMARKS_MANIFEST,
           base::FilePath(FILE_PATH_LITERAL("bookmark_manager")));
 
@@ -382,6 +386,8 @@ void ComponentLoader::AddDefaultComponentExtensions(
 
     AddChromeApp();
   }
+
+  AddKeyboardApp();
 
   AddDefaultComponentExtensionsWithBackgroundPages(skip_session_components);
 }
@@ -419,6 +425,28 @@ void ComponentLoader::AddDefaultComponentExtensionsWithBackgroundPages(
     Add(IDR_WALLPAPERMANAGER_MANIFEST,
         base::FilePath(FILE_PATH_LITERAL("chromeos/wallpaper_manager")));
 
+#if defined(GOOGLE_CHROME_BUILD)
+    if (!command_line->HasSwitch(
+            chromeos::switches::kDisableQuickofficeComponentApp)) {
+      std::string id = Add(IDR_QUICK_OFFICE_MANIFEST, base::FilePath(
+          FILE_PATH_LITERAL("/usr/share/chromeos-assets/quick_office")));
+      if (command_line->HasSwitch(chromeos::switches::kGuestSession)) {
+        // TODO(dpolukhin): Hack to enable HTML5 temporary file system for
+        // Quickoffice. It doesn't work without temporary file system access.
+        Profile* profile = ProfileManager::GetDefaultProfileOrOffTheRecord();
+        ExtensionService* service =
+            extensions::ExtensionSystem::Get(profile)->extension_service();
+        GURL site = service->GetSiteForExtensionId(id);
+        fileapi::FileSystemContext* context =
+            content::BrowserContext::GetStoragePartitionForSite(profile, site)->
+                GetFileSystemContext();
+        fileapi::SandboxMountPointProvider* provider =
+            context->sandbox_provider();
+        provider->set_enable_temporary_file_system_in_incognito(true);
+      }
+    }
+#endif  // defined(GOOGLE_CHROME_BUILD)
+
     base::FilePath echo_extension_path(FILE_PATH_LITERAL(
         "/usr/share/chromeos-assets/echo"));
     if (command_line->HasSwitch(switches::kEchoExtensionPath)) {
@@ -437,7 +465,7 @@ void ComponentLoader::AddDefaultComponentExtensionsWithBackgroundPages(
         base::FilePath(extension_misc::kChromeVoxExtensionPath);
     Add(IDR_CHROMEVOX_MANIFEST, path);
   }
-#endif
+#endif  // defined(OS_CHROMEOS)
 
 #if defined(ENABLE_GOOGLE_NOW)
   if (CommandLine::ForCurrentProcess()->HasSwitch(
@@ -458,13 +486,16 @@ void ComponentLoader::UnloadComponent(ComponentExtensionInfo* component) {
 }
 
 // static
-void ComponentLoader::RegisterUserPrefs(PrefRegistrySyncable* registry) {
-  registry->RegisterStringPref(prefs::kEnterpriseWebStoreURL,
-                               std::string() /* default_value */,
-                               PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterStringPref(prefs::kEnterpriseWebStoreName,
-                               std::string() /* default_value */,
-                               PrefRegistrySyncable::UNSYNCABLE_PREF);
+void ComponentLoader::RegisterUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterStringPref(
+      prefs::kEnterpriseWebStoreURL,
+      std::string() /* default_value */,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterStringPref(
+      prefs::kEnterpriseWebStoreName,
+      std::string() /* default_value */,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 }  // namespace extensions

@@ -5,13 +5,14 @@
 #include "webkit/plugins/npapi/webplugin_impl.h"
 
 #include "base/bind.h"
+#include "base/debug/crash_logging.h"
 #include "base/logging.h"
 #include "base/memory/linked_ptr.h"
 #include "base/message_loop.h"
-#include "base/stringprintf.h"
 #include "base/string_util.h"
+#include "base/stringprintf.h"
 #include "base/utf_string_conversions.h"
-#include "cc/io_surface_layer.h"
+#include "cc/layers/io_surface_layer.h"
 #include "googleurl/src/gurl.h"
 #include "googleurl/src/url_util.h"
 #include "net/base/escape.h"
@@ -282,7 +283,7 @@ NPObject* WebPluginImpl::scriptableObject() {
 bool WebPluginImpl::getFormValue(WebKit::WebString& value) {
   if (!delegate_)
     return false;
-  string16 form_value;
+  base::string16 form_value;
   if (!delegate_->GetFormValue(&form_value))
     return false;
   value = form_value;
@@ -479,7 +480,7 @@ WebPluginImpl::WebPluginImpl(
       ignore_response_error_(false),
       file_path_(file_path),
       mime_type_(UTF16ToASCII(params.mimeType)),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+      weak_factory_(this) {
   DCHECK_EQ(params.attributeNames.size(), params.attributeValues.size());
   StringToLowerASCII(&mime_type_);
 
@@ -487,6 +488,9 @@ WebPluginImpl::WebPluginImpl(
     arg_names_.push_back(params.attributeNames[i].utf8());
     arg_values_.push_back(params.attributeValues[i].utf8());
   }
+
+  // Set subresource URL for crash reporting.
+  base::debug::SetCrashKeyValue("subresource_url", plugin_url_.spec());
 }
 
 WebPluginImpl::~WebPluginImpl() {
@@ -782,11 +786,11 @@ void WebPluginImpl::AcceleratedPluginSwappedIOSurface() {
   if (next_io_surface_allocated_) {
     if (next_io_surface_id_) {
       if (!io_surface_layer_.get()) {
-        io_surface_layer_ = cc::IOSurfaceLayer::create();
-        web_layer_.reset(new WebKit::WebLayerImpl(io_surface_layer_));
+        io_surface_layer_ = cc::IOSurfaceLayer::Create();
+        web_layer_.reset(new webkit::WebLayerImpl(io_surface_layer_));
         container_->setWebLayer(web_layer_.get());
       }
-      io_surface_layer_->setIOSurfaceProperties(
+      io_surface_layer_->SetIOSurfaceProperties(
           next_io_surface_id_,
           gfx::Size(next_io_surface_width_, next_io_surface_height_));
     } else {
@@ -797,7 +801,7 @@ void WebPluginImpl::AcceleratedPluginSwappedIOSurface() {
     next_io_surface_allocated_ = false;
   } else {
     if (io_surface_layer_)
-      io_surface_layer_->setNeedsDisplay();
+      io_surface_layer_->SetNeedsDisplay();
   }
 }
 #endif

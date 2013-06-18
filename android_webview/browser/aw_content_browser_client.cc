@@ -13,7 +13,6 @@
 #include "android_webview/browser/net_disk_cache_remover.h"
 #include "android_webview/browser/renderer_host/aw_resource_dispatcher_host_delegate.h"
 #include "android_webview/common/url_constants.h"
-#include "base/android/locale_utils.h"
 #include "base/base_paths_android.h"
 #include "base/path_service.h"
 #include "content/public/browser/access_token_store.h"
@@ -23,10 +22,14 @@
 #include "content/public/common/url_constants.h"
 #include "grit/ui_resources.h"
 #include "net/android/network_library.h"
-#include "net/base/ssl_info.h"
+#include "net/ssl/ssl_info.h"
+#include "ui/base/l10n/l10n_util_android.h"
 #include "ui/base/resource/resource_bundle.h"
 
+namespace android_webview {
 namespace {
+
+AwBrowserContext* g_browser_context;
 
 class AwAccessTokenStore : public content::AccessTokenStore {
  public:
@@ -51,12 +54,20 @@ class AwAccessTokenStore : public content::AccessTokenStore {
 
 }
 
-namespace android_webview {
+std::string AwContentBrowserClient::GetAcceptLangsImpl() {
+  // Start with the currnet locale.
+  std::string langs = l10n_util::GetDefaultLocale();
 
-// static
-AwContentBrowserClient* AwContentBrowserClient::FromContentBrowserClient(
-    content::ContentBrowserClient* client) {
-  return static_cast<AwContentBrowserClient*>(client);
+  // If we're not en-US, add in en-US which will be
+  // used with a lower q-value.
+  if (StringToLowerASCII(langs) != "en-us") {
+    langs += ",en-US";
+  }
+  return langs;
+}
+
+AwBrowserContext* AwContentBrowserClient::GetAwBrowserContext() {
+  return g_browser_context;
 }
 
 AwContentBrowserClient::AwContentBrowserClient(
@@ -68,9 +79,11 @@ AwContentBrowserClient::AwContentBrowserClient(
   }
   browser_context_.reset(
       new AwBrowserContext(user_data_dir, native_factory_));
+  g_browser_context = browser_context_.get();
 }
 
 AwContentBrowserClient::~AwContentBrowserClient() {
+  g_browser_context = NULL;
 }
 
 void AwContentBrowserClient::AddCertificate(net::URLRequest* request,
@@ -81,10 +94,6 @@ void AwContentBrowserClient::AddCertificate(net::URLRequest* request,
                                             int render_view_id) {
   if (cert_size > 0)
     net::android::StoreCertificate(cert_type, cert_data, cert_size);
-}
-
-AwBrowserContext* AwContentBrowserClient::GetAwBrowserContext() {
-  return browser_context_.get();
 }
 
 content::BrowserMainParts* AwContentBrowserClient::CreateBrowserMainParts(
@@ -118,21 +127,9 @@ void AwContentBrowserClient::RenderProcessHostCreated(
 net::URLRequestContextGetter*
 AwContentBrowserClient::CreateRequestContext(
     content::BrowserContext* browser_context,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        blob_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        file_system_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        developer_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        chrome_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        chrome_devtools_protocol_handler) {
+    content::ProtocolHandlerMap* protocol_handlers) {
   DCHECK(browser_context_.get() == browser_context);
-  return browser_context_->CreateRequestContext(
-      blob_protocol_handler.Pass(), file_system_protocol_handler.Pass(),
-      developer_protocol_handler.Pass(), chrome_protocol_handler.Pass(),
-      chrome_devtools_protocol_handler.Pass());
+  return browser_context_->CreateRequestContext(protocol_handlers);
 }
 
 net::URLRequestContextGetter*
@@ -140,22 +137,10 @@ AwContentBrowserClient::CreateRequestContextForStoragePartition(
     content::BrowserContext* browser_context,
     const base::FilePath& partition_path,
     bool in_memory,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        blob_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        file_system_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        developer_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        chrome_protocol_handler,
-    scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
-        chrome_devtools_protocol_handler) {
+    content::ProtocolHandlerMap* protocol_handlers) {
   DCHECK(browser_context_.get() == browser_context);
   return browser_context_->CreateRequestContextForStoragePartition(
-      partition_path, in_memory, blob_protocol_handler.Pass(),
-      file_system_protocol_handler.Pass(),
-      developer_protocol_handler.Pass(), chrome_protocol_handler.Pass(),
-      chrome_devtools_protocol_handler.Pass());
+      partition_path, in_memory, protocol_handlers);
 }
 
 std::string AwContentBrowserClient::GetCanonicalEncodingNameByAliasName(
@@ -170,20 +155,12 @@ void AwContentBrowserClient::AppendExtraCommandLineSwitches(
 }
 
 std::string AwContentBrowserClient::GetApplicationLocale() {
-  return base::android::GetDefaultLocale();
+  return l10n_util::GetDefaultLocale();
 }
 
 std::string AwContentBrowserClient::GetAcceptLangs(
     content::BrowserContext* context) {
-  // Start with the currnet locale.
-  std::string langs = GetApplicationLocale();
-
-  // If we're not en-US, add in en-US which will be
-  // used with a lower q-value.
-  if (StringToLowerASCII(langs) != "en-us") {
-    langs += ",en-US";
-  }
-  return langs;
+  return GetAcceptLangsImpl();
 }
 
 gfx::ImageSkia* AwContentBrowserClient::GetDefaultFavicon() {
@@ -360,12 +337,6 @@ void AwContentBrowserClient::UpdateInspectorSetting(
     content::RenderViewHost* rvh,
     const std::string& key,
     const std::string& value) {
-  // TODO(boliu): Implement persisting inspector settings.
-  NOTIMPLEMENTED();
-}
-
-void AwContentBrowserClient::ClearInspectorSettings(
-    content::RenderViewHost* rvh) {
   // TODO(boliu): Implement persisting inspector settings.
   NOTIMPLEMENTED();
 }

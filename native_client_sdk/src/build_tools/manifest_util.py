@@ -51,7 +51,7 @@ def GetHostOS():
 
 def DictToJSON(pydict):
   """Convert a dict to a JSON-formatted string."""
-  pretty_string = json.dumps(pydict, sort_keys=False, indent=2)
+  pretty_string = json.dumps(pydict, sort_keys=True, indent=2)
   # json.dumps sometimes returns trailing whitespace and does not put
   # a newline at the end.  This code fixes these problems.
   pretty_lines = pretty_string.split('\n')
@@ -156,7 +156,7 @@ class Archive(dict):
     """Update the size and checksum information for this archive
     based on the content currently at the URL.
 
-    This allows the template mandifest to be maintained without
+    This allows the template manifest to be maintained without
     the need to size and checksums to be present.
     """
     template = string.Template(self['url'])
@@ -528,7 +528,7 @@ class SDKManifest(object):
       local_bundle.MergeWithBundle(bundle)
 
   def MergeManifest(self, manifest):
-    '''Merge another manifest into this manifest, disallowing overiding.
+    '''Merge another manifest into this manifest, disallowing overriding.
 
     Args
       manifest: The manifest to merge.

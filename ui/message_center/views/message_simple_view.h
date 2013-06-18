@@ -5,18 +5,18 @@
 #ifndef UI_MESSAGE_CENTER_VIEWS_MESSAGE_SIMPLE_VIEW_H_
 #define UI_MESSAGE_CENTER_VIEWS_MESSAGE_SIMPLE_VIEW_H_
 
-#include "ui/message_center/notification_list.h"
 #include "ui/message_center/views/message_view.h"
 
 namespace message_center {
 
+class MessageCenter;
 class Notification;
 
 // A simple view for a notification entry (icon + message + buttons).
 class MessageSimpleView : public MessageView {
  public:
-  MessageSimpleView(NotificationList::Delegate* list_delegate,
-                    const Notification& notification);
+  MessageSimpleView(const Notification& notification,
+                    MessageCenter* message_center);
   virtual ~MessageSimpleView();
 
   // Overridden from MessageView:
@@ -26,6 +26,7 @@ class MessageSimpleView : public MessageView {
  protected:
   // Overridden from views::View:
   virtual gfx::Size GetPreferredSize() OVERRIDE;
+  virtual int GetHeightForWidth(int width) OVERRIDE;
   virtual void Layout() OVERRIDE;
 
   MessageSimpleView();

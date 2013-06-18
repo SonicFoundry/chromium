@@ -20,7 +20,7 @@
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
-#include "net/base/mock_host_resolver.h"
+#include "net/dns/mock_host_resolver.h"
 
 using content::ExecuteScript;
 using content::ExecuteScriptAndExtractString;
@@ -328,7 +328,7 @@ IN_PROC_BROWSER_TEST_F(IsolatedAppTest, MAYBE_SubresourceCookieIsolation) {
 
   // The app under test acts on URLs whose host is "localhost",
   // so the URLs we navigate to must have host "localhost".
-  GURL root_url = test_server()->GetURL("");
+  GURL root_url = test_server()->GetURL(std::string());
   GURL base_url = test_server()->GetURL("files/extensions/isolated_apps/");
   GURL::Replacements replace_host;
   std::string host_str("localhost");  // Must stay in scope with replace_host.

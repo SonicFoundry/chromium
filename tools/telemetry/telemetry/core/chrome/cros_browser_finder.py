@@ -1,33 +1,37 @@
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
-"""Finds android browsers that can be controlled by telemetry."""
+"""Finds CrOS browsers that can be controlled by telemetry."""
 
 import logging
+import sys
 
 from telemetry.core import browser
 from telemetry.core import possible_browser
-from telemetry.core.chrome import platform
 from telemetry.core.chrome import cros_browser_backend
 from telemetry.core.chrome import cros_interface
+from telemetry.core.platform import cros_platform_backend
 
 ALL_BROWSER_TYPES = ','.join([
     'cros-chrome',
+    'cros-chrome-guest',
     ])
 
 class PossibleCrOSBrowser(possible_browser.PossibleBrowser):
   """A launchable chromeos browser instance."""
-  def __init__(self, browser_type, options, *args):
+  def __init__(self, browser_type, options, cri, is_guest):
     super(PossibleCrOSBrowser, self).__init__(browser_type, options)
-    self._args = args
+    self._cri = cri
+    self._is_guest = is_guest
 
   def __repr__(self):
     return 'PossibleCrOSBrowser(browser_type=%s)' % self.browser_type
 
   def Create(self):
     backend = cros_browser_backend.CrOSBrowserBackend(
-        self.browser_type, self._options, *self._args)
-    b = browser.Browser(backend, platform.EmptyPlatform())
+        self.browser_type, self._options, self._cri, self._is_guest)
+    b = browser.Browser(backend,
+                        cros_platform_backend.CrosPlatformBackend(self._cri))
     backend.SetBrowser(b)
     return b
 
@@ -35,7 +39,16 @@ class PossibleCrOSBrowser(possible_browser.PossibleBrowser):
     return True
 
 def FindAllAvailableBrowsers(options):
-  """Finds all the desktop browsers available on this machine."""
+  """Finds all available chromeos browsers, locally and remotely."""
+  # Check if we are on a chromeos device.
+  if sys.platform.startswith('linux'):
+    with open('/etc/lsb-release', 'r') as f:
+      res = f.read()
+      if res.count('CHROMEOS_RELEASE_NAME'):
+        return [PossibleCrOSBrowser('system', options,
+                                    cros_interface.CrOSInterface(),
+                                    is_guest=False)]
+
   if options.cros_remote == None:
     logging.debug('No --remote specified, will not probe for CrOS.')
     return []
@@ -70,11 +83,12 @@ def FindAllAvailableBrowsers(options):
       logging.warn('There, that was easy!')
       logging.warn('')
       logging.warn('P.S. Please, tell your manager how INANE this is.')
-    else:
-      logging.warn(str(ex))
-    return []
+
+    from telemetry.core import browser_finder
+    raise browser_finder.BrowserFinderException(str(ex))
 
   if not cri.FileExistsOnDevice('/opt/google/chrome/chrome'):
     logging.warn('Could not find a chrome on ' % cri.hostname)
 
-  return [PossibleCrOSBrowser('cros-chrome', options, cri)]
+  return [PossibleCrOSBrowser('cros-chrome', options, cri, is_guest=False),
+          PossibleCrOSBrowser('cros-chrome-guest', options, cri, is_guest=True)]

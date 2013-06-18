@@ -12,12 +12,12 @@
 #include "base/message_loop.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
-#include "net/base/ssl_config_service_defaults.h"
 #include "net/base/test_completion_callback.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_server_properties_impl.h"
 #include "net/http/http_stream.h"
 #include "net/proxy/proxy_service.h"
+#include "net/ssl/ssl_config_service_defaults.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
@@ -72,11 +72,12 @@ class MockHttpStream : public HttpStream {
         is_sync_(false),
         is_last_chunk_zero_size_(false),
         is_complete_(false),
-        ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {}
+        weak_factory_(this) {}
   virtual ~MockHttpStream() {}
 
   // HttpStream implementation.
   virtual int InitializeStream(const HttpRequestInfo* request_info,
+                               RequestPriority priority,
                                const BoundNetLog& net_log,
                                const CompletionCallback& callback) OVERRIDE {
     return ERR_UNEXPECTED;
@@ -97,7 +98,6 @@ class MockHttpStream : public HttpStream {
   }
 
   virtual bool CanFindEndOfResponse() const OVERRIDE { return true; }
-  virtual bool IsMoreDataBuffered() const OVERRIDE { return false; }
   virtual bool IsConnectionReused() const OVERRIDE { return false; }
   virtual void SetConnectionReused() OVERRIDE {}
   virtual bool IsConnectionReusable() const OVERRIDE { return false; }
@@ -121,8 +121,6 @@ class MockHttpStream : public HttpStream {
   virtual bool IsResponseBodyComplete() const OVERRIDE { return is_complete_; }
 
   virtual bool IsSpdyHttpStream() const OVERRIDE { return false; }
-
-  virtual void LogNumRttVsBytesMetrics() const OVERRIDE {}
 
   virtual bool GetLoadTimingInfo(
       LoadTimingInfo* load_timing_info) const OVERRIDE { return false; }

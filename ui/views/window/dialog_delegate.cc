@@ -16,6 +16,10 @@
 #include "ui/views/widget/widget_observer.h"
 #include "ui/views/window/dialog_client_view.h"
 
+#if defined(USE_AURA)
+#include "ui/views/corewm/shadow_types.h"
+#endif
+
 namespace views {
 
 namespace {
@@ -28,15 +32,20 @@ Widget* CreateDialogWidgetImpl(DialogDelegateView* dialog_delegate_view,
   views::Widget::InitParams params;
   params.delegate = dialog_delegate_view;
   if (DialogDelegate::UseNewStyle()) {
-    // TODO(msw): Avoid Windows native controls or support dialog transparency
-    //            with a separate border Widget, like BubbleDelegateView.
-    params.transparent = views::View::get_use_acceleration_when_possible();
+    // Note: Transparent widgets cannot host native Windows textfield controls.
+    params.transparent = true;
     params.remove_standard_frame = true;
   }
   params.context = context;
   params.parent = parent;
   params.top_level = true;
   widget->Init(params);
+  if (DialogDelegate::UseNewStyle()) {
+#if defined(USE_AURA)
+    // TODO(msw): Add a matching shadow type and remove the bubble frame border?
+    corewm::SetShadowType(widget->GetNativeWindow(), corewm::SHADOW_TYPE_NONE);
+#endif
+  }
   return widget;
 }
 
@@ -143,7 +152,7 @@ NonClientFrameView* DialogDelegate::CreateNonClientFrameView(Widget* widget) {
 
 // static
 NonClientFrameView* DialogDelegate::CreateNewStyleFrameView(Widget* widget) {
-  BubbleFrameView* frame = new BubbleFrameView(gfx::Insets(20, 20, 20, 20));
+  BubbleFrameView* frame = new BubbleFrameView(gfx::Insets());
   const SkColor color = widget->GetNativeTheme()->GetSystemColor(
       ui::NativeTheme::kColorId_DialogBackground);
   frame->SetBubbleBorder(

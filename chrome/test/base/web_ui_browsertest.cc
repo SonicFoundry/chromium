@@ -27,6 +27,11 @@
 #include "chrome/test/base/test_tab_strip_model_observer.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/notification_observer.h"
+#include "content/public/browser/notification_registrar.h"
+#include "content/public/browser/notification_service.h"
+#include "content/public/browser/notification_types.h"
+#include "content/public/browser/render_view_host_observer.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui_controller.h"
@@ -69,6 +74,56 @@ bool LogHandler(int severity,
 
   return false;
 }
+
+class RenderViewHostInitializedObserver
+    : public content::RenderViewHostObserver {
+ public:
+  RenderViewHostInitializedObserver(content::RenderViewHost* render_view_host,
+                                    content::JsInjectionReadyObserver* observer)
+      : content::RenderViewHostObserver(render_view_host),
+        injection_observer_(observer) {
+  }
+
+  // content::RenderViewHostObserver:
+  virtual void RenderViewHostInitialized() OVERRIDE {
+    injection_observer_->OnJsInjectionReady(render_view_host());
+  }
+
+ private:
+  content::JsInjectionReadyObserver* injection_observer_;
+
+  DISALLOW_COPY_AND_ASSIGN(RenderViewHostInitializedObserver);
+};
+
+class WebUIJsInjectionReadyObserver {
+ public:
+  explicit WebUIJsInjectionReadyObserver(
+      content::JsInjectionReadyObserver* observer)
+      : injection_observer_(observer),
+        rvh_callback_(
+            base::Bind(&WebUIJsInjectionReadyObserver::RenderViewHostCreated,
+                       base::Unretained(this))) {
+    content::RenderViewHost::AddCreatedCallback(rvh_callback_);
+  }
+
+  ~WebUIJsInjectionReadyObserver() {
+    content::RenderViewHost::RemoveCreatedCallback(rvh_callback_);
+  }
+
+ private:
+  void RenderViewHostCreated(content::RenderViewHost* rvh) {
+    rvh_observer_.reset(
+        new RenderViewHostInitializedObserver(rvh, injection_observer_));
+  }
+
+  content::JsInjectionReadyObserver* injection_observer_;
+
+  scoped_ptr<RenderViewHostInitializedObserver> rvh_observer_;
+
+  content::RenderViewHost::CreatedCallback rvh_callback_;
+
+  DISALLOW_COPY_AND_ASSIGN(WebUIJsInjectionReadyObserver);
+};
 
 }  // namespace
 
@@ -210,11 +265,12 @@ void WebUIBrowserTest::PreLoadJavascriptLibraries(
 }
 
 void WebUIBrowserTest::BrowsePreload(const GURL& browse_to) {
+  WebUIJsInjectionReadyObserver injection_observer(this);
   content::TestNavigationObserver navigation_observer(
       content::Source<NavigationController>(
           &browser()->tab_strip_model()->
               GetActiveWebContents()->GetController()),
-      this, 1);
+      1);
   chrome::NavigateParams params(browser(), GURL(browse_to),
                                 content::PAGE_TRANSITION_TYPED);
   params.disposition = CURRENT_TAB;
@@ -275,13 +331,14 @@ class MockWebUIDataSource : public content::URLDataSource {
  private:
   virtual ~MockWebUIDataSource() {}
 
-  virtual std::string GetSource() OVERRIDE {
+  virtual std::string GetSource() const OVERRIDE {
     return "dummyurl";
   }
 
   virtual void StartDataRequest(
       const std::string& path,
-      bool is_incognito,
+      int render_process_id,
+      int render_view_id,
       const content::URLDataSource::GotDataCallback& callback) OVERRIDE {
     std::string dummy_html = "<html><body>Dummy</body></html>";
     scoped_refptr<base::RefCountedString> response =

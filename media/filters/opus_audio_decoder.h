@@ -6,6 +6,7 @@
 #define MEDIA_FILTERS_OPUS_AUDIO_DECODER_H_
 
 #include "base/callback.h"
+#include "base/memory/weak_ptr.h"
 #include "media/base/audio_decoder.h"
 #include "media/base/demuxer_stream.h"
 
@@ -26,9 +27,10 @@ class MEDIA_EXPORT OpusAudioDecoder : public AudioDecoder {
  public:
   explicit OpusAudioDecoder(
       const scoped_refptr<base::MessageLoopProxy>& message_loop);
+  virtual ~OpusAudioDecoder();
 
   // AudioDecoder implementation.
-  virtual void Initialize(const scoped_refptr<DemuxerStream>& stream,
+  virtual void Initialize(DemuxerStream* stream,
                           const PipelineStatusCB& status_cb,
                           const StatisticsCB& statistics_cb) OVERRIDE;
   virtual void Read(const ReadCB& read_cb) OVERRIDE;
@@ -36,9 +38,6 @@ class MEDIA_EXPORT OpusAudioDecoder : public AudioDecoder {
   virtual ChannelLayout channel_layout() OVERRIDE;
   virtual int samples_per_second() OVERRIDE;
   virtual void Reset(const base::Closure& closure) OVERRIDE;
-
- protected:
-  virtual ~OpusAudioDecoder();
 
  private:
   // Reads from the demuxer stream with corresponding callback method.
@@ -54,8 +53,10 @@ class MEDIA_EXPORT OpusAudioDecoder : public AudioDecoder {
               scoped_refptr<DataBuffer>* output_buffer);
 
   scoped_refptr<base::MessageLoopProxy> message_loop_;
+  base::WeakPtrFactory<OpusAudioDecoder> weak_factory_;
+  base::WeakPtr<OpusAudioDecoder> weak_this_;
 
-  scoped_refptr<DemuxerStream> demuxer_stream_;
+  DemuxerStream* demuxer_stream_;
   StatisticsCB statistics_cb_;
   OpusMSDecoder* opus_decoder_;
 
@@ -77,7 +78,7 @@ class MEDIA_EXPORT OpusAudioDecoder : public AudioDecoder {
   int skip_samples_;
 
   // Buffer for output from libopus.
-  scoped_array<int16> output_buffer_;
+  scoped_ptr<int16[]> output_buffer_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(OpusAudioDecoder);
 };

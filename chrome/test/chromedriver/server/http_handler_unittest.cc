@@ -7,10 +7,11 @@
 #include "base/json/json_writer.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/values.h"
+#include "chrome/test/chromedriver/chrome/status.h"
 #include "chrome/test/chromedriver/command_executor.h"
+#include "chrome/test/chromedriver/command_names.h"
 #include "chrome/test/chromedriver/server/http_handler.h"
 #include "chrome/test/chromedriver/server/http_response.h"
-#include "chrome/test/chromedriver/status.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -55,7 +56,7 @@ TEST(HttpHandlerTest, HandleUnknownCommand) {
       scoped_ptr<CommandExecutor>(new DummyExecutor()),
       scoped_ptr<HttpHandler::CommandMap>(new HttpHandler::CommandMap()),
       "/");
-  HttpRequest request(kGet, "/path", "");
+  HttpRequest request(kGet, "/path", std::string());
   HttpResponse response;
   handler.Handle(request, &response);
   ASSERT_EQ(HttpResponse::kNotFound, response.status());
@@ -63,11 +64,11 @@ TEST(HttpHandlerTest, HandleUnknownCommand) {
 
 TEST(HttpHandlerTest, HandleNewSession) {
   scoped_ptr<HttpHandler::CommandMap> map(new HttpHandler::CommandMap());
-  map->push_back(CommandMapping(kPost, "new", internal::kNewSessionIdCommand));
+  map->push_back(CommandMapping(kPost, "session", CommandNames::kNewSession));
   HttpHandler handler(
       scoped_ptr<CommandExecutor>(new DummyExecutor()),
       map.Pass(), "/base/");
-  HttpRequest request(kPost, "/base/new", "");
+  HttpRequest request(kPost, "/base/session", std::string());
   HttpResponse response;
   handler.Handle(request, &response);
   ASSERT_EQ(HttpResponse::kSeeOther, response.status());
@@ -95,7 +96,7 @@ TEST(HttpHandlerTest, HandleUnimplementedCommand) {
   HttpHandler handler(
       scoped_ptr<CommandExecutor>(new DummyExecutor(kUnknownCommand)),
       map.Pass(), "/");
-  HttpRequest request(kPost, "/path", "");
+  HttpRequest request(kPost, "/path", std::string());
   HttpResponse response;
   handler.Handle(request, &response);
   ASSERT_EQ(HttpResponse::kNotImplemented, response.status());
@@ -107,7 +108,7 @@ TEST(HttpHandlerTest, HandleCommand) {
   HttpHandler handler(
       scoped_ptr<CommandExecutor>(new DummyExecutor()),
       map.Pass(), "/");
-  HttpRequest request(kPost, "/path", "");
+  HttpRequest request(kPost, "/path", std::string());
   HttpResponse response;
   handler.Handle(request, &response);
   ASSERT_EQ(HttpResponse::kOk, response.status());
@@ -139,9 +140,9 @@ TEST(MatchesCommandTest, DiffPathLength) {
   ASSERT_FALSE(internal::MatchesCommand(
       kPost, "path", command, &session_id, &params));
   ASSERT_FALSE(internal::MatchesCommand(
-      kPost, "", command, &session_id, &params));
-  ASSERT_FALSE(internal::MatchesCommand(
-      kPost, "/", command, &session_id, &params));
+      kPost, std::string(), command, &session_id, &params));
+  ASSERT_FALSE(
+      internal::MatchesCommand(kPost, "/", command, &session_id, &params));
   ASSERT_FALSE(internal::MatchesCommand(
       kPost, "path/path/path", command, &session_id, &params));
 }

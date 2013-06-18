@@ -17,6 +17,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "build/build_config.h"
 #include "ui/base/accelerators/accelerator.h"
+#include "ui/base/accessibility/accessibility_types.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/base/events/event.h"
@@ -53,11 +54,6 @@ class Texture;
 class ThemeProvider;
 }
 
-#if defined(OS_WIN)
-class __declspec(uuid("26f5641a-246d-457b-a96d-07f3fae6acf2"))
-NativeViewAccessibilityWin;
-#endif
-
 namespace views {
 
 class Background;
@@ -69,6 +65,7 @@ class FocusManager;
 class FocusTraversable;
 class InputMethod;
 class LayoutManager;
+class NativeViewAccessibility;
 class ScrollView;
 class Widget;
 
@@ -266,7 +263,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Methods for setting transformations for a view (e.g. rotation, scaling).
 
-  const gfx::Transform& GetTransform() const;
+  gfx::Transform GetTransform() const;
 
   // Clipping parameters. Clipping is done relative to the view bounds.
   void set_clip_insets(gfx::Insets clip_insets) { clip_insets_ = clip_insets; }
@@ -521,8 +518,14 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // The points (and mouse locations) in the following functions are in the
   // view's coordinates, except for a RootView.
 
-  // Returns the deepest visible descendant that contains the specified point.
+  // Returns the deepest visible descendant that contains the specified point
+  // and supports event handling.
   virtual View* GetEventHandlerForPoint(const gfx::Point& point);
+
+  // Returns the deepest visible descendant that contains the specified point
+  // and supports tooltips. If the view does not contain the point, returns
+  // NULL.
+  virtual View* GetTooltipHandlerForPoint(const gfx::Point& point);
 
   // Return the cursor that should be used for this view or the default cursor.
   // The event location is in the receiver's coordinate system. The caller is
@@ -728,8 +731,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   virtual FocusManager* GetFocusManager();
   virtual const FocusManager* GetFocusManager() const;
 
-  // Request the keyboard focus. The receiving view will become the
-  // focused view.
+  // Request keyboard focus. The receiving view will become the focused view.
   virtual void RequestFocus();
 
   // Invoked when a view is about to be requested for focus due to the focus
@@ -793,6 +795,10 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Chrome toolbar Back and Forward buttons). No source needs to be specified,
   // as it is always equal to the current View.
   virtual void ShowContextMenu(const gfx::Point& p, bool is_mouse_gesture);
+
+  // On some platforms, we show context menu on mouse press instead of release.
+  // This method returns true for those platforms.
+  static bool ShouldShowContextMenuOnMousePress();
 
   // Drag and drop -------------------------------------------------------------
 
@@ -870,6 +876,15 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Returns an instance of the native accessibility interface for this view.
   virtual gfx::NativeViewAccessible GetNativeViewAccessible();
+
+  // Notifies assistive technology that an accessibility event has
+  // occurred on this view, such as when the view is focused or when its
+  // value changes. Pass true for |send_native_event| except for rare
+  // cases where the view is a native control that's already sending a
+  // native accessibility event and the duplicate event would cause
+  // problems.
+  void NotifyAccessibilityEvent(ui::AccessibilityTypes::Event event_type,
+                                bool send_native_event);
 
   // Scrolling -----------------------------------------------------------------
   // TODO(beng): Figure out if this can live somewhere other than View, i.e.
@@ -1486,11 +1501,9 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Accessibility -------------------------------------------------------------
 
-  // The Windows-specific accessibility implementation for this view.
-#if defined(OS_WIN)
-  base::win::ScopedComPtr<NativeViewAccessibilityWin>
-      native_view_accessibility_win_;
-#endif
+  // Belongs to this view, but it's reference-counted on some platforms
+  // so we can't use a scoped_ptr. It's dereferenced in the destructor.
+  NativeViewAccessibility* native_view_accessibility_;
 
   DISALLOW_COPY_AND_ASSIGN(View);
 };

@@ -15,9 +15,9 @@
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread.h"
 #include "base/values.h"
+#include "chrome/test/chromedriver/chrome/status.h"
 #include "chrome/test/chromedriver/chromedriver.h"
 #include "chrome/test/chromedriver/command_executor.h"
-#include "chrome/test/chromedriver/status.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -164,7 +164,7 @@ TEST(ChromeDriver, ExecuteCommand) {
     base::DictionaryValue params;
     scoped_ptr<base::Value> value(base::Value::CreateNullValue());
     mock->Expect(scoped_ptr<ExpectedCommand>(new ExpectedCommand(
-        "quitAll", params, "", kOk, value.Pass(), "")));
+        "quitAll", params, std::string(), kOk, value.Pass(), std::string())));
   }
   Shutdown();
 }

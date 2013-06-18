@@ -8,7 +8,7 @@
 #define CHROME_BROWSER_CHROME_BROWSER_MAIN_LINUX_H_
 
 #include "base/compiler_specific.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/chrome_browser_main_posix.h"
 
 #if !defined(OS_CHROMEOS)
@@ -16,10 +16,6 @@ namespace chrome {
 class StorageMonitorLinux;
 }
 #endif
-
-namespace chrome {
-class MediaTransferProtocolDeviceObserverLinux;
-}
 
 class ChromeBrowserMainPartsLinux : public ChromeBrowserMainPartsPosix {
  public:
@@ -34,11 +30,8 @@ class ChromeBrowserMainPartsLinux : public ChromeBrowserMainPartsPosix {
 
  private:
 #if !defined(OS_CHROMEOS)
-  scoped_refptr<chrome::StorageMonitorLinux> storage_monitor_;
+  scoped_ptr<chrome::StorageMonitorLinux> storage_monitor_;
 #endif
-  scoped_ptr<chrome::MediaTransferProtocolDeviceObserverLinux>
-      media_transfer_protocol_device_observer_;
-  bool initialized_media_transfer_protocol_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserMainPartsLinux);
 };

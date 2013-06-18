@@ -13,8 +13,7 @@ from telemetry.core import browser
 from telemetry.core import possible_browser
 from telemetry.core.chrome import adb_commands
 from telemetry.core.chrome import android_browser_backend
-from telemetry.core.chrome import android_platform_backend
-from telemetry.core.chrome import platform
+from telemetry.core.platform import android_platform_backend
 
 CHROME_PACKAGE_NAMES = {
   'android-chrome': 'com.google.android.apps.chrome',
@@ -55,9 +54,8 @@ class PossibleAndroidBrowser(possible_browser.PossibleBrowser):
     backend = android_browser_backend.AndroidBrowserBackend(
         self._options, *self._args)
     platform_backend = android_platform_backend.AndroidPlatformBackend(
-        self._args[0].Adb(), self._args[1],
-        self._args[4], self._options.no_performance_mode)
-    b = browser.Browser(backend, platform.Platform(platform_backend))
+        self._args[0].Adb(), self._options.no_performance_mode)
+    b = browser.Browser(backend, platform_backend)
     backend.SetBrowser(b)
     return b
 
@@ -144,7 +142,7 @@ def FindAllAvailableBrowsers(options, logging=real_logging):
     logging.warn('telemetry detected an android device. However,')
     logging.warn('Chrome\'s port-forwarder app is not available.')
     logging.warn('To build:')
-    logging.warn('  make -j16 host_forwarder device_forwarder')
+    logging.warn('  ninja -C out/Release forwarder2 md5sum')
     logging.warn('')
     logging.warn('')
     return []

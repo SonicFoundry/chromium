@@ -14,7 +14,8 @@
 #if defined(OS_WIN)
 #include "base/shared_memory.h"
 #endif
-#include "content/common/browser_plugin_message_enums.h"
+#include "base/values.h"
+#include "content/common/browser_plugin/browser_plugin_message_enums.h"
 #include "content/renderer/browser_plugin/browser_plugin_backing_store.h"
 #include "content/renderer/browser_plugin/browser_plugin_bindings.h"
 #include "content/renderer/mouse_lock_dispatcher.h"
@@ -23,6 +24,7 @@
 
 struct BrowserPluginHostMsg_AutoSize_Params;
 struct BrowserPluginHostMsg_ResizeGuest_Params;
+struct BrowserPluginMsg_Attach_ACK_Params;
 struct BrowserPluginMsg_LoadCommit_Params;
 struct BrowserPluginMsg_UpdateRect_Params;
 
@@ -38,6 +40,9 @@ class CONTENT_EXPORT BrowserPlugin :
  public:
   RenderViewImpl* render_view() const { return render_view_.get(); }
   int render_view_routing_id() const { return render_view_routing_id_; }
+  int instance_id() const { return instance_id_; }
+
+  static BrowserPlugin* FromContainer(WebKit::WebPluginContainer* container);
 
   bool OnMessageReceived(const IPC::Message& msg);
 
@@ -94,6 +99,12 @@ class CONTENT_EXPORT BrowserPlugin :
   int guest_route_id() const { return guest_route_id_; }
   // Returns whether the guest process has crashed.
   bool guest_crashed() const { return guest_crashed_; }
+  bool HasGuest() const;
+
+  // Attaches the window identified by |window_id| to the the given node
+  // encapsulating a BrowserPlugin.
+  static bool AttachWindowTo(const WebKit::WebNode& node,
+                             int window_id);
 
   // Query whether the guest can navigate back to the previous entry.
   bool CanGoBack() const;
@@ -104,6 +115,10 @@ class CONTENT_EXPORT BrowserPlugin :
   void UpdateGuestFocusState();
   // Indicates whether the guest should be focused.
   bool ShouldGuestBeFocused() const;
+
+  // Embedder's device scale factor changed, we need to update the guest
+  // renderer.
+  void UpdateDeviceScaleFactor(float device_scale_factor);
 
   // Tells the BrowserPlugin to tell the guest to navigate to the previous
   // navigation entry in the navigation history.
@@ -140,6 +155,19 @@ class CONTENT_EXPORT BrowserPlugin :
   // Called by browser plugin binding.
   void OnEmbedderDecidedPermission(int request_id, bool allow);
 
+  // Attaches this BrowserPlugin to a guest with the provided |instance_id|.
+  // If the |instance_id| is not yet associated with a guest, a new guest
+  // will be created. If the |instance_id| has not yet been allocated or the
+  // embedder is not permitted access to that particular guest, then the
+  // embedder will be killed.
+  void Attach(int instance_id);
+
+  // Notify the plugin about a compositor commit so that frame ACKs could be
+  // sent, if needed.
+  void DidCommitCompositorFrame();
+
+  // Returns whether a message should be forwarded to BrowserPlugin.
+  static bool ShouldForwardToBrowserPlugin(const IPC::Message& message);
 
   // WebKit::WebPlugin implementation.
   virtual WebKit::WebPluginContainer* container() const OVERRIDE;
@@ -179,6 +207,7 @@ class CONTENT_EXPORT BrowserPlugin :
       const WebKit::WebURL& url,
       void* notify_data,
       const WebKit::WebURLError& error) OVERRIDE;
+  virtual bool executeEditCommand(const WebKit::WebString& name) OVERRIDE;
 
   // MouseLockDispatcher::LockTarget implementation.
   virtual void OnLockMouseACK(bool succeeded) OVERRIDE;
@@ -210,7 +239,6 @@ class CONTENT_EXPORT BrowserPlugin :
 
   int width() const { return plugin_rect_.width(); }
   int height() const { return plugin_rect_.height(); }
-  int instance_id() const { return instance_id_; }
   // Gets the Max Height value used for auto size.
   int GetAdjustedMaxHeight() const;
   // Gets the Max Width value used for auto size.
@@ -264,8 +292,6 @@ class CONTENT_EXPORT BrowserPlugin :
   // Informs the BrowserPlugin that guest has changed its size in autosize mode.
   void SizeChangedDueToAutoSize(const gfx::Size& old_view_size);
 
-  bool HasEventListeners(const std::string& event_name);
-
   // Indicates whether a damage buffer was used by the guest process for the
   // provided |params|.
   static bool UsesDamageBuffer(
@@ -276,18 +302,17 @@ class CONTENT_EXPORT BrowserPlugin :
   bool UsesPendingDamageBuffer(
       const BrowserPluginMsg_UpdateRect_Params& params);
 
-  // Sets the instance ID of the BrowserPlugin and requests a guest from the
-  // browser process.
-  void SetInstanceID(int instance_id);
+  void AddPermissionRequestToMap(int request_id,
+                                 BrowserPluginPermissionType type);
 
-  // Requests media access permission from the embedder.
-  void RequestMediaPermission(int request_id,
-                              const base::DictionaryValue& request_info);
   // Informs the BrowserPlugin that the guest's permission request has been
   // allowed or denied by the embedder.
   void RespondPermission(BrowserPluginPermissionType permission_type,
                          int request_id,
                          bool allow);
+
+  // Handles the response to the pointerLock permission request.
+  void RespondPermissionPointerLock(bool allow);
 
   // If the request with id |request_id| is pending then informs the
   // BrowserPlugin that the guest's permission request has been allowed or
@@ -297,17 +322,25 @@ class CONTENT_EXPORT BrowserPlugin :
   // object goes out of scope in JavaScript.
   void OnRequestObjectGarbageCollected(int request_id);
   // V8 garbage collection callback for |object|.
-  static void WeakCallbackForPersistObject(v8::Persistent<v8::Value> object,
+  static void WeakCallbackForPersistObject(v8::Isolate* isolate,
+                                           v8::Persistent<v8::Value> object,
                                            void* param);
 
   // IPC message handlers.
   // Please keep in alphabetical order.
+  void OnAddMessageToConsole(
+      int instance_id,
+      const base::DictionaryValue& message_info);
   void OnAdvanceFocus(int instance_id, bool reverse);
+  void OnAttachACK(int instance_id,
+                   const BrowserPluginMsg_Attach_ACK_Params& ack_params);
   void OnBuffersSwapped(int instance_id,
                         const gfx::Size& size,
                         std::string mailbox_name,
                         int gpu_route_id,
                         int gpu_host_id);
+  void OnClose(int instance_id);
+  void OnCompositorFrameSwapped(const IPC::Message& message);
   void OnGuestContentWindowReady(int instance_id,
                                  int content_window_routing_id);
   void OnGuestGone(int instance_id, int process_id, int status);
@@ -325,8 +358,6 @@ class CONTENT_EXPORT BrowserPlugin :
                       bool is_top_level);
   void OnLoadStart(int instance_id, const GURL& url, bool is_top_level);
   void OnLoadStop(int instance_id);
-  void OnLockMouse(int instance_id, bool user_gesture,
-      bool last_unlocked_by_target, bool privileged);
   // Requests permission from the embedder.
   void OnRequestPermission(int instance_id,
                            BrowserPluginPermissionType permission_type,
@@ -353,12 +384,11 @@ class CONTENT_EXPORT BrowserPlugin :
   uint32 damage_buffer_sequence_id_;
   bool resize_ack_received_;
   gfx::Rect plugin_rect_;
+  float last_device_scale_factor_;
   // Bitmap for crashed plugin. Lazily initialized, non-owning pointer.
   SkBitmap* sad_guest_;
   bool guest_crashed_;
   scoped_ptr<BrowserPluginHostMsg_ResizeGuest_Params> pending_resize_params_;
-  // True if we have ever sent a NavigateGuest message to the embedder.
-  bool navigate_src_sent_;
   bool auto_size_ack_pending_;
   int guest_process_id_;
   int guest_route_id_;
@@ -375,12 +405,11 @@ class CONTENT_EXPORT BrowserPlugin :
 
   gfx::Size last_view_size_;
   bool size_changed_in_flight_;
-  bool allocate_instance_id_sent_;
+  bool before_first_navigation_;
 
   // Each permission request item in the map is a pair of request id and
   // permission type.
-  typedef std::map<int, std::pair<int, BrowserPluginPermissionType> >
-      PendingPermissionRequests;
+  typedef std::map<int, BrowserPluginPermissionType> PendingPermissionRequests;
   PendingPermissionRequests pending_permission_requests_;
 
   typedef std::pair<int, base::WeakPtr<BrowserPlugin> >

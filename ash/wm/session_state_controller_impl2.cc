@@ -263,6 +263,7 @@ void SessionStateControllerImpl2::CancelShutdownAnimation() {
     shutdown_after_lock_ = false;
     return;
   }
+
   animator_->StartGlobalAnimation(
       internal::SessionStateAnimator::ANIMATION_UNDO_GRAYSCALE_BRIGHTNESS,
       internal::SessionStateAnimator::ANIMATION_SPEED_REVERT_SHUTDOWN);
@@ -311,6 +312,11 @@ void SessionStateControllerImpl2::OnLockToShutdownTimeout() {
 }
 
 void SessionStateControllerImpl2::StartCancellableShutdownAnimation() {
+  Shell* shell = ash::Shell::GetInstance();
+  // Hide cursor, but let it reappear if the mouse moves.
+  shell->env_filter()->set_cursor_hidden_by_filter(true);
+  shell->cursor_manager()->HideCursor();
+
   animator_->StartGlobalAnimation(
       internal::SessionStateAnimator::ANIMATION_GRAYSCALE_BRIGHTNESS,
       internal::SessionStateAnimator::ANIMATION_SPEED_SHUTDOWN);
@@ -370,6 +376,8 @@ void SessionStateControllerImpl2::OnRealShutdownTimeout() {
     }
   }
 #endif
+  Shell::GetInstance()->delegate()->RecordUserMetricsAction(
+      UMA_ACCEL_SHUT_DOWN_POWER_BUTTON);
   delegate_->RequestShutdown();
 }
 
@@ -386,8 +394,13 @@ void SessionStateControllerImpl2::LockAnimationCancelled() {
 void SessionStateControllerImpl2::PreLockAnimationFinished(bool request_lock) {
   can_cancel_lock_animation_ = false;
 
-  if (request_lock)
+  if (request_lock) {
+    Shell::GetInstance()->delegate()->RecordUserMetricsAction(
+        shutdown_after_lock_ ?
+        UMA_ACCEL_LOCK_SCREEN_POWER_BUTTON :
+        UMA_ACCEL_LOCK_SCREEN_LOCK_BUTTON);
     delegate_->RequestLockScreen();
+  }
 
   lock_fail_timer_.Start(
       FROM_HERE,
@@ -574,7 +587,7 @@ void SessionStateControllerImpl2::StartUnlockAnimationAfterUIDestroyed() {
 }
 
 void SessionStateControllerImpl2::StoreUnlockedProperties() {
-  if (!unlocked_properties_.get()) {
+  if (!unlocked_properties_) {
     unlocked_properties_.reset(new UnlockedStateProperties());
     unlocked_properties_->background_is_hidden = IsBackgroundHidden();
   }
@@ -589,7 +602,7 @@ void SessionStateControllerImpl2::StoreUnlockedProperties() {
 }
 
 void SessionStateControllerImpl2::RestoreUnlockedProperties() {
-  if (!unlocked_properties_.get())
+  if (!unlocked_properties_)
     return;
   if (unlocked_properties_->background_is_hidden) {
     HideBackground();

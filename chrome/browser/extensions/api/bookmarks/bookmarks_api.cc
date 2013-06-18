@@ -20,7 +20,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/time.h"
 #include "base/utf_string_conversions.h"
-#include "chrome/browser/bookmarks/bookmark_codec.h"
 #include "chrome/browser/bookmarks/bookmark_html_writer.h"
 #include "chrome/browser/bookmarks/bookmark_model.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
@@ -33,12 +32,14 @@
 #include "chrome/browser/extensions/extensions_quota_service.h"
 #include "chrome/browser/importer/importer_data_types.h"
 #include "chrome/browser/importer/importer_host.h"
+#include "chrome/browser/importer/importer_type.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/chrome_select_file_policy.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/api/bookmarks.h"
 #include "chrome/common/pref_names.h"
+#include "components/user_prefs/user_prefs.h"
 #include "content/public/browser/notification_service.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -116,7 +117,7 @@ bool BookmarksFunction::GetBookmarkIdAsInt64(const std::string& id_string,
 }
 
 bool BookmarksFunction::EditBookmarksEnabled() {
-  PrefService* prefs = PrefServiceFromBrowserContext(profile_);
+  PrefService* prefs = components::UserPrefs::Get(profile_);
   if (prefs->GetBoolean(prefs::kEditBookmarksEnabled))
     return true;
   error_ = keys::kEditBookmarksDisabled;
@@ -132,7 +133,10 @@ void BookmarksFunction::Loaded(BookmarkModel* model, bool ids_reassigned) {
   Release();  // Balanced in Run().
 }
 
-BookmarkEventRouter::BookmarkEventRouter(BookmarkModel* model) : model_(model) {
+BookmarkEventRouter::BookmarkEventRouter(Profile* profile,
+                                         BookmarkModel* model)
+    : profile_(profile),
+      model_(model) {
   model_->AddObserver(this);
 }
 
@@ -143,11 +147,10 @@ BookmarkEventRouter::~BookmarkEventRouter() {
 }
 
 void BookmarkEventRouter::DispatchEvent(
-    Profile* profile,
     const char* event_name,
     scoped_ptr<ListValue> event_args) {
-  if (extensions::ExtensionSystem::Get(profile)->event_router()) {
-    extensions::ExtensionSystem::Get(profile)->event_router()->BroadcastEvent(
+  if (extensions::ExtensionSystem::Get(profile_)->event_router()) {
+    extensions::ExtensionSystem::Get(profile_)->event_router()->BroadcastEvent(
         make_scoped_ptr(new extensions::Event(event_name, event_args.Pass())));
   }
 }
@@ -178,7 +181,7 @@ void BookmarkEventRouter::BookmarkNodeMoved(BookmarkModel* model,
   object_args->SetInteger(keys::kOldIndexKey, old_index);
   args->Append(object_args);
 
-  DispatchEvent(model->profile(), keys::kOnBookmarkMoved, args.Pass());
+  DispatchEvent(keys::kOnBookmarkMoved, args.Pass());
 }
 
 void BookmarkEventRouter::BookmarkNodeAdded(BookmarkModel* model,
@@ -191,7 +194,7 @@ void BookmarkEventRouter::BookmarkNodeAdded(BookmarkModel* model,
       bookmark_api_helpers::GetBookmarkTreeNode(node, false, false));
   args->Append(tree_node->ToValue().release());
 
-  DispatchEvent(model->profile(), keys::kOnBookmarkCreated, args.Pass());
+  DispatchEvent(keys::kOnBookmarkCreated, args.Pass());
 }
 
 void BookmarkEventRouter::BookmarkNodeRemoved(BookmarkModel* model,
@@ -206,7 +209,14 @@ void BookmarkEventRouter::BookmarkNodeRemoved(BookmarkModel* model,
   object_args->SetInteger(keys::kIndexKey, index);
   args->Append(object_args);
 
-  DispatchEvent(model->profile(), keys::kOnBookmarkRemoved, args.Pass());
+  DispatchEvent(keys::kOnBookmarkRemoved, args.Pass());
+}
+
+void BookmarkEventRouter::BookmarkAllNodesRemoved(BookmarkModel* model) {
+  NOTREACHED();
+  // TODO(shashishekhar) Currently this notification is only used on Android,
+  // which does not support extensions. If Desktop needs to support this, add
+  // a new event to the extensions api.
 }
 
 void BookmarkEventRouter::BookmarkNodeChanged(BookmarkModel* model,
@@ -225,7 +235,7 @@ void BookmarkEventRouter::BookmarkNodeChanged(BookmarkModel* model,
     object_args->SetString(keys::kUrlKey, node->url().spec());
   args->Append(object_args);
 
-  DispatchEvent(model->profile(), keys::kOnBookmarkChanged, args.Pass());
+  DispatchEvent(keys::kOnBookmarkChanged, args.Pass());
 }
 
 void BookmarkEventRouter::BookmarkNodeFaviconChanged(BookmarkModel* model,
@@ -249,23 +259,18 @@ void BookmarkEventRouter::BookmarkNodeChildrenReordered(
   reorder_info->Set(keys::kChildIdsKey, children);
   args->Append(reorder_info);
 
-  DispatchEvent(model->profile(), keys::kOnBookmarkChildrenReordered,
-                args.Pass());
+  DispatchEvent(keys::kOnBookmarkChildrenReordered, args.Pass());
 }
 
 void BookmarkEventRouter::ExtensiveBookmarkChangesBeginning(
     BookmarkModel* model) {
   scoped_ptr<ListValue> args(new ListValue());
-  DispatchEvent(model->profile(),
-                keys::kOnBookmarkImportBegan,
-                args.Pass());
+  DispatchEvent(keys::kOnBookmarkImportBegan, args.Pass());
 }
 
 void BookmarkEventRouter::ExtensiveBookmarkChangesEnded(BookmarkModel* model) {
   scoped_ptr<ListValue> args(new ListValue());
-  DispatchEvent(model->profile(),
-                keys::kOnBookmarkImportEnded,
-                args.Pass());
+  DispatchEvent(keys::kOnBookmarkImportEnded, args.Pass());
 }
 
 BookmarksAPI::BookmarksAPI(Profile* profile) : profile_(profile) {
@@ -301,12 +306,12 @@ ProfileKeyedAPIFactory<BookmarksAPI>* BookmarksAPI::GetFactoryInstance() {
 }
 
 void BookmarksAPI::OnListenerAdded(const EventListenerInfo& details) {
-  bookmark_event_router_.reset(new BookmarkEventRouter(
+  bookmark_event_router_.reset(new BookmarkEventRouter(profile_,
       BookmarkModelFactory::GetForProfile(profile_)));
   ExtensionSystem::Get(profile_)->event_router()->UnregisterObserver(this);
 }
 
-bool BookmarksGetTreeFunction::RunImpl() {
+bool BookmarksGetFunction::RunImpl() {
   scoped_ptr<bookmarks::Get::Params> params(
       bookmarks::Get::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
@@ -371,7 +376,7 @@ bool BookmarksGetChildrenFunction::RunImpl() {
   return true;
 }
 
-bool BookmarksGetFunction::RunImpl() {
+bool BookmarksGetRecentFunction::RunImpl() {
   scoped_ptr<bookmarks::GetRecent::Params> params(
       bookmarks::GetRecent::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
@@ -395,7 +400,7 @@ bool BookmarksGetFunction::RunImpl() {
   return true;
 }
 
-bool BookmarksGetSubTreeFunction::RunImpl() {
+bool BookmarksGetTreeFunction::RunImpl() {
   std::vector<linked_ptr<BookmarkTreeNode> > nodes;
   const BookmarkNode* node =
       BookmarkModelFactory::GetForProfile(profile())->root_node();
@@ -404,7 +409,7 @@ bool BookmarksGetSubTreeFunction::RunImpl() {
   return true;
 }
 
-bool BookmarksGetRecentFunction::RunImpl() {
+bool BookmarksGetSubTreeFunction::RunImpl() {
   scoped_ptr<bookmarks::GetSubTree::Params> params(
       bookmarks::GetSubTree::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
@@ -431,7 +436,7 @@ bool BookmarksSearchFunction::RunImpl() {
       bookmarks::Search::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
-  PrefService* prefs = PrefServiceFromBrowserContext(profile_);
+  PrefService* prefs = components::UserPrefs::Get(profile_);
   std::string lang = prefs->GetString(prefs::kAcceptLanguages);
   std::vector<const BookmarkNode*> nodes;
   bookmark_utils::GetBookmarksContainingText(
@@ -453,8 +458,8 @@ bool BookmarksSearchFunction::RunImpl() {
 
 // static
 bool BookmarksRemoveFunction::ExtractIds(const ListValue* args,
-                                        std::list<int64>* ids,
-                                        bool* invalid_id) {
+                                         std::list<int64>* ids,
+                                         bool* invalid_id) {
   std::string id_string;
   if (!args->GetString(0, &id_string))
     return false;
@@ -564,8 +569,8 @@ bool BookmarksCreateFunction::RunImpl() {
 
 // static
 bool BookmarksMoveFunction::ExtractIds(const ListValue* args,
-                                      std::list<int64>* ids,
-                                      bool* invalid_id) {
+                                       std::list<int64>* ids,
+                                       bool* invalid_id) {
   // For now, Move accepts ID parameters in the same way as an Update.
   return BookmarksUpdateFunction::ExtractIds(args, ids, invalid_id);
 }
@@ -638,8 +643,8 @@ bool BookmarksMoveFunction::RunImpl() {
 
 // static
 bool BookmarksUpdateFunction::ExtractIds(const ListValue* args,
-                                        std::list<int64>* ids,
-                                        bool* invalid_id) {
+                                         std::list<int64>* ids,
+                                         bool* invalid_id) {
   // For now, Update accepts ID parameters in the same way as an Remove.
   return BookmarksRemoveFunction::ExtractIds(args, ids, invalid_id);
 }
@@ -942,7 +947,7 @@ void BookmarksIOFunction::ShowSelectFileDialog(
                                   default_path,
                                   &file_type_info,
                                   0,
-                                  FILE_PATH_LITERAL(""),
+                                  base::FilePath::StringType(),
                                   NULL,
                                   NULL);
 }
@@ -971,15 +976,18 @@ void BookmarksImportFunction::FileSelected(const base::FilePath& path,
   // Android does not have support for the standard importers.
   // TODO(jgreenwald): remove ifdef once extensions are no longer built on
   // Android.
-  scoped_refptr<ImporterHost> importer_host(new ImporterHost);
+  // Deletes itself.
+  ImporterHost* importer_host = new ImporterHost;
   importer::SourceProfile source_profile;
   source_profile.importer_type = importer::TYPE_BOOKMARKS_FILE;
   source_profile.source_path = path;
   importer_host->StartImportSettings(source_profile,
                                      profile(),
                                      importer::FAVORITES,
-                                     new ProfileWriter(profile()),
-                                     true);
+                                     new ProfileWriter(profile()));
+
+  importer::LogImporterUseToMetrics("BookmarksAPI",
+                                    importer::TYPE_BOOKMARKS_FILE);
 #endif
   Release();  // Balanced in BookmarksIOFunction::SelectFile()
 }

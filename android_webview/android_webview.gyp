@@ -1,4 +1,4 @@
-# Copyright (c) 2009 The Chromium Authors. All rights reserved.
+# Copyright 2009 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 {
@@ -24,11 +24,12 @@
         'lib/main/webview_entry_point.cc',
       ],
       'conditions': [
-        ['android_build_type != 0', {
+        ['android_webview_build == 1', {
           'libraries': [
             # The "android" gyp backend doesn't quite handle static libraries'
             # dependencies correctly; force this to be linked as a workaround.
             'cpufeatures.a',
+            '-lcutils',
           ],
         }],
       ],
@@ -83,7 +84,9 @@
         '../components/components.gyp:web_contents_delegate_android',
         '../content/content.gyp:content',
         '../skia/skia.gyp:skia',
+        '../gpu/gpu.gyp:gles2_implementation',
         '../ui/gl/gl.gyp:gl',
+        '../webkit/gpu/webkit_gpu.gyp:webkit_gpu',
         'android_webview_pak',
       ],
       'include_dirs': [
@@ -109,6 +112,8 @@
         'browser/aw_download_manager_delegate.h',
         'browser/aw_http_auth_handler_base.cc',
         'browser/aw_http_auth_handler_base.h',
+        'browser/aw_javascript_dialog_manager.cc',
+        'browser/aw_javascript_dialog_manager.h',
         'browser/aw_login_delegate.cc',
         'browser/aw_login_delegate.h',
         'browser/aw_quota_manager_bridge.cc',
@@ -123,6 +128,14 @@
         'browser/browser_view_renderer_impl.h',
         'browser/find_helper.cc',
         'browser/find_helper.h',
+        'browser/gpu_memory_buffer_factory_impl.cc',
+        'browser/gpu_memory_buffer_factory_impl.h',
+        'browser/gpu_memory_buffer_impl.cc',
+        'browser/gpu_memory_buffer_impl.h',
+        'browser/in_process_renderer/in_process_renderer_client.cc',
+        'browser/in_process_renderer/in_process_renderer_client.h',
+        'browser/in_process_renderer/in_process_view_renderer.cc',
+        'browser/in_process_renderer/in_process_view_renderer.h',
         'browser/icon_helper.cc',
         'browser/icon_helper.h',
         'browser/input_stream.h',
@@ -156,6 +169,8 @@
         'common/aw_hit_test_data.cc',
         'common/aw_hit_test_data.h',
         'common/aw_resource.h',
+        'common/aw_switches.cc',
+        'common/aw_switches.h',
         'common/render_view_messages.cc',
         'common/render_view_messages.h',
         'common/renderer_picture_map.cc',
@@ -190,30 +205,6 @@
         'java_in_dir': '../android_webview/java',
       },
       'includes': [ '../build/java.gypi' ],
-    },
-    {
-      'target_name': 'android_webview_apk',
-      'type': 'none',
-      'dependencies': [
-        '../base/base.gyp:base_java',
-        '../components/components.gyp:navigation_interception_java',
-        '../components/components.gyp:web_contents_delegate_android_java',
-        '../content/content.gyp:content_java',
-        '../media/media.gyp:media_java',
-        '../net/net.gyp:net_java',
-        '../ui/ui.gyp:ui_java',
-        'libwebviewchromium',
-      ],
-      'variables': {
-        'apk_name': 'AndroidWebView',
-        'manifest_package_name': 'org.chromium.android_webview',
-        'java_in_dir': '../android_webview/java',
-        'native_libs_paths': ['<(SHARED_LIB_DIR)/libwebviewchromium.so'],
-        'additional_input_paths': [
-          '<(PRODUCT_DIR)/android_webview_apk/assets/webviewchromium.pak',
-        ],
-      },
-      'includes': [ '../build/java_apk.gypi' ],
     },
   ],
 }

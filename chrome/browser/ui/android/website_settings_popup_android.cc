@@ -7,7 +7,7 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/website_settings/website_settings.h"
 #include "content/public/browser/android/content_view_core.h"
@@ -18,7 +18,7 @@
 #include "content/public/common/ssl_status.h"
 #include "grit/generated_resources.h"
 #include "jni/WebsiteSettingsPopup_jni.h"
-#include "net/base/x509_certificate.h"
+#include "net/cert/x509_certificate.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/android/java_bitmap.h"
 

@@ -10,10 +10,11 @@
 #include "base/logging.h"
 #include "base/path_service.h"
 #include "base/string16.h"
-#include "base/string_piece.h"
+#include "base/strings/string_piece.h"
 #include "base/win/resource_util.h"
 #include "grit/webkit_chromium_resources.h"
 #include "grit/webkit_resources.h"
+#include "ui/base/resource/resource_bundle.h"
 #include "webkit/support/test_webkit_platform_support.h"
 
 #define MAX_LOADSTRING 100
@@ -51,9 +52,16 @@ void BeforeInitialize(bool unit_test_mode) {
 }
 
 void AfterInitialize(bool unit_test_mode) {
+  // TODO(dpranke): update other resource loading to use the pak
+  // instead of loading resources directly compiled in.
+  base::FilePath path;
+  PathService::Get(base::DIR_EXE, &path);
+  path = path.AppendASCII("DumpRenderTree.pak");
+  ResourceBundle::InitSharedInstanceWithPakPath(path);
 }
 
 void BeforeShutdown() {
+  ResourceBundle::CleanupSharedInstance();
 }
 
 void AfterShutdown() {
@@ -61,7 +69,7 @@ void AfterShutdown() {
 
 }  // namespace webkit_support
 
-string16 TestWebKitPlatformSupport::GetLocalizedString(int message_id) {
+base::string16 TestWebKitPlatformSupport::GetLocalizedString(int message_id) {
   wchar_t localized[MAX_LOADSTRING];
   int length = ::LoadString(::GetModuleHandle(NULL), message_id,
                             localized, MAX_LOADSTRING);
@@ -69,7 +77,7 @@ string16 TestWebKitPlatformSupport::GetLocalizedString(int message_id) {
     NOTREACHED();
     return L"No string for this identifier!";
   }
-  return string16(localized, length);
+  return base::string16(localized, length);
 }
 
 base::StringPiece TestWebKitPlatformSupport::GetDataResource(

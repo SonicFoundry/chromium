@@ -11,10 +11,8 @@
 #include "base/string16.h"
 #include "base/gtest_prod_util.h"
 #include "chrome/installer/util/browser_distribution.h"
-#include "chrome/installer/util/util_constants.h"
 
 namespace base {
-class DictionaryValue;
 class FilePath;
 }
 
@@ -87,26 +85,9 @@ class GoogleChromeDistribution : public BrowserDistribution {
       installer::ArchiveType archive_type,
       installer::InstallStatus install_status) OVERRIDE;
 
-  virtual bool GetExperimentDetails(UserExperiment* experiment,
-                                    int flavor) OVERRIDE;
-
-  virtual void LaunchUserExperiment(
-      const base::FilePath& setup_path,
-      installer::InstallStatus status,
-      const Version& version,
-      const installer::Product& product,
-      bool system_level) OVERRIDE;
-
-  // Assuming that the user qualifies, this function performs the inactive user
-  // toast experiment. It will use chrome to show the UI and it will record the
-  // outcome in the registry.
-  virtual void InactiveUserToastExperiment(
-      int flavor,
-      const string16& experiment_group,
-      const installer::Product& installation,
-      const base::FilePath& application_path) OVERRIDE;
-
   virtual bool ShouldSetExperimentLabels() OVERRIDE;
+
+  virtual bool HasUserExperiments() OVERRIDE;
 
   const string16& product_guid() { return product_guid_; }
 
@@ -118,27 +99,6 @@ class GoogleChromeDistribution : public BrowserDistribution {
 
  private:
   friend class BrowserDistribution;
-
-  FRIEND_TEST_ALL_PREFIXES(GoogleChromeDistTest, TestExtractUninstallMetrics);
-
-  // Extracts uninstall metrics from the JSON file located at file_path.
-  // Returns them in a form suitable for appending to a url that already
-  // has GET parameters, i.e. &metric1=foo&metric2=bar.
-  // Returns true if uninstall_metrics has been successfully populated with
-  // the uninstall metrics, false otherwise.
-  virtual bool ExtractUninstallMetricsFromFile(
-      const base::FilePath& file_path, string16* uninstall_metrics);
-
-  // Extracts uninstall metrics from the given JSON value.
-  virtual bool ExtractUninstallMetrics(const base::DictionaryValue& root,
-                                       string16* uninstall_metrics);
-
-  // Given a DictionaryValue containing a set of uninstall metrics,
-  // this builds a URL parameter list of all the contained metrics.
-  // Returns true if at least one uninstall metric was found in
-  // uninstall_metrics_dict, false otherwise.
-  virtual bool BuildUninstallMetricsString(
-      const base::DictionaryValue* uninstall_metrics_dict, string16* metrics);
 
   // The product ID for Google Update.
   string16 product_guid_;

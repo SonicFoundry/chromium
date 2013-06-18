@@ -5,7 +5,9 @@
 #include "chrome/browser/chrome_browser_main_android.h"
 
 #include "base/command_line.h"
+#include "base/debug/trace_event.h"
 #include "base/path_service.h"
+#include "cc/base/switches.h"
 #include "chrome/app/breakpad_linux.h"
 #include "chrome/browser/android/crash_dump_manager.h"
 #include "chrome/common/chrome_switches.h"
@@ -25,6 +27,7 @@ ChromeBrowserMainPartsAndroid::~ChromeBrowserMainPartsAndroid() {
 }
 
 void ChromeBrowserMainPartsAndroid::PreProfileInit() {
+  TRACE_EVENT0("startup", "ChromeBrowserMainPartsAndroid::PreProfileInit")
 #if defined(USE_LINUX_BREAKPAD)
 #if defined(GOOGLE_CHROME_BUILD)
   // TODO(jcivelli): we should not initialize the crash-reporter when it was not
@@ -50,6 +53,8 @@ void ChromeBrowserMainPartsAndroid::PreProfileInit() {
 }
 
 void ChromeBrowserMainPartsAndroid::PreEarlyInitialization() {
+  TRACE_EVENT0("startup",
+    "ChromeBrowserMainPartsAndroid::PreEarlyInitialization")
   net::NetworkChangeNotifier::SetFactory(
       new net::NetworkChangeNotifierFactoryAndroid());
 
@@ -58,13 +63,29 @@ void ChromeBrowserMainPartsAndroid::PreEarlyInitialization() {
   // Chrome on Android does not use default MessageLoop. It has its own
   // Android specific MessageLoop.
   DCHECK(!main_message_loop_.get());
-  main_message_loop_.reset(new MessageLoop(MessageLoop::TYPE_UI));
-  MessageLoopForUI::current()->Start();
+
+  // Create and start the MessageLoop.
+  // This is a critical point in the startup process.
+  {
+    TRACE_EVENT0("startup",
+      "ChromeBrowserMainPartsAndroid::PreEarlyInitialization:CreateUiMsgLoop");
+    main_message_loop_.reset(new MessageLoop(MessageLoop::TYPE_UI));
+  }
+
+  {
+    TRACE_EVENT0("startup",
+      "ChromeBrowserMainPartsAndroid::PreEarlyInitialization:StartUiMsgLoop");
+    MessageLoopForUI::current()->Start();
+  }
+
+  CommandLine::ForCurrentProcess()->AppendSwitch(
+      cc::switches::kCompositeToMailbox);
 
   ChromeBrowserMainParts::PreEarlyInitialization();
 }
 
 int ChromeBrowserMainPartsAndroid::PreCreateThreads() {
+  TRACE_EVENT0("startup", "ChromeBrowserMainPartsAndroid::PreCreateThreads")
   // PreCreateThreads initializes ResourceBundle instance.
   const int result = ChromeBrowserMainParts::PreCreateThreads();
 

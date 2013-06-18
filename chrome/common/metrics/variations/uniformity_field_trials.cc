@@ -6,6 +6,7 @@
 
 #include "base/metrics/field_trial.h"
 #include "base/stringprintf.h"
+#include "base/time.h"
 #include "chrome/common/metrics/variations/variations_util.h"
 
 namespace {
@@ -27,8 +28,8 @@ void SetupSingleUniformityFieldTrial(
 
   DCHECK_EQ(100 % num_trial_groups, 0);
   const int group_percent = 100 / num_trial_groups;
-  const std::string trial_name = StringPrintf(trial_name_string.c_str(),
-                                              group_percent);
+  const std::string trial_name = base::StringPrintf(trial_name_string.c_str(),
+                                                    group_percent);
 
   DVLOG(1) << "Trial name = " << trial_name;
 
@@ -38,22 +39,16 @@ void SetupSingleUniformityFieldTrial(
   if (one_time_randomized)
     trial->UseOneTimeRandomization();
   chrome_variations::AssociateGoogleVariationID(
-      chrome_variations::GOOGLE_WEB_PROPERTIES, trial_name, kDefaultGroupName,
-      trial_base_id);
-  chrome_variations::AssociateGoogleVariationID(
       chrome_variations::GOOGLE_UPDATE_SERVICE, trial_name, kDefaultGroupName,
       trial_base_id);
 
   // Loop starts with group 1 because the field trial automatically creates a
   // default group, which would be group 0.
   for (int group_number = 1; group_number < num_trial_groups; ++group_number) {
-    const std::string group_name = StringPrintf("group_%02d", group_number);
+    const std::string group_name =
+          base::StringPrintf("group_%02d", group_number);
     DVLOG(1) << "    Group name = " << group_name;
     trial->AppendGroup(group_name, kProbabilityPerGroup);
-    chrome_variations::AssociateGoogleVariationID(
-        chrome_variations::GOOGLE_WEB_PROPERTIES, trial_name, group_name,
-        static_cast<chrome_variations::VariationID>(trial_base_id +
-                                                    group_number));
     chrome_variations::AssociateGoogleVariationID(
         chrome_variations::GOOGLE_UPDATE_SERVICE, trial_name, group_name,
         static_cast<chrome_variations::VariationID>(trial_base_id +
@@ -69,7 +64,7 @@ void SetupSingleUniformityFieldTrial(
 
 // Setup a 50% uniformity trial for new installs only. This is accomplished by
 // disabling the trial on clients that were installed before a specified date.
-void SetupNewInstallUniformityTrial(const base::Time& install_date) {
+void SetupNewInstallUniformityTrial(const base::Time install_date) {
   const base::Time::Exploded kStartDate = {
     2012, 11, 0, 6,  // Nov 6, 2012
     0, 0, 0, 0       // 00:00:00.000
@@ -92,7 +87,7 @@ void SetupNewInstallUniformityTrial(const base::Time& install_date) {
 
 namespace chrome_variations {
 
-void SetupUniformityFieldTrials(const base::Time& install_date) {
+void SetupUniformityFieldTrials(const base::Time install_date) {
   // One field trial will be created for each entry in this array. The i'th
   // field trial will have |trial_sizes[i]| groups in it, including the default
   // group. Each group will have a probability of 1/|trial_sizes[i]|.

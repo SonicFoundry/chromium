@@ -55,7 +55,7 @@ NetworkChangeNotifierNetworkLibrary::NetworkChangeNotifierNetworkLibrary()
       has_active_network_(false),
       connection_state_(chromeos::STATE_UNKNOWN),
       connection_type_(CONNECTION_NONE),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+      weak_factory_(this) {
   BrowserThread::PostDelayedTask(
          BrowserThread::UI, FROM_HERE,
          base::Bind(
@@ -129,7 +129,8 @@ void NetworkChangeNotifierNetworkLibrary::OnNetworkChanged(
 void NetworkChangeNotifierNetworkLibrary::UpdateNetworkState(
     chromeos::NetworkLibrary* lib) {
   const chromeos::Network* network = lib->active_network();
-  if (network) {
+  // For VPN networks, the device path is empty. See crbug.com/222251
+  if (network && network->type() != TYPE_VPN) {
     lib->GetIPConfigs(
         network->device_path(),
         chromeos::NetworkLibrary::FORMAT_COLON_SEPARATED_HEX,

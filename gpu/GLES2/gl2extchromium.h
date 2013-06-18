@@ -71,7 +71,8 @@ typedef void (GL_APIENTRYP PFNGLCONSUMETEXTURECHROMIUMPROC) (
 
 #ifndef GL_PIXEL_UNPACK_TRANSFER_BUFFER_CHROMIUM
 // TODO(reveman): Get official numbers for this constants.
-#define GL_PIXEL_UNPACK_TRANSFER_BUFFER_CHROMIUM 0x88EC
+#define GL_PIXEL_UNPACK_TRANSFER_BUFFER_CHROMIUM 0x78EC
+#define GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM 0x78ED
 
 #ifdef GL_GLEXT_PROTOTYPES
 GL_APICALL void* GL_APIENTRY glMapBufferCHROMIUM(GLuint target,GLenum access);
@@ -84,7 +85,12 @@ typedef GLboolean (GL_APIENTRY PFNGLUNMAPBUFFERCHROMIUM) (GLuint target);
 
 #ifndef GL_PIXEL_UNPACK_TRANSFER_BUFFER_BINDING_CHROMIUM
 // TODO(reveman): Get official numbers for this constants.
-#define GL_PIXEL_UNPACK_TRANSFER_BUFFER_BINDING_CHROMIUM 0x88EF
+#define GL_PIXEL_UNPACK_TRANSFER_BUFFER_BINDING_CHROMIUM 0x78EF
+#define GL_PIXEL_PACK_TRANSFER_BUFFER_BINDING_CHROMIUM 0x78EE
+#endif
+
+#ifndef GL_STREAM_READ
+#define GL_STREAM_READ 0x88E1
 #endif
 #endif  /* GL_CHROMIUM_pixel_transfer_buffer_object */
 
@@ -320,11 +326,11 @@ typedef void (GL_APIENTRYP PFNGLBINDUNIFORMLOCATIONCHROMIUMPROC) (
 #ifdef GL_GLEXT_PROTOTYPES
 GL_APICALL void GL_APIENTRY glCopyTextureCHROMIUM(
     GLenum target, GLenum source_id, GLenum dest_id, GLint level,
-    GLint internalformat);
+    GLint internalformat, GLenum dest_type);
 #endif
 typedef void (GL_APIENTRYP PFNGLCOPYTEXTURECHROMIUMPROC) (
     GLenum target, GLenum source_id, GLenum dest_id, GLint level,
-    GLint internalformat);
+    GLint internalformat, GLenum dest_type);
 #endif  /* GL_CHROMIUM_copy_texture */
 
 /* GL_CHROMIUM_lose_context */
@@ -413,6 +419,125 @@ typedef void (GL_APIENTRYP PFNGLBLITFRAMEBUFFEREXTPROC) (
     GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter);
 #endif  /* GL_EXT_framebuffer_blit */
 
+/* GL_EXT_draw_buffers */
+#ifndef GL_EXT_draw_buffers
+#define GL_EXT_draw_buffers 1
+
+#ifdef GL_GLEXT_PROTOTYPES
+GL_APICALL void GL_APIENTRY glDrawBuffersEXT(
+    GLsizei n, const GLenum* bufs);
+#endif
+typedef void (GL_APIENTRYP PFNGLDRAWBUFFERSEXTPROC) (
+    GLsizei n, const GLenum* bufs);
+
+#ifndef GL_COLOR_ATTACHMENT0_EXT
+#define GL_COLOR_ATTACHMENT0_EXT 0x8CE0
+#endif
+#ifndef GL_COLOR_ATTACHMENT1_EXT
+#define GL_COLOR_ATTACHMENT1_EXT 0x8CE1
+#endif
+#ifndef GL_COLOR_ATTACHMENT2_EXT
+#define GL_COLOR_ATTACHMENT2_EXT 0x8CE2
+#endif
+#ifndef GL_COLOR_ATTACHMENT3_EXT
+#define GL_COLOR_ATTACHMENT3_EXT 0x8CE3
+#endif
+#ifndef GL_COLOR_ATTACHMENT4_EXT
+#define GL_COLOR_ATTACHMENT4_EXT 0x8CE4
+#endif
+#ifndef GL_COLOR_ATTACHMENT5_EXT
+#define GL_COLOR_ATTACHMENT5_EXT 0x8CE5
+#endif
+#ifndef GL_COLOR_ATTACHMENT6_EXT
+#define GL_COLOR_ATTACHMENT6_EXT 0x8CE6
+#endif
+#ifndef GL_COLOR_ATTACHMENT7_EXT
+#define GL_COLOR_ATTACHMENT7_EXT 0x8CE7
+#endif
+#ifndef GL_COLOR_ATTACHMENT8_EXT
+#define GL_COLOR_ATTACHMENT8_EXT 0x8CE8
+#endif
+#ifndef GL_COLOR_ATTACHMENT9_EXT
+#define GL_COLOR_ATTACHMENT9_EXT 0x8CE9
+#endif
+#ifndef GL_COLOR_ATTACHMENT10_EXT
+#define GL_COLOR_ATTACHMENT10_EXT 0x8CEA
+#endif
+#ifndef GL_COLOR_ATTACHMENT11_EXT
+#define GL_COLOR_ATTACHMENT11_EXT 0x8CEB
+#endif
+#ifndef GL_COLOR_ATTACHMENT12_EXT
+#define GL_COLOR_ATTACHMENT12_EXT 0x8CEC
+#endif
+#ifndef GL_COLOR_ATTACHMENT13_EXT
+#define GL_COLOR_ATTACHMENT13_EXT 0x8CED
+#endif
+#ifndef GL_COLOR_ATTACHMENT14_EXT
+#define GL_COLOR_ATTACHMENT14_EXT 0x8CEE
+#endif
+#ifndef GL_COLOR_ATTACHMENT15_EXT
+#define GL_COLOR_ATTACHMENT15_EXT 0x8CEF
+#endif
+
+#ifndef GL_DRAW_BUFFER0_EXT
+#define GL_DRAW_BUFFER0_EXT 0x8825
+#endif
+#ifndef GL_DRAW_BUFFER1_EXT
+#define GL_DRAW_BUFFER1_EXT 0x8826
+#endif
+#ifndef GL_DRAW_BUFFER2_EXT
+#define GL_DRAW_BUFFER2_EXT 0x8827
+#endif
+#ifndef GL_DRAW_BUFFER3_EXT
+#define GL_DRAW_BUFFER3_EXT 0x8828
+#endif
+#ifndef GL_DRAW_BUFFER4_EXT
+#define GL_DRAW_BUFFER4_EXT 0x8829
+#endif
+#ifndef GL_DRAW_BUFFER5_EXT
+#define GL_DRAW_BUFFER5_EXT 0x882A
+#endif
+#ifndef GL_DRAW_BUFFER6_EXT
+#define GL_DRAW_BUFFER6_EXT 0x882B
+#endif
+#ifndef GL_DRAW_BUFFER7_EXT
+#define GL_DRAW_BUFFER7_EXT 0x882C
+#endif
+#ifndef GL_DRAW_BUFFER8_EXT
+#define GL_DRAW_BUFFER8_EXT 0x882D
+#endif
+#ifndef GL_DRAW_BUFFER9_EXT
+#define GL_DRAW_BUFFER9_EXT 0x882E
+#endif
+#ifndef GL_DRAW_BUFFER10_EXT
+#define GL_DRAW_BUFFER10_EXT 0x882F
+#endif
+#ifndef GL_DRAW_BUFFER11_EXT
+#define GL_DRAW_BUFFER11_EXT 0x8830
+#endif
+#ifndef GL_DRAW_BUFFER12_EXT
+#define GL_DRAW_BUFFER12_EXT 0x8831
+#endif
+#ifndef GL_DRAW_BUFFER13_EXT
+#define GL_DRAW_BUFFER13_EXT 0x8832
+#endif
+#ifndef GL_DRAW_BUFFER14_EXT
+#define GL_DRAW_BUFFER14_EXT 0x8833
+#endif
+#ifndef GL_DRAW_BUFFER15_EXT
+#define GL_DRAW_BUFFER15_EXT 0x8834
+#endif
+
+#ifndef GL_MAX_COLOR_ATTACHMENTS_EXT
+#define GL_MAX_COLOR_ATTACHMENTS_EXT 0x8CDF
+#endif
+
+#ifndef GL_MAX_DRAW_BUFFERS_EXT
+#define GL_MAX_DRAW_BUFFERS_EXT 0x8824
+#endif
+
+#endif  /* GL_EXT_draw_buffers */
+
 /* GL_CHROMIUM_resize */
 #ifndef GL_CHROMIUM_resize
 #define GL_CHROMIUM_resize 1
@@ -459,4 +584,3 @@ typedef void (GL_APIENTRYP PFNGLWAITSYNCPOINTCHROMIUMPROC) (GLuint sync_point);
 #endif
 
 #endif  // GPU_GLES2_GL2EXTCHROMIUM_H_
-

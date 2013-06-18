@@ -4,12 +4,12 @@
 
 #include "chrome/browser/extensions/default_apps.h"
 
+#include <set>
+#include <string>
+
 #include "base/command_line.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
-#if !defined(OS_ANDROID)
-#include "chrome/browser/first_run/first_run.h"
-#endif
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "base/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
@@ -18,16 +18,17 @@
 #include "chrome/common/pref_names.h"
 #include "ui/base/l10n/l10n_util.h"
 
-namespace {
+#if !defined(OS_ANDROID)
+#include "chrome/browser/first_run/first_run.h"
+#endif
 
-const char kGmailId[] = "pjkljhegncpnkpknbcohdijeoejaedia";
-const char kSearchId[] = "coobgpohoikkiipiblmjeljniedjpjpf";
-const char kYoutubeId[] = "blpcfgokakmgnkcojhhkbfbldkacnbeo";
+namespace {
 
 // Returns true if the app was a default app in Chrome 22
 bool IsOldDefaultApp(const std::string& extension_id) {
-  return extension_id == kGmailId || extension_id == kSearchId
-      || extension_id == kYoutubeId;
+  return extension_id == extension_misc::kGmailAppId ||
+         extension_id == extension_misc::kGoogleSearchAppId ||
+         extension_id == extension_misc::kYoutubeAppId;
 }
 
 bool IsLocaleSupported() {
@@ -45,13 +46,15 @@ bool IsLocaleSupported() {
   return true;
 }
 
-} // namespace
+}  // namespace
 
 namespace default_apps {
 
-void RegisterUserPrefs(PrefRegistrySyncable* registry) {
-  registry->RegisterIntegerPref(prefs::kDefaultAppsInstallState, kUnknown,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
+void RegisterUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterIntegerPref(
+      prefs::kDefaultAppsInstallState,
+      kUnknown,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 bool Provider::ShouldInstallInProfile() {
@@ -157,11 +160,9 @@ void Provider::VisitRegisteredExtension() {
 void Provider::SetPrefs(base::DictionaryValue* prefs) {
   if (is_migration_) {
     std::set<std::string> new_default_apps;
-    for (base::DictionaryValue::key_iterator i = prefs->begin_keys();
-         i != prefs->end_keys(); ++i) {
-      if (!IsOldDefaultApp(*i)) {
-        new_default_apps.insert(*i);
-      }
+    for (DictionaryValue::Iterator i(*prefs); !i.IsAtEnd(); i.Advance()) {
+      if (!IsOldDefaultApp(i.key()))
+        new_default_apps.insert(i.key());
     }
     // Filter out the new default apps for migrating users.
     for (std::set<std::string>::iterator it = new_default_apps.begin();

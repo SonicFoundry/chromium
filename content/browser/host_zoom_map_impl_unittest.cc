@@ -18,7 +18,7 @@ class HostZoomMapTest : public testing::Test {
   }
 
  protected:
-  MessageLoop message_loop_;
+  base::MessageLoop message_loop_;
   TestBrowserThread ui_thread_;
 };
 
@@ -26,10 +26,35 @@ TEST_F(HostZoomMapTest, GetSetZoomLevel) {
   HostZoomMapImpl host_zoom_map;
 
   double zoomed = 2.5;
-  host_zoom_map.SetZoomLevel("zoomed.com", zoomed);
+  host_zoom_map.SetZoomLevelForHost("zoomed.com", zoomed);
 
-  EXPECT_DOUBLE_EQ(host_zoom_map.GetZoomLevel("normal.com"), 0);
-  EXPECT_DOUBLE_EQ(host_zoom_map.GetZoomLevel("zoomed.com"), zoomed);
+  EXPECT_DOUBLE_EQ(0,
+      host_zoom_map.GetZoomLevelForHostAndScheme("http", "normal.com"));
+  EXPECT_DOUBLE_EQ(zoomed,
+      host_zoom_map.GetZoomLevelForHostAndScheme("http", "zoomed.com"));
+}
+
+TEST_F(HostZoomMapTest, GetSetZoomLevelWithScheme) {
+  HostZoomMapImpl host_zoom_map;
+
+  double zoomed = 2.5;
+  double default_zoom = 1.5;
+
+  host_zoom_map.SetZoomLevelForHostAndScheme("chrome", "login", 0);
+
+  host_zoom_map.SetDefaultZoomLevel(default_zoom);
+
+  EXPECT_DOUBLE_EQ(0,
+      host_zoom_map.GetZoomLevelForHostAndScheme("chrome", "login"));
+  EXPECT_DOUBLE_EQ(default_zoom,
+      host_zoom_map.GetZoomLevelForHostAndScheme("http", "login"));
+
+  host_zoom_map.SetZoomLevelForHost("login", zoomed);
+
+  EXPECT_DOUBLE_EQ(0,
+      host_zoom_map.GetZoomLevelForHostAndScheme("chrome", "login"));
+  EXPECT_DOUBLE_EQ(zoomed,
+      host_zoom_map.GetZoomLevelForHostAndScheme("http", "login"));
 }
 
 }  // namespace content

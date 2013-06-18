@@ -11,7 +11,7 @@
 #include <X11/Xutil.h>
 
 #include "base/utf_string_conversions.h"
-#include "chrome/test/chromedriver/ui_events.h"
+#include "chrome/test/chromedriver/chrome/ui_events.h"
 #include "ui/base/keycodes/keyboard_code_conversion_x.h"
 #include "ui/base/x/x11_util.h"
 
@@ -180,7 +180,7 @@ bool GetXModifierMask(Display* display, int modifier, int* x_modifier) {
 std::string ConvertKeyCodeToText(ui::KeyboardCode key_code, int modifiers) {
   int x_key_code = KeyboardCodeToXKeyCode(key_code);
   if (x_key_code == -1)
-    return "";
+    return std::string();
 
   XEvent event;
   memset(&event, 0, sizeof(XEvent));
@@ -211,7 +211,7 @@ std::string ConvertKeyCodeToText(ui::KeyboardCode key_code, int modifiers) {
   uint16 character = ui::GetCharacterFromXEvent(&event);
 
   if (!character)
-    return "";
+    return std::string();
   return UTF16ToUTF8(string16(1, character));
 }
 

@@ -10,9 +10,10 @@
 #include "base/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/aligned_memory.h"
-#include "base/string_piece.h"
+#include "base/strings/string_piece.h"
 #include "media/base/limits.h"
 #include "media/base/video_util.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 
 namespace media {
 
@@ -31,6 +32,7 @@ scoped_refptr<VideoFrame> VideoFrame::CreateFrame(
       frame->AllocateRGB(4u);
       break;
     case VideoFrame::YV12:
+    case VideoFrame::YV12A:
     case VideoFrame::YV16:
       frame->AllocateYUV();
       break;
@@ -79,7 +81,7 @@ scoped_refptr<VideoFrame> VideoFrame::WrapNativeTexture(
   return frame;
 }
 
-void VideoFrame::ReadPixelsFromNativeTexture(void* pixels) {
+void VideoFrame::ReadPixelsFromNativeTexture(const SkBitmap& pixels) {
   DCHECK_EQ(format_, NATIVE_TEXTURE);
   if (!read_pixels_cb_.is_null())
     read_pixels_cb_.Run(pixels);
@@ -136,6 +138,13 @@ scoped_refptr<VideoFrame> VideoFrame::CreateBlackFrame(const gfx::Size& size) {
 }
 
 #if defined(GOOGLE_TV)
+// This block and other blocks wrapped around #if defined(GOOGLE_TV) is not
+// maintained by the general compositor team. Please contact the following
+// people instead:
+//
+// wonsik@chromium.org
+// ycheo@chromium.org
+
 // static
 scoped_refptr<VideoFrame> VideoFrame::CreateHoleFrame(
     const gfx::Size& size) {
@@ -145,6 +154,30 @@ scoped_refptr<VideoFrame> VideoFrame::CreateHoleFrame(
   return frame;
 }
 #endif
+
+// static
+size_t VideoFrame::NumPlanes(Format format) {
+  switch (format) {
+    case VideoFrame::NATIVE_TEXTURE:
+#if defined(GOOGLE_TV)
+    case VideoFrame::HOLE:
+#endif
+      return 0;
+    case VideoFrame::RGB32:
+      return 1;
+    case VideoFrame::YV12:
+    case VideoFrame::YV16:
+      return 3;
+    case VideoFrame::YV12A:
+      return 4;
+    case VideoFrame::EMPTY:
+    case VideoFrame::I420:
+    case VideoFrame::INVALID:
+      break;
+  }
+  NOTREACHED() << "Unsupported video frame format: " << format;
+  return 0;
+}
 
 static inline size_t RoundUp(size_t value, size_t alignment) {
   // Check that |alignment| is a power of 2.
@@ -174,7 +207,8 @@ void VideoFrame::AllocateRGB(size_t bytes_per_pixel) {
 }
 
 void VideoFrame::AllocateYUV() {
-  DCHECK(format_ == VideoFrame::YV12 || format_ == VideoFrame::YV16);
+  DCHECK(format_ == VideoFrame::YV12 || format_ == VideoFrame::YV16 ||
+         format_ == VideoFrame::YV12A);
   // Align Y rows at least at 16 byte boundaries.  The stride for both
   // YV12 and YV16 is 1/2 of the stride of Y.  For YV12, every row of bytes for
   // U and V applies to two rows of Y (one byte of UV for 4 bytes of Y), so in
@@ -183,7 +217,9 @@ void VideoFrame::AllocateYUV() {
   // YV16. We also round the height of the surface allocated to be an even
   // number to avoid any potential of faulting by code that attempts to access
   // the Y values of the final row, but assumes that the last row of U & V
-  // applies to a full two rows of Y.
+  // applies to a full two rows of Y. YV12A is the same as YV12, but with an
+  // additional alpha plane that has the same size and alignment as the Y plane.
+
   size_t y_stride = RoundUp(row_bytes(VideoFrame::kYPlane),
                             kFrameSizeAlignment);
   size_t uv_stride = RoundUp(row_bytes(VideoFrame::kUPlane),
@@ -192,9 +228,12 @@ void VideoFrame::AllocateYUV() {
   // and then the size needs to be a multiple of two macroblocks (vertically).
   // See libavcodec/utils.c:avcodec_align_dimensions2().
   size_t y_height = RoundUp(coded_size_.height(), kFrameSizeAlignment * 2);
-  size_t uv_height = format_ == VideoFrame::YV12 ? y_height / 2 : y_height;
+  size_t uv_height = (format_ == VideoFrame::YV12 ||
+                      format_ == VideoFrame::YV12A) ?
+                              y_height / 2 : y_height;
   size_t y_bytes = y_height * y_stride;
   size_t uv_bytes = uv_height * uv_stride;
+  size_t a_bytes = format_ == VideoFrame::YV12A ? y_bytes : 0;
 
   // The extra line of UV being allocated is because h264 chroma MC
   // overreads by one line in some cases, see libavcodec/utils.c:
@@ -202,7 +241,7 @@ void VideoFrame::AllocateYUV() {
   // put_h264_chroma_mc4_ssse3().
   uint8* data = reinterpret_cast<uint8*>(
       base::AlignedAlloc(
-          y_bytes + (uv_bytes * 2 + uv_stride) + kFrameSizePadding,
+          y_bytes + (uv_bytes * 2 + uv_stride) + a_bytes + kFrameSizePadding,
           kFrameAddressAlignment));
   no_longer_needed_cb_ = base::Bind(&ReleaseData, data);
   COMPILE_ASSERT(0 == VideoFrame::kYPlane, y_plane_data_must_be_index_0);
@@ -212,6 +251,10 @@ void VideoFrame::AllocateYUV() {
   strides_[VideoFrame::kYPlane] = y_stride;
   strides_[VideoFrame::kUPlane] = uv_stride;
   strides_[VideoFrame::kVPlane] = uv_stride;
+  if (format_ == YV12A) {
+    data_[VideoFrame::kAPlane] = data + y_bytes + (2 * uv_bytes);
+    strides_[VideoFrame::kAPlane] = y_stride;
+  }
 }
 
 VideoFrame::VideoFrame(VideoFrame::Format format,
@@ -236,25 +279,7 @@ VideoFrame::~VideoFrame() {
 }
 
 bool VideoFrame::IsValidPlane(size_t plane) const {
-  switch (format_) {
-    case RGB32:
-      return plane == kRGBPlane;
-
-    case YV12:
-    case YV16:
-      return plane == kYPlane || plane == kUPlane || plane == kVPlane;
-
-    case NATIVE_TEXTURE:
-      NOTREACHED() << "NATIVE_TEXTUREs don't use plane-related methods!";
-      return false;
-
-    default:
-      break;
-  }
-
-  // Intentionally leave out non-production formats.
-  NOTREACHED() << "Unsupported video frame format: " << format_;
-  return false;
+  return (plane < NumPlanes(format_));
 }
 
 int VideoFrame::stride(size_t plane) const {
@@ -273,7 +298,8 @@ int VideoFrame::row_bytes(size_t plane) const {
     // Planar, 8bpp.
     case YV12:
     case YV16:
-      if (plane == kYPlane)
+    case YV12A:
+      if (plane == kYPlane || plane == kAPlane)
         return width;
       return RoundUp(width, 2) / 2;
 
@@ -295,7 +321,8 @@ int VideoFrame::rows(size_t plane) const {
       return height;
 
     case YV12:
-      if (plane == kYPlane)
+    case YV12A:
+      if (plane == kYPlane || plane == kAPlane)
         return height;
       return RoundUp(height, 2) / 2;
 

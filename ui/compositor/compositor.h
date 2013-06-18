@@ -12,18 +12,26 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "base/time.h"
-#include "cc/layer_tree_host_client.h"
+#include "cc/trees/layer_tree_host_client.h"
+#include "third_party/skia/include/core/SkColor.h"
 #include "ui/compositor/compositor_export.h"
+#include "ui/compositor/compositor_observer.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/size.h"
 #include "ui/gfx/transform.h"
+#include "ui/gfx/vector2d.h"
 #include "ui/gl/gl_share_group.h"
 
 class SkBitmap;
 
+namespace base {
+class RunLoop;
+}
+
 namespace cc {
 class ContextProvider;
 class Layer;
+class LayerTreeDebugState;
 class LayerTreeHost;
 }
 
@@ -43,6 +51,7 @@ namespace ui {
 
 class Compositor;
 class CompositorObserver;
+class ContextProviderFromContextFactory;
 class Layer;
 class PostedSwapQueue;
 
@@ -97,21 +106,42 @@ class COMPOSITOR_EXPORT DefaultContextFactory : public ContextFactory {
 
   bool Initialize();
 
-  void set_share_group(gfx::GLShareGroup* share_group) {
-    share_group_ = share_group;
-  }
-
  private:
   WebKit::WebGraphicsContext3D* CreateContextCommon(
       Compositor* compositor,
       bool offscreen);
 
-  scoped_refptr<gfx::GLShareGroup> share_group_;
-  class DefaultContextProvider;
-  scoped_refptr<DefaultContextProvider> offscreen_contexts_main_thread_;
-  scoped_refptr<DefaultContextProvider> offscreen_contexts_compositor_thread_;
+  scoped_refptr<ContextProviderFromContextFactory>
+      offscreen_contexts_main_thread_;
+  scoped_refptr<ContextProviderFromContextFactory>
+      offscreen_contexts_compositor_thread_;
 
   DISALLOW_COPY_AND_ASSIGN(DefaultContextFactory);
+};
+
+// The factory that creates test contexts.
+class COMPOSITOR_EXPORT TestContextFactory : public ContextFactory {
+ public:
+  TestContextFactory();
+  virtual ~TestContextFactory();
+
+  // ContextFactory implementation
+  virtual cc::OutputSurface* CreateOutputSurface(
+      Compositor* compositor) OVERRIDE;
+  virtual WebKit::WebGraphicsContext3D* CreateOffscreenContext() OVERRIDE;
+  virtual scoped_refptr<cc::ContextProvider>
+      OffscreenContextProviderForMainThread() OVERRIDE;
+  virtual scoped_refptr<cc::ContextProvider>
+      OffscreenContextProviderForCompositorThread() OVERRIDE;
+  virtual void RemoveCompositor(Compositor* compositor) OVERRIDE;
+
+ private:
+  scoped_refptr<ContextProviderFromContextFactory>
+      offscreen_contexts_main_thread_;
+  scoped_refptr<ContextProviderFromContextFactory>
+      offscreen_contexts_compositor_thread_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestContextFactory);
 };
 
 // Texture provide an abstraction over the external texture that can be passed
@@ -183,6 +213,37 @@ class COMPOSITOR_EXPORT CompositorLock
   DISALLOW_COPY_AND_ASSIGN(CompositorLock);
 };
 
+// This is only to be used for test. It allows execution of other tasks on
+// the current message loop before the current task finishs (there is a
+// potential for re-entrancy).
+class COMPOSITOR_EXPORT DrawWaiterForTest : public ui::CompositorObserver {
+ public:
+  // Waits for a draw to be issued by the compositor. If the test times out
+  // here, there may be a logic error in the compositor code causing it
+  // not to draw.
+  static void Wait(Compositor* compositor);
+
+ private:
+  DrawWaiterForTest();
+  virtual ~DrawWaiterForTest();
+
+  void WaitImpl(Compositor* compositor);
+
+  // CompositorObserver implementation.
+  virtual void OnCompositingDidCommit(Compositor* compositor) OVERRIDE;
+  virtual void OnCompositingStarted(Compositor* compositor,
+                                    base::TimeTicks start_time) OVERRIDE;
+  virtual void OnCompositingEnded(Compositor* compositor) OVERRIDE;
+  virtual void OnCompositingAborted(Compositor* compositor) OVERRIDE;
+  virtual void OnCompositingLockStateChanged(Compositor* compositor) OVERRIDE;
+  virtual void OnUpdateVSyncParameters(Compositor* compositor,
+                                       base::TimeTicks timebase,
+                                       base::TimeDelta interval) OVERRIDE;
+
+  scoped_ptr<base::RunLoop> wait_run_loop_;
+
+  DISALLOW_COPY_AND_ASSIGN(DrawWaiterForTest);
+};
 
 // Compositor object to take care of GPU painting.
 // A Browser compositor object is responsible for generating the final
@@ -197,7 +258,8 @@ class COMPOSITOR_EXPORT Compositor
              gfx::AcceleratedWidget widget);
   virtual ~Compositor();
 
-  static void Initialize(bool useThread);
+  static void Initialize();
+  static bool WasInitializedWithThread();
   static void Terminate();
 
   // Schedules a redraw of the layer tree associated with this compositor.
@@ -221,15 +283,17 @@ class COMPOSITOR_EXPORT Compositor
   // compositing layers on.
   float device_scale_factor() const { return device_scale_factor_; }
 
-  // Draws the scene created by the layer tree and any visual effects. If
-  // |force_clear| is true, this will cause the compositor to clear before
-  // compositing.
-  void Draw(bool force_clear);
+  // Draws the scene created by the layer tree and any visual effects.
+  void Draw();
 
   // Where possible, draws are scissored to a damage region calculated from
   // changes to layer properties.  This bypasses that and indicates that
   // the whole frame needs to be drawn.
-  void ScheduleFullDraw();
+  void ScheduleFullRedraw();
+
+  // Schedule redraw and append damage_rect to the damage region calculated
+  // from changes to layer properties.
+  void ScheduleRedrawRect(const gfx::Rect& damage_rect);
 
   // Reads the region |bounds_in_pixel| of the contents of the last rendered
   // frame into the given bitmap.
@@ -241,6 +305,10 @@ class COMPOSITOR_EXPORT Compositor
 
   // Returns the size of the widget that is being drawn to in pixel coordinates.
   const gfx::Size& size() const { return size_; }
+
+  // Sets the background color used for areas that aren't covered by
+  // the |root_layer|.
+  void SetBackgroundColor(SkColor color);
 
   // Returns the widget for this compositor.
   gfx::AcceleratedWidget widget() const { return widget_; }
@@ -271,21 +339,22 @@ class COMPOSITOR_EXPORT Compositor
                                base::TimeDelta interval);
 
   // LayerTreeHostClient implementation.
-  virtual void willBeginFrame() OVERRIDE;
-  virtual void didBeginFrame() OVERRIDE;
-  virtual void animate(double frameBeginTime) OVERRIDE;
-  virtual void layout() OVERRIDE;
-  virtual void applyScrollAndScale(gfx::Vector2d scrollDelta,
-                                   float pageScale) OVERRIDE;
+  virtual void WillBeginFrame() OVERRIDE {}
+  virtual void DidBeginFrame() OVERRIDE {}
+  virtual void Animate(double frame_begin_time) OVERRIDE {}
+  virtual void Layout() OVERRIDE;
+  virtual void ApplyScrollAndScale(gfx::Vector2d scroll_delta,
+                                   float page_scale) OVERRIDE {}
   virtual scoped_ptr<cc::OutputSurface>
-      createOutputSurface() OVERRIDE;
-  virtual void didRecreateOutputSurface(bool success) OVERRIDE;
-  virtual scoped_ptr<cc::InputHandler> createInputHandler() OVERRIDE;
-  virtual void willCommit() OVERRIDE;
-  virtual void didCommit() OVERRIDE;
-  virtual void didCommitAndDrawFrame() OVERRIDE;
-  virtual void didCompleteSwapBuffers() OVERRIDE;
-  virtual void scheduleComposite() OVERRIDE;
+      CreateOutputSurface() OVERRIDE;
+  virtual void DidRecreateOutputSurface(bool success) OVERRIDE {}
+  virtual scoped_ptr<cc::InputHandlerClient> CreateInputHandlerClient()
+      OVERRIDE;
+  virtual void WillCommit() OVERRIDE {}
+  virtual void DidCommit() OVERRIDE;
+  virtual void DidCommitAndDrawFrame() OVERRIDE;
+  virtual void DidCompleteSwapBuffers() OVERRIDE;
+  virtual void ScheduleComposite() OVERRIDE;
   virtual scoped_refptr<cc::ContextProvider>
       OffscreenContextProviderForMainThread() OVERRIDE;
   virtual scoped_refptr<cc::ContextProvider>
@@ -295,6 +364,9 @@ class COMPOSITOR_EXPORT Compositor
   int last_ended_frame() { return last_ended_frame_; }
 
   bool IsLocked() { return compositor_lock_ != NULL; }
+
+  const cc::LayerTreeDebugState& GetLayerTreeDebugState() const;
+  void SetLayerTreeDebugState(const cc::LayerTreeDebugState& debug_state);
 
  private:
   friend class base::RefCounted<Compositor>;
@@ -330,6 +402,8 @@ class COMPOSITOR_EXPORT Compositor
 
   int last_started_frame_;
   int last_ended_frame_;
+
+  bool next_draw_is_resize_;
 
   bool disable_schedule_composite_;
 

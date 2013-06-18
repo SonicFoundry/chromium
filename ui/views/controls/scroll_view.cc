@@ -115,7 +115,8 @@ ScrollView::ScrollView()
       header_viewport_(new Viewport()),
       horiz_sb_(new NativeScrollBar(true)),
       vert_sb_(new NativeScrollBar(false)),
-      resize_corner_(NULL) {
+      resize_corner_(NULL),
+      hide_horizontal_scrollbar_(false) {
   AddChildView(contents_viewport_);
   AddChildView(header_viewport_);
 
@@ -165,6 +166,22 @@ int ScrollView::GetScrollBarWidth() const {
 
 int ScrollView::GetScrollBarHeight() const {
   return horiz_sb_ ? horiz_sb_->GetLayoutSize() : 0;
+}
+
+void ScrollView::SetHorizontalScrollBar(ScrollBar* horiz_sb) {
+  DCHECK(horiz_sb);
+  horiz_sb->SetVisible(horiz_sb_->visible());
+  delete horiz_sb_;
+  horiz_sb->set_controller(this);
+  horiz_sb_ = horiz_sb;
+}
+
+void ScrollView::SetVerticalScrollBar(ScrollBar* vert_sb) {
+  DCHECK(vert_sb);
+  vert_sb->SetVisible(vert_sb_->visible());
+  delete vert_sb_;
+  vert_sb->set_controller(this);
+  vert_sb_ = vert_sb;
 }
 
 void ScrollView::Layout() {
@@ -447,6 +464,9 @@ void ScrollView::ComputeScrollBarsVisibility(const gfx::Size& vp_size,
     *horiz_is_shown = true;
     *vert_is_shown = true;
   }
+
+  if (hide_horizontal_scrollbar_)
+    *horiz_is_shown = false;
 }
 
 // Make sure that a single scrollbar is created and visible as needed

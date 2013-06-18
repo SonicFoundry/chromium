@@ -52,9 +52,6 @@ int MockRenderProcessHost::GetNextRoutingID() {
   return ++prev_routing_id;
 }
 
-void MockRenderProcessHost::CancelResourceRequests(int render_widget_id) {
-}
-
 void MockRenderProcessHost::SimulateSwapOutACK(
     const ViewMsg_SwapOut_Params& params) {
 }
@@ -171,7 +168,7 @@ void MockRenderProcessHost::Cleanup() {
         NOTIFICATION_RENDERER_PROCESS_TERMINATED,
         Source<RenderProcessHost>(this),
         NotificationService::NoDetails());
-    MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+    base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
     RenderProcessHostImpl::UnregisterHost(GetID());
   }
 }

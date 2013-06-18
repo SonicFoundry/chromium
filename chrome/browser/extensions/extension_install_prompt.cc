@@ -23,19 +23,19 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/extensions/api/icons/icons_handler.h"
 #include "chrome/common/extensions/api/identity/oauth2_manifest_handler.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_icon_set.h"
 #include "chrome/common/extensions/extension_manifest_constants.h"
-#include "chrome/common/extensions/extension_resource.h"
 #include "chrome/common/extensions/feature_switch.h"
 #include "chrome/common/extensions/manifest.h"
+#include "chrome/common/extensions/manifest_handlers/icons_handler.h"
 #include "chrome/common/extensions/permissions/permission_set.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
+#include "extensions/common/extension_resource.h"
 #include "extensions/common/url_pattern.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
@@ -520,12 +520,15 @@ void ExtensionInstallPrompt::ConfirmReEnable(Delegate* delegate,
 }
 
 void ExtensionInstallPrompt::ConfirmExternalInstall(
-    Delegate* delegate, const Extension* extension) {
+    Delegate* delegate,
+    const Extension* extension,
+    const ShowDialogCallback& show_dialog_callback) {
   DCHECK(ui_loop_ == MessageLoop::current());
   extension_ = extension;
   permissions_ = extension->GetActivePermissions();
   delegate_ = delegate;
   prompt_.set_type(EXTERNAL_INSTALL_PROMPT);
+  show_dialog_callback_ = show_dialog_callback;
 
   LoadImageIfNeeded();
 }
@@ -609,7 +612,7 @@ void ExtensionInstallPrompt::LoadImageIfNeeded() {
   }
 
   // Load the image asynchronously. For the response, check OnImageLoaded.
-  ExtensionResource image = extensions::IconsInfo::GetIconResource(
+  extensions::ExtensionResource image = extensions::IconsInfo::GetIconResource(
       extension_,
       extension_misc::EXTENSION_ICON_LARGE,
       ExtensionIconSet::MATCH_BIGGER);
@@ -643,7 +646,12 @@ void ExtensionInstallPrompt::FetchOAuthIssueAdviceIfNeeded() {
   }
 
   Profile* profile = install_ui_->profile();
+  // The token service can be NULL for incognito profiles.
   TokenService* token_service = TokenServiceFactory::GetForProfile(profile);
+  if (!token_service) {
+    ShowConfirmation();
+    return;
+  }
 
   token_flow_.reset(new OAuth2MintTokenFlow(
       profile->GetRequestContext(),

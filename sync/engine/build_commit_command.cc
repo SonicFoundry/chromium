@@ -11,21 +11,17 @@
 
 #include "base/string_util.h"
 #include "sync/engine/syncer_proto_util.h"
+#include "sync/internal_api/public/base/unique_position.h"
 #include "sync/protocol/bookmark_specifics.pb.h"
 #include "sync/protocol/sync.pb.h"
 #include "sync/sessions/ordered_commit_set.h"
 #include "sync/sessions/sync_session.h"
 #include "sync/syncable/directory.h"
-#include "sync/syncable/mutable_entry.h"
+#include "sync/syncable/entry.h"
+#include "sync/syncable/syncable_base_transaction.h"
 #include "sync/syncable/syncable_changes_version.h"
 #include "sync/syncable/syncable_proto_util.h"
-#include "sync/syncable/syncable_write_transaction.h"
 #include "sync/util/time.h"
-
-// TODO(vishwath): Remove this include after node positions have
-// shifted to completely using Ordinals.
-// See http://crbug.com/145412 .
-#include "sync/internal_api/public/base/node_ordinal.h"
 
 using std::set;
 using std::string;
@@ -36,32 +32,21 @@ namespace syncer {
 using sessions::SyncSession;
 using syncable::Entry;
 using syncable::IS_DEL;
-using syncable::SERVER_ORDINAL_IN_PARENT;
 using syncable::IS_UNAPPLIED_UPDATE;
 using syncable::IS_UNSYNCED;
 using syncable::Id;
-using syncable::MutableEntry;
 using syncable::SPECIFICS;
-
-// static
-int64 BuildCommitCommand::GetFirstPosition() {
-  return std::numeric_limits<int64>::min();
-}
-
-// static
-int64 BuildCommitCommand::GetLastPosition() {
-  return std::numeric_limits<int64>::max();
-}
-
-// static
-int64 BuildCommitCommand::GetGap() {
-  return 1LL << 20;
-}
+using syncable::UNIQUE_POSITION;
 
 BuildCommitCommand::BuildCommitCommand(
+    syncable::BaseTransaction* trans,
     const sessions::OrderedCommitSet& batch_commit_set,
-    sync_pb::ClientToServerMessage* commit_message)
-  : batch_commit_set_(batch_commit_set), commit_message_(commit_message) {
+    sync_pb::ClientToServerMessage* commit_message,
+    ExtensionsActivityMonitor::Records* extensions_activity_buffer)
+  : trans_(trans),
+    batch_commit_set_(batch_commit_set),
+    commit_message_(commit_message),
+    extensions_activity_buffer_(extensions_activity_buffer) {
 }
 
 BuildCommitCommand::~BuildCommitCommand() {}
@@ -81,10 +66,10 @@ void BuildCommitCommand::AddExtensionsActivityToMessage(
     // We will push this list of extensions activity back into the
     // ExtensionsActivityMonitor if this commit fails.  That's why we must keep
     // a copy of these records in the session.
-    monitor->GetAndClearRecords(session->mutable_extensions_activity());
+    monitor->GetAndClearRecords(extensions_activity_buffer_);
 
     const ExtensionsActivityMonitor::Records& records =
-        session->extensions_activity();
+        *extensions_activity_buffer_;
     for (ExtensionsActivityMonitor::Records::const_iterator it =
          records.begin();
          it != records.end(); ++it) {
@@ -108,10 +93,12 @@ void BuildCommitCommand::AddClientConfigParamsToMessage(
     int field_number = GetSpecificsFieldNumberFromModelType(iter->first);
     config_params->mutable_enabled_type_ids()->Add(field_number);
   }
+  config_params->set_tabs_datatype_enabled(
+      routing_info.count(syncer::PROXY_TABS) > 0);
 }
 
 namespace {
-void SetEntrySpecifics(MutableEntry* meta_entry,
+void SetEntrySpecifics(Entry* meta_entry,
                        sync_pb::SyncEntity* sync_entry) {
   // Add the new style extension and the folder bit.
   sync_entry->mutable_specifics()->CopyFrom(meta_entry->Get(SPECIFICS));
@@ -126,8 +113,7 @@ SyncerError BuildCommitCommand::ExecuteImpl(SyncSession* session) {
   commit_message_->set_message_contents(sync_pb::ClientToServerMessage::COMMIT);
 
   sync_pb::CommitMessage* commit_message = commit_message_->mutable_commit();
-  commit_message->set_cache_guid(
-      session->write_transaction()->directory()->cache_guid());
+  commit_message->set_cache_guid(trans_->directory()->cache_guid());
   AddExtensionsActivityToMessage(session, commit_message);
   AddClientConfigParamsToMessage(session, commit_message);
 
@@ -143,8 +129,7 @@ SyncerError BuildCommitCommand::ExecuteImpl(SyncSession* session) {
     Id id = batch_commit_set_.GetCommitIdAt(i);
     sync_pb::SyncEntity* sync_entry = commit_message->add_entries();
     sync_entry->set_id_string(SyncableIdToProto(id));
-    MutableEntry meta_entry(session->write_transaction(),
-                            syncable::GET_BY_ID, id);
+    Entry meta_entry(trans_, syncable::GET_BY_ID, id);
     CHECK(meta_entry.good());
 
     DCHECK_NE(0UL,
@@ -154,6 +139,9 @@ SyncerError BuildCommitCommand::ExecuteImpl(SyncSession* session) {
 
     string name = meta_entry.Get(syncable::NON_UNIQUE_NAME);
     CHECK(!name.empty());  // Make sure this isn't an update.
+    // Note: Truncation is also performed in WriteNode::SetTitle(..). But this
+    // call is still necessary to handle any title changes that might originate
+    // elsewhere, or already be persisted in the directory.
     TruncateUTF8ToByteSize(name, 255, &name);
     sync_entry->set_name(name);
 
@@ -173,7 +161,7 @@ SyncerError BuildCommitCommand::ExecuteImpl(SyncSession* session) {
     Id new_parent_id;
     if (meta_entry.Get(syncable::IS_DEL) &&
         !meta_entry.Get(syncable::PARENT_ID).ServerKnows()) {
-      new_parent_id = session->write_transaction()->root_id();
+      new_parent_id = trans_->root_id();
     } else {
       new_parent_id = meta_entry.Get(syncable::PARENT_ID);
     }
@@ -212,30 +200,16 @@ SyncerError BuildCommitCommand::ExecuteImpl(SyncSession* session) {
       sync_entry->set_deleted(true);
     } else {
       if (meta_entry.Get(SPECIFICS).has_bookmark()) {
-        // Common data in both new and old protocol.
+        // Both insert_after_item_id and position_in_parent fields are set only
+        // for legacy reasons.  See comments in sync.proto for more information.
         const Id& prev_id = meta_entry.GetPredecessorId();
         string prev_id_string =
             prev_id.IsRoot() ? string() : prev_id.GetServerId();
         sync_entry->set_insert_after_item_id(prev_id_string);
-
-        // Compute a numeric position based on what we know locally.
-        std::pair<int64, int64> position_block(
-            GetFirstPosition(), GetLastPosition());
-        std::map<Id, std::pair<int64, int64> >::iterator prev_pos =
-            position_map.find(prev_id);
-        if (prev_pos != position_map.end()) {
-          position_block = prev_pos->second;
-          position_map.erase(prev_pos);
-        } else {
-          position_block = std::make_pair(
-              FindAnchorPosition(syncable::PREV_ID, meta_entry),
-              FindAnchorPosition(syncable::NEXT_ID, meta_entry));
-        }
-        position_block.first = InterpolatePosition(position_block.first,
-                                                   position_block.second);
-
-        position_map[id] = position_block;
-        sync_entry->set_position_in_parent(position_block.first);
+        sync_entry->set_position_in_parent(
+            meta_entry.Get(UNIQUE_POSITION).ToInt64());
+        meta_entry.Get(UNIQUE_POSITION).ToProto(
+            sync_entry->mutable_unique_position());
       }
       SetEntrySpecifics(&meta_entry, sync_entry);
     }
@@ -243,43 +217,5 @@ SyncerError BuildCommitCommand::ExecuteImpl(SyncSession* session) {
 
   return SYNCER_OK;
 }
-
-int64 BuildCommitCommand::FindAnchorPosition(syncable::IdField direction,
-                                             const syncable::Entry& entry) {
-  Id next_id = entry.Get(direction);
-  while (!next_id.IsRoot()) {
-    Entry next_entry(entry.trans(),
-                     syncable::GET_BY_ID,
-                     next_id);
-    if (!next_entry.Get(IS_UNSYNCED) && !next_entry.Get(IS_UNAPPLIED_UPDATE)) {
-      return NodeOrdinalToInt64(next_entry.Get(SERVER_ORDINAL_IN_PARENT));
-    }
-    next_id = next_entry.Get(direction);
-  }
-  return
-      direction == syncable::PREV_ID ?
-      GetFirstPosition() : GetLastPosition();
-}
-
-int64 BuildCommitCommand::InterpolatePosition(const int64 lo,
-                                              const int64 hi) {
-  DCHECK_LE(lo, hi);
-
-  // The first item to be added under a parent gets a position of zero.
-  if (lo == GetFirstPosition() && hi == GetLastPosition())
-    return 0;
-
-  // For small gaps, we do linear interpolation.  For larger gaps,
-  // we use an additive offset of |GetGap()|.  We are careful to avoid
-  // signed integer overflow.
-  uint64 delta = static_cast<uint64>(hi) - static_cast<uint64>(lo);
-  if (delta <= static_cast<uint64>(GetGap()*2))
-    return lo + (static_cast<int64>(delta) + 7) / 8;  // Interpolate.
-  else if (lo == GetFirstPosition())
-    return hi - GetGap();  // Extend range just before successor.
-  else
-    return lo + GetGap();  // Use or extend range just after predecessor.
-}
-
 
 }  // namespace syncer

@@ -10,6 +10,7 @@
 #include "base/basictypes.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/Platform.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebFileSystem.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebFileSystemType.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebGraphicsContext3D.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebReferrerPolicy.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebURLRequest.h"
@@ -87,6 +88,9 @@ WebKit::Platform* GetWebKitPlatformSupport();
 WebKit::WebPlugin* CreateWebPlugin(WebKit::WebFrame* frame,
                                    const WebKit::WebPluginParams& params);
 
+// TODO(wjia): remove CreateMediaPlayer once
+// https://bugs.webkit.org/show_bug.cgi?id=113633 is fixed, since it has been
+// moved into webkit/mocks.
 // This is used by WebFrameClient::createMediaPlayer().
 WebKit::WebMediaPlayer* CreateMediaPlayer(
     WebKit::WebFrame* frame,
@@ -99,11 +103,6 @@ WebKit::WebMediaPlayer* CreateMediaPlayer(
     WebKit::WebFrame* frame,
     const WebKit::WebURL& url,
     WebKit::WebMediaPlayerClient* client);
-
-// DEPRECATED: Use ResetTestEnvironment() instead.
-#if defined(OS_ANDROID)
-void ReleaseMediaResources();
-#endif
 
 // This is used by WebFrameClient::createApplicationCacheHost().
 WebKit::WebApplicationCacheHost* CreateApplicationCacheHost(
@@ -125,13 +124,6 @@ enum GraphicsContext3DImplementation {
   IN_PROCESS,
   IN_PROCESS_COMMAND_BUFFER
 };
-// Registers which GraphicsContext3D Implementation to use.
-void SetGraphicsContext3DImplementation(GraphicsContext3DImplementation);
-GraphicsContext3DImplementation GetGraphicsContext3DImplementation();
-
-WebKit::WebGraphicsContext3D* CreateGraphicsContext3D(
-    const WebKit::WebGraphicsContext3D::Attributes& attributes,
-    WebKit::WebView* web_view);
 
 enum LayerTreeViewType {
   FAKE_CONTEXT,
@@ -151,13 +143,6 @@ WebKit::WebLayerTreeView* CreateLayerTreeView(
     DRTLayerTreeViewClient* client,
     WebKit::WebThread* thread);
 
-// DEPRECATED. TODO(jamesr): Remove these two after fixing WebKit-side callers.
-WebKit::WebLayerTreeView* CreateLayerTreeViewSoftware(
-    DRTLayerTreeViewClient* client);
-WebKit::WebLayerTreeView* CreateLayerTreeView3d(
-    DRTLayerTreeViewClient* client);
-
-#define WEBKIT_SUPPORT_HAS_SET_THREADING_COMPOSITING_ENABLED 1
 void SetThreadedCompositorEnabled(bool enabled);
 
 // ------- URL load mocking.
@@ -276,12 +261,12 @@ WebKit::WebURL GetDevToolsPathAsURL();
 
 // - FileSystem
 void OpenFileSystem(WebKit::WebFrame* frame,
-                    WebKit::WebFileSystem::Type type,
+                    WebKit::WebFileSystemType type,
                     long long size,
                     bool create,
                     WebKit::WebFileSystemCallbacks* callbacks);
 void DeleteFileSystem(WebKit::WebFrame* frame,
-                      WebKit::WebFileSystem::Type type,
+                      WebKit::WebFileSystemType type,
                       WebKit::WebFileSystemCallbacks* callbacks);
 
 // Returns a filesystem ID for the newly created isolated filesystem.

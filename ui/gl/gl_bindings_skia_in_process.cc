@@ -60,6 +60,10 @@ GLvoid StubGLBindTexture(GLenum target, GLuint texture) {
   glBindTexture(target, texture);
 }
 
+GLvoid StubGLBindVertexArray(GLuint array) {
+  glBindVertexArrayOES(array);
+}
+
 GLvoid StubGLBlendColor(GLclampf red, GLclampf green, GLclampf blue,
                         GLclampf alpha) {
   glBlendColor(red, green, blue, alpha);
@@ -120,6 +124,13 @@ GLvoid StubGLCompressedTexImage2D(GLenum target, GLint level,
                          imageSize, data);
 }
 
+GLvoid StubGLCopyTexSubImage2D(GLenum target, GLint level,
+                               GLint xoffset, GLint yoffset,
+                               GLint x, GLint y,
+                               GLsizei width, GLsizei height) {
+  glCopyTexSubImage2D(target, level, xoffset, yoffset, x, y, width, height);
+}
+
 GLuint StubGLCreateProgram(void) {
   return glCreateProgram();
 }
@@ -158,6 +169,10 @@ GLvoid StubGLDeleteShader(GLuint shader) {
 
 GLvoid StubGLDeleteTextures(GLsizei n, const GLuint* textures) {
   glDeleteTextures(n, textures);
+}
+
+GLvoid StubGLDeleteVertexArrays(GLsizei n, const GLuint* arrays) {
+  glDeleteVertexArraysOES(n, arrays);
 }
 
 GLvoid StubGLDepthMask(GLboolean flag) {
@@ -244,6 +259,10 @@ GLvoid StubGLGenRenderbuffers(GLsizei n, GLuint* renderbuffers) {
 
 GLvoid StubGLGenTextures(GLsizei n, GLuint* textures) {
   glGenTextures(n, textures);
+}
+
+GLvoid StubGLGenVertexArrays(GLsizei n, GLuint* arrays) {
+  glGenVertexArraysOES(n, arrays);
 }
 
 GLvoid StubGLGetBufferParameteriv(GLenum target, GLenum pname, GLint* params) {
@@ -564,6 +583,7 @@ GrGLInterface* CreateInProcessSkiaGLBinding() {
   interface->fBindBuffer = StubGLBindBuffer;
   interface->fBindFragDataLocation = StubGLBindFragDataLocation;
   interface->fBindTexture = StubGLBindTexture;
+  interface->fBindVertexArray = StubGLBindVertexArray;
   interface->fBlendColor = StubGLBlendColor;
   interface->fBlendFunc = StubGLBlendFunc;
   interface->fBufferData = StubGLBufferData;
@@ -574,6 +594,7 @@ GrGLInterface* CreateInProcessSkiaGLBinding() {
   interface->fColorMask = StubGLColorMask;
   interface->fCompileShader = StubGLCompileShader;
   interface->fCompressedTexImage2D = StubGLCompressedTexImage2D;
+  interface->fCopyTexSubImage2D = StubGLCopyTexSubImage2D;
   interface->fCreateProgram = StubGLCreateProgram;
   interface->fCreateShader = StubGLCreateShader;
   interface->fCullFace = StubGLCullFace;
@@ -582,6 +603,7 @@ GrGLInterface* CreateInProcessSkiaGLBinding() {
   interface->fDeleteQueries = StubGLDeleteQueries;
   interface->fDeleteShader = StubGLDeleteShader;
   interface->fDeleteTextures = StubGLDeleteTextures;
+  interface->fDeleteVertexArrays = StubGLDeleteVertexArrays;
   interface->fDepthMask = StubGLDepthMask;
   interface->fDisable = StubGLDisable;
   interface->fDisableVertexAttribArray = StubGLDisableVertexAttribArray;
@@ -598,6 +620,7 @@ GrGLInterface* CreateInProcessSkiaGLBinding() {
   interface->fGenBuffers = StubGLGenBuffers;
   interface->fGenQueries = StubGLGenQueries;
   interface->fGenTextures = StubGLGenTextures;
+  interface->fGenVertexArrays = StubGLGenVertexArrays;
   interface->fGetBufferParameteriv = StubGLGetBufferParameteriv;
   interface->fGetError = StubGLGetError;
   interface->fGetIntegerv = StubGLGetIntegerv;

@@ -20,7 +20,7 @@ import org.chromium.net.test.util.TestWebServer;
 
 import java.util.concurrent.Callable;
 
-public class WebKitHitTestTest extends AndroidWebViewTestBase {
+public class WebKitHitTestTest extends AwTestBase {
     private TestAwContentsClient mContentsClient;
     private AwTestContainerView mTestView;
     private AwContents mAwContents;
@@ -376,6 +376,7 @@ public class WebKitHitTestTest extends AndroidWebViewTestBase {
       String relImageSrc = "/nonexistent3.jpg";
       String fullImageSrc = mWebServer.getResponseUrl(relImageSrc);
       String html = CommonResources.makeHtmlPageFrom(
+          "<meta name=\"viewport\" content=\"width=device-width,height=device-height\" />" +
           "<style type=\"text/css\">" +
           ".full_width { width:100%; position:absolute; }" +
           "</style>",

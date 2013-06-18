@@ -95,7 +95,7 @@ EnumMapper<PropertyIndex>::Pair property_index_table[] = {
     PROPERTY_INDEX_L2TPIPSEC_PSK_REQUIRED },
   { flimflam::kL2tpIpsecPasswordProperty, PROPERTY_INDEX_L2TPIPSEC_PASSWORD },
   { flimflam::kL2tpIpsecUserProperty, PROPERTY_INDEX_L2TPIPSEC_USER },
-  { flimflam::kL2tpIpsecGroupNameProperty,
+  { shill::kL2tpIpsecTunnelGroupProperty,
     PROPERTY_INDEX_L2TPIPSEC_GROUP_NAME },
   { flimflam::kManufacturerProperty, PROPERTY_INDEX_MANUFACTURER },
   { flimflam::kMdnProperty, PROPERTY_INDEX_MDN },
@@ -109,6 +109,7 @@ EnumMapper<PropertyIndex>::Pair property_index_table[] = {
   { flimflam::kOfflineModeProperty, PROPERTY_INDEX_OFFLINE_MODE },
   { flimflam::kOperatorCodeProperty, PROPERTY_INDEX_OPERATOR_CODE },
   { flimflam::kOperatorNameProperty, PROPERTY_INDEX_OPERATOR_NAME },
+  { shill::kOutOfCreditsProperty, PROPERTY_INDEX_OUT_OF_CREDITS },
   { flimflam::kPRLVersionProperty, PROPERTY_INDEX_PRL_VERSION },
   { flimflam::kPassphraseProperty, PROPERTY_INDEX_PASSPHRASE },
   { flimflam::kPassphraseRequiredProperty, PROPERTY_INDEX_PASSPHRASE_REQUIRED },
@@ -961,6 +962,14 @@ bool NativeCellularNetworkParser::ParseValue(PropertyIndex index,
         break;
       cellular_network->set_operator_code(value_str);
       return true;
+    }
+    case PROPERTY_INDEX_OUT_OF_CREDITS: {
+      bool out_of_credits;
+      if (value.GetAsBoolean(&out_of_credits)) {
+        cellular_network->set_out_of_credits(out_of_credits);
+        return true;
+      }
+      break;
     }
     case PROPERTY_INDEX_SERVING_OPERATOR: {
       if (value.IsType(base::Value::TYPE_DICTIONARY)) {

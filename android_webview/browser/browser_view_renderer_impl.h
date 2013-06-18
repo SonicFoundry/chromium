@@ -8,10 +8,12 @@
 #include "android_webview/browser/browser_view_renderer.h"
 #include "android_webview/browser/renderer_host/view_renderer_host.h"
 #include "content/public/browser/android/compositor.h"
+#include "content/public/browser/android/content_view_core.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "skia/ext/refptr.h"
 #include "ui/gfx/point.h"
 #include "ui/gfx/size.h"
+#include "ui/gfx/size_f.h"
 
 typedef void* EGLContext;
 struct AwDrawSWFunctionTable;
@@ -20,7 +22,12 @@ class SkCanvas;
 class SkPicture;
 
 namespace content {
+class SynchronousCompositor;
 class WebContents;
+}
+
+namespace gfx {
+class Vector2dF;
 }
 
 namespace android_webview {
@@ -32,10 +39,16 @@ class BrowserViewRendererImpl
  public:
   static BrowserViewRendererImpl* Create(BrowserViewRenderer::Client* client,
                                          JavaHelper* java_helper);
+  static BrowserViewRendererImpl* FromWebContents(
+      content::WebContents* contents);
+  static BrowserViewRendererImpl* FromId(int render_process_id,
+                                         int render_view_id);
+  static void SetAwDrawSWFunctionTable(AwDrawSWFunctionTable* table);
+
   virtual ~BrowserViewRendererImpl();
 
-  // Platform methods.
-  static void SetAwDrawSWFunctionTable(AwDrawSWFunctionTable* table);
+  virtual void BindSynchronousCompositor(
+      content::SynchronousCompositor* compositor);
 
   // BrowserViewRenderer implementation.
   virtual void SetContents(
@@ -50,18 +63,29 @@ class BrowserViewRendererImpl
   virtual void OnSizeChanged(int width, int height) OVERRIDE;
   virtual void OnAttachedToWindow(int width, int height) OVERRIDE;
   virtual void OnDetachedFromWindow() OVERRIDE;
+  virtual bool IsAttachedToWindow() OVERRIDE;
+  virtual bool IsViewVisible() OVERRIDE;
+  virtual gfx::Rect GetScreenRect() OVERRIDE;
 
   // content::Compositor::Client implementation.
   virtual void ScheduleComposite() OVERRIDE;
 
   // ViewRendererHost::Client implementation.
   virtual void OnPictureUpdated(int process_id, int render_view_id) OVERRIDE;
+  virtual void OnPageScaleFactorChanged(int process_id,
+                                        int render_view_id,
+                                        float page_scale_factor) OVERRIDE;
 
  protected:
   BrowserViewRendererImpl(BrowserViewRenderer::Client* client,
                           JavaHelper* java_helper);
 
+  virtual bool RenderPicture(SkCanvas* canvas);
+
  private:
+  class UserData;
+  friend class UserData;
+
   // Returns the latest locally available picture if any.
   // If none is available will synchronously request the latest one
   // and block until the result is received.
@@ -72,7 +96,13 @@ class BrowserViewRendererImpl
   void ResetCompositor();
   void Invalidate();
   bool RenderSW(SkCanvas* canvas);
-  bool RenderPicture(SkCanvas* canvas);
+
+  void OnFrameInfoUpdated(const gfx::SizeF& content_size,
+                          const gfx::Vector2dF& scroll_offset,
+                          float page_scale_factor);
+
+  // Called when |web_contents_| is disconnected from |this| object.
+  void WebContentsGone();
 
   BrowserViewRenderer::Client* client_;
   BrowserViewRenderer::JavaHelper* java_helper_;
@@ -93,11 +123,14 @@ class BrowserViewRendererImpl
   // Last View scroll before hardware rendering is triggered.
   gfx::Point hw_rendering_scroll_;
 
+  bool view_attached_;
   bool view_visible_;
   bool compositor_visible_;
   bool is_composite_pending_;
   float dpi_scale_;
+  float page_scale_;
   gfx::Size view_size_;
+  gfx::SizeF content_size_css_;
   OnNewPictureMode on_new_picture_mode_;
 
   // Used only for detecting Android View System context changes.
@@ -106,6 +139,11 @@ class BrowserViewRendererImpl
 
   // Set via SetContents. Used to recognize updates to the local WebView.
   content::WebContents* web_contents_;
+
+  // Used to observe frame metadata updates.
+  content::ContentViewCore::UpdateFrameInfoCallback update_frame_info_callback_;
+
+  bool prevent_client_invalidate_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserViewRendererImpl);
 };

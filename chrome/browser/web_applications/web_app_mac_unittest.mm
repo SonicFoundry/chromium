@@ -13,7 +13,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/mac/foundation_util.h"
 #include "base/memory/scoped_nsobject.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/common/mac/app_mode_common.h"
 #include "grit/theme_resources.h"
@@ -38,7 +38,7 @@ class WebAppShortcutCreatorMock : public web_app::WebAppShortcutCreator {
             UTF8ToUTF16("fake.cfbundleidentifier")) {
   }
 
-  MOCK_CONST_METHOD1(GetDestinationPath, base::FilePath(const base::FilePath&));
+  MOCK_CONST_METHOD0(GetDestinationPath, base::FilePath());
   MOCK_CONST_METHOD1(RevealGeneratedBundleInFinder,
                      void (const base::FilePath&));
 };
@@ -67,7 +67,7 @@ TEST(WebAppShortcutCreatorTest, CreateShortcut) {
   base::FilePath dst_path = dst_folder.Append(UTF16ToUTF8(info.title) + ".app");
 
   NiceMock<WebAppShortcutCreatorMock> shortcut_creator(info);
-  EXPECT_CALL(shortcut_creator, GetDestinationPath(_))
+  EXPECT_CALL(shortcut_creator, GetDestinationPath())
       .WillRepeatedly(Return(dst_folder));
   EXPECT_CALL(shortcut_creator, RevealGeneratedBundleInFinder(dst_path));
 
@@ -102,11 +102,10 @@ TEST(WebAppShortcutCreatorTest, RunShortcut) {
   ShellIntegration::ShortcutInfo info = GetShortcutInfo();
 
   base::FilePath dst_folder = scoped_temp_dir.path();
-  dst_folder = base::FilePath("/Applications");
   base::FilePath dst_path = dst_folder.Append(UTF16ToUTF8(info.title) + ".app");
 
   NiceMock<WebAppShortcutCreatorMock> shortcut_creator(info);
-  EXPECT_CALL(shortcut_creator, GetDestinationPath(_))
+  EXPECT_CALL(shortcut_creator, GetDestinationPath())
       .WillRepeatedly(Return(dst_folder));
   EXPECT_CALL(shortcut_creator, RevealGeneratedBundleInFinder(dst_path));
 
@@ -120,10 +119,39 @@ TEST(WebAppShortcutCreatorTest, RunShortcut) {
 }
 
 TEST(WebAppShortcutCreatorTest, CreateFailure) {
+  base::ScopedTempDir scoped_temp_dir;
+  EXPECT_TRUE(scoped_temp_dir.CreateUniqueTempDir());
+
+  base::FilePath non_existent_path =
+      scoped_temp_dir.path().Append("not-existent").Append("name.app");
+
   NiceMock<WebAppShortcutCreatorMock> shortcut_creator(GetShortcutInfo());
-  EXPECT_CALL(shortcut_creator, GetDestinationPath(_))
-      .WillRepeatedly(Return(base::FilePath("/non-existant/path/")));
+  EXPECT_CALL(shortcut_creator, GetDestinationPath())
+      .WillRepeatedly(Return(non_existent_path));
   EXPECT_FALSE(shortcut_creator.CreateShortcut());
+}
+
+TEST(WebAppShortcutCreatorTest, CreateUnique) {
+  base::ScopedTempDir scoped_temp_dir;
+  EXPECT_TRUE(scoped_temp_dir.CreateUniqueTempDir());
+
+  ShellIntegration::ShortcutInfo info = GetShortcutInfo();
+
+  base::FilePath dst_folder = scoped_temp_dir.path();
+  base::FilePath dst_path = dst_folder.Append(UTF16ToUTF8(info.title) + ".app");
+
+  file_util::CreateDirectory(dst_path);
+  base::FilePath expected_app_path =
+      dst_path.InsertBeforeExtensionASCII(" (1)");
+
+  NiceMock<WebAppShortcutCreatorMock> shortcut_creator(info);
+  EXPECT_CALL(shortcut_creator, GetDestinationPath())
+      .WillRepeatedly(Return(dst_folder));
+  EXPECT_CALL(shortcut_creator,
+      RevealGeneratedBundleInFinder(expected_app_path));
+
+  EXPECT_TRUE(shortcut_creator.CreateShortcut());
+  EXPECT_TRUE(file_util::PathExists(expected_app_path));
 }
 
 TEST(WebAppShortcutCreatorTest, UpdateIcon) {
@@ -132,19 +160,21 @@ TEST(WebAppShortcutCreatorTest, UpdateIcon) {
   base::FilePath dst_path = scoped_temp_dir.path();
 
   ShellIntegration::ShortcutInfo info = GetShortcutInfo();
-  info.favicon = ui::ResourceBundle::GetSharedInstance().GetImageNamed(
-      IDR_PRODUCT_LOGO_32);
+  gfx::Image product_logo =
+      ui::ResourceBundle::GetSharedInstance().GetNativeImageNamed(
+          IDR_PRODUCT_LOGO_32);
+  info.favicon.Add(product_logo);
   WebAppShortcutCreatorMock shortcut_creator(info);
 
-  shortcut_creator.UpdateIcon(dst_path);
+  ASSERT_TRUE(shortcut_creator.UpdateIcon(dst_path));
   base::FilePath icon_path =
       dst_path.Append("Contents").Append("Resources").Append("app.icns");
 
   scoped_nsobject<NSImage> image([[NSImage alloc] initWithContentsOfFile:
       base::mac::FilePathToNSString(icon_path)]);
   EXPECT_TRUE(image);
-  EXPECT_EQ(info.favicon.ToSkBitmap()->width(), [image size].width);
-  EXPECT_EQ(info.favicon.ToSkBitmap()->height(), [image size].height);
+  EXPECT_EQ(product_logo.Width(), [image size].width);
+  EXPECT_EQ(product_logo.Height(), [image size].height);
 }
 
 }  // namespace web_app

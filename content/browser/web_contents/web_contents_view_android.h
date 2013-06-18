@@ -11,6 +11,7 @@
 #include "content/port/browser/web_contents_view_port.h"
 #include "content/public/browser/web_contents_view_delegate.h"
 #include "content/public/common/context_menu_params.h"
+#include "ui/gfx/rect_f.h"
 
 namespace content {
 class ContentViewCoreImpl;
@@ -27,6 +28,11 @@ class WebContentsViewAndroid : public WebContentsViewPort,
   // by its Java ContentViewCore counterpart, whose lifetime is managed
   // by the UI frontend.
   void SetContentViewCore(ContentViewCoreImpl* content_view_core);
+
+#if defined(GOOGLE_TV)
+  void RequestExternalVideoSurface(int player_id);
+  void NotifyGeometryChange(int player_id, const gfx::RectF& rect);
+#endif
 
   // WebContentsView implementation --------------------------------------------
   virtual gfx::NativeView GetNativeView() const OVERRIDE;
@@ -53,6 +59,7 @@ class WebContentsViewAndroid : public WebContentsViewPort,
   virtual void SetPageTitle(const string16& title) OVERRIDE;
   virtual void RenderViewCreated(RenderViewHost* host) OVERRIDE;
   virtual void RenderViewSwappedIn(RenderViewHost* host) OVERRIDE;
+  virtual void SetOverscrollControllerEnabled(bool enabled) OVERRIDE;
 
   // Backend implementation of RenderViewHostDelegateView.
   virtual void ShowContextMenu(const ContextMenuParams& params,

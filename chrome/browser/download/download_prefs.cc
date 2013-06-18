@@ -14,24 +14,24 @@
 #include "base/prefs/pref_service.h"
 #include "base/string_util.h"
 #include "base/strings/string_split.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/browser/download/chrome_download_manager_delegate.h"
 #include "chrome/browser/download/download_extensions.h"
 #include "chrome/browser/download/download_service.h"
 #include "chrome/browser/download/download_service_factory.h"
 #include "chrome/browser/download/download_util.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/pref_names.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/save_page_type.h"
 
 #if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/drive/drive_file_system_util.h"
 #include "chrome/browser/chromeos/drive/drive_system_service.h"
+#include "chrome/browser/chromeos/drive/file_system_util.h"
 #endif
 
 using content::BrowserContext;
@@ -78,30 +78,35 @@ DownloadPrefs::DownloadPrefs(Profile* profile) : profile_(profile) {
 }
 
 DownloadPrefs::~DownloadPrefs() {
-  SaveAutoOpenState();
 }
 
 // static
-void DownloadPrefs::RegisterUserPrefs(PrefRegistrySyncable* registry) {
-  registry->RegisterBooleanPref(prefs::kPromptForDownload,
-                                false,
-                                PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterStringPref(prefs::kDownloadExtensionsToOpen,
-                               "",
-                               PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterBooleanPref(prefs::kDownloadDirUpgraded,
-                                false,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterIntegerPref(prefs::kSaveFileType,
-                                content::SAVE_PAGE_TYPE_AS_COMPLETE_HTML,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
+void DownloadPrefs::RegisterUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterBooleanPref(
+      prefs::kPromptForDownload,
+      false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterStringPref(
+      prefs::kDownloadExtensionsToOpen,
+      std::string(),
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kDownloadDirUpgraded,
+      false,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterIntegerPref(
+      prefs::kSaveFileType,
+      content::SAVE_PAGE_TYPE_AS_COMPLETE_HTML,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 
   // The default download path is userprofile\download.
   const base::FilePath& default_download_path =
       download_util::GetDefaultDownloadDirectory();
-  registry->RegisterFilePathPref(prefs::kDownloadDefaultDirectory,
-                                 default_download_path,
-                                 PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterFilePathPref(
+      prefs::kDownloadDefaultDirectory,
+      default_download_path,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 
 #if defined(OS_CHROMEOS)
   // Ensure that the download directory specified in the preferences exists.
@@ -154,8 +159,13 @@ bool DownloadPrefs::IsAutoOpenUsed() const {
   return !auto_open_.empty();
 }
 
-bool DownloadPrefs::IsAutoOpenEnabledForExtension(
-    const base::FilePath::StringType& extension) const {
+bool DownloadPrefs::IsAutoOpenEnabledBasedOnExtension(
+    const base::FilePath& path) const {
+  base::FilePath::StringType extension = path.Extension();
+  if (extension.empty())
+    return false;
+  DCHECK(extension[0] == base::FilePath::kExtensionSeparator);
+  extension.erase(0, 1);
   return auto_open_.find(extension) != auto_open_.end();
 }
 

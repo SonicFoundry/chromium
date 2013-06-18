@@ -18,9 +18,35 @@ MockDemuxer::MockDemuxer() {}
 
 MockDemuxer::~MockDemuxer() {}
 
-MockDemuxerStream::MockDemuxerStream() {}
+MockDemuxerStream::MockDemuxerStream(DemuxerStream::Type type) : type_(type) {}
 
 MockDemuxerStream::~MockDemuxerStream() {}
+
+DemuxerStream::Type MockDemuxerStream::type() {
+  return type_;
+}
+
+const AudioDecoderConfig& MockDemuxerStream::audio_decoder_config() {
+  DCHECK_EQ(type_, DemuxerStream::AUDIO);
+  return audio_decoder_config_;
+}
+
+const VideoDecoderConfig& MockDemuxerStream::video_decoder_config() {
+  DCHECK_EQ(type_, DemuxerStream::VIDEO);
+  return video_decoder_config_;
+}
+
+void MockDemuxerStream::set_audio_decoder_config(
+    const AudioDecoderConfig& config) {
+  DCHECK_EQ(type_, DemuxerStream::AUDIO);
+  audio_decoder_config_ = config;
+}
+
+void MockDemuxerStream::set_video_decoder_config(
+    const VideoDecoderConfig& config) {
+  DCHECK_EQ(type_, DemuxerStream::VIDEO);
+  video_decoder_config_ = config;
+}
 
 MockVideoDecoder::MockVideoDecoder() {
   EXPECT_CALL(*this, HasAlpha()).WillRepeatedly(Return(false));
@@ -43,18 +69,6 @@ MockAudioRenderer::~MockAudioRenderer() {}
 MockDecryptor::MockDecryptor() {}
 
 MockDecryptor::~MockDecryptor() {}
-
-void MockDecryptor::InitializeAudioDecoder(
-    scoped_ptr<AudioDecoderConfig> config,
-    const DecoderInitCB& init_cb) {
-  InitializeAudioDecoderMock(*config, init_cb);
-}
-
-void MockDecryptor::InitializeVideoDecoder(
-    scoped_ptr<VideoDecoderConfig> config,
-    const DecoderInitCB& init_cb) {
-  InitializeVideoDecoderMock(*config, init_cb);
-}
 
 MockStatisticsCB::MockStatisticsCB() {}
 

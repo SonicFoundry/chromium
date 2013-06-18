@@ -15,7 +15,7 @@
 #include "base/strings/utf_offset_string_conversions.h"
 #include "base/time.h"
 #include "base/utf_string_conversions.h"
-#include "cc/texture_layer.h"
+#include "cc/layers/texture_layer.h"
 #include "ppapi/c/dev/ppb_find_dev.h"
 #include "ppapi/c/dev/ppb_zoom_dev.h"
 #include "ppapi/c/dev/ppp_find_dev.h"
@@ -43,7 +43,10 @@
 #include "ppapi/shared_impl/var.h"
 #include "ppapi/thunk/enter.h"
 #include "ppapi/thunk/ppb_buffer_api.h"
+#include "printing/metafile.h"
+#include "printing/metafile_skia_wrapper.h"
 #include "printing/units.h"
+#include "skia/ext/platform_device.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebGamepads.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebURL.h"
@@ -60,12 +63,13 @@
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebPrintScalingOption.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebScopedUserGesture.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebSecurityOrigin.h"
+#include "third_party/WebKit/Source/WebKit/chromium/public/WebUserGestureIndicator.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebView.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkRect.h"
 #include "ui/base/range/range.h"
-#include "ui/gfx/scoped_ns_graphics_context_save_gstate_mac.h"
 #include "ui/gfx/rect_conversions.h"
+#include "ui/gfx/scoped_ns_graphics_context_save_gstate_mac.h"
 #include "webkit/compositor_bindings/web_layer_impl.h"
 #include "webkit/plugins/plugin_constants.h"
 #include "webkit/plugins/ppapi/common.h"
@@ -88,17 +92,7 @@
 
 #if defined(OS_MACOSX)
 #include "printing/metafile_impl.h"
-#if !defined(USE_SKIA)
-#include "base/mac/mac_util.h"
-#include "base/mac/scoped_cftyperef.h"
-#endif  // !defined(USE_SKIA)
 #endif  // defined(OS_MACOSX)
-
-#if defined(USE_SKIA)
-#include "printing/metafile.h"
-#include "printing/metafile_skia_wrapper.h"
-#include "skia/ext/platform_device.h"
-#endif
 
 #if defined(OS_WIN)
 #include "base/metrics/histogram.h"
@@ -141,6 +135,8 @@ using WebKit::WebPrintScalingOption;
 using WebKit::WebScopedUserGesture;
 using WebKit::WebString;
 using WebKit::WebURLRequest;
+using WebKit::WebUserGestureIndicator;
+using WebKit::WebUserGestureToken;
 using WebKit::WebView;
 
 namespace webkit {
@@ -298,9 +294,9 @@ bool SecurityOriginForInstance(PP_Instance instance_id,
 // Convert the given vector to an array of C-strings. The strings in the
 // returned vector are only guaranteed valid so long as the vector of strings
 // is not modified.
-scoped_array<const char*> StringVectorToArgArray(
+scoped_ptr<const char*[]> StringVectorToArgArray(
     const std::vector<std::string>& vector) {
-  scoped_array<const char*> array(new const char*[vector.size()]);
+  scoped_ptr<const char*[]> array(new const char*[vector.size()]);
   for (size_t i = 0; i < vector.size(); ++i)
     array[i] = vector[i].c_str();
   return array.Pass();
@@ -332,7 +328,8 @@ PPB_Gamepad_API* PluginInstance::GamepadImpl::AsPPB_Gamepad_API() {
   return this;
 }
 
-void PluginInstance::GamepadImpl::Sample(PP_GamepadsSampleData* data) {
+void PluginInstance::GamepadImpl::Sample(PP_Instance /* instance */,
+                                         PP_GamepadsSampleData* data) {
   WebKit::WebGamepads webkit_data;
   delegate_->SampleGamepads(&webkit_data);
   ConvertWebKitGamepadData(
@@ -350,10 +347,11 @@ PluginInstance::PluginInstance(
       instance_interface_(instance_interface),
       pp_instance_(0),
       container_(container),
+      layer_bound_to_fullscreen_(false),
       plugin_url_(plugin_url),
       full_frame_(false),
       sent_initial_did_change_view_(false),
-      view_change_weak_ptr_factory_(ALLOW_THIS_IN_INITIALIZER_LIST(this)),
+      view_change_weak_ptr_factory_(this),
       bound_graphics_2d_platform_(NULL),
       has_webkit_focus_(false),
       has_content_area_focus_(false),
@@ -455,6 +453,9 @@ void PluginInstance::Delete() {
     original_instance_interface_->DidDestroy(pp_instance());
   else
     instance_interface_->DidDestroy(pp_instance());
+  // Ensure we don't attempt to call functions on the destroyed instance.
+  original_instance_interface_.reset();
+  instance_interface_.reset();
 
   if (fullscreen_container_) {
     fullscreen_container_->Destroy();
@@ -523,10 +524,8 @@ unsigned PluginInstance::GetBackingTextureId() {
 }
 
 void PluginInstance::CommitBackingTexture() {
-  if (fullscreen_container_)
-    fullscreen_container_->Invalidate();
-  else if (texture_layer_)
-    texture_layer_->setNeedsDisplay();
+  if (texture_layer_)
+    texture_layer_->SetNeedsDisplay();
 }
 
 void PluginInstance::InstanceCrashed() {
@@ -586,8 +585,8 @@ bool PluginInstance::Initialize(const std::vector<std::string>& arg_names,
 
   argn_ = arg_names;
   argv_ = arg_values;
-  scoped_array<const char*> argn_array(StringVectorToArgArray(argn_));
-  scoped_array<const char*> argv_array(StringVectorToArgArray(argv_));
+  scoped_ptr<const char*[]> argn_array(StringVectorToArgArray(argn_));
+  scoped_ptr<const char*[]> argv_array(StringVectorToArgArray(argv_));
   bool success =  PP_ToBool(instance_interface_->DidCreate(pp_instance(),
                                                            argn_.size(),
                                                            argn_array.get(),
@@ -607,7 +606,7 @@ bool PluginInstance::HandleDocumentLoad(PPB_URLLoader_Impl* loader) {
 }
 
 bool PluginInstance::SendCompositionEventToPlugin(PP_InputEvent_Type type,
-                                                  const string16& text) {
+                                                  const base::string16& text) {
   std::vector<WebKit::WebCompositionUnderline> empty;
   return SendCompositionEventWithUnderlineInformationToPlugin(
       type, text, empty, static_cast<int>(text.size()),
@@ -616,7 +615,7 @@ bool PluginInstance::SendCompositionEventToPlugin(PP_InputEvent_Type type,
 
 bool PluginInstance::SendCompositionEventWithUnderlineInformationToPlugin(
     PP_InputEvent_Type type,
-    const string16& text,
+    const base::string16& text,
     const std::vector<WebKit::WebCompositionUnderline>& underlines,
     int selection_start,
     int selection_end) {
@@ -697,13 +696,13 @@ void PluginInstance::RequestInputEventsHelper(uint32_t event_classes) {
     container_->setWantsWheelEvents(IsAcceptingWheelEvents());
 }
 
-bool PluginInstance::HandleCompositionStart(const string16& text) {
+bool PluginInstance::HandleCompositionStart(const base::string16& text) {
   return SendCompositionEventToPlugin(PP_INPUTEVENT_TYPE_IME_COMPOSITION_START,
                                       text);
 }
 
 bool PluginInstance::HandleCompositionUpdate(
-    const string16& text,
+    const base::string16& text,
     const std::vector<WebKit::WebCompositionUnderline>& underlines,
     int selection_start,
     int selection_end) {
@@ -712,24 +711,26 @@ bool PluginInstance::HandleCompositionUpdate(
       text, underlines, selection_start, selection_end);
 }
 
-bool PluginInstance::HandleCompositionEnd(const string16& text) {
+bool PluginInstance::HandleCompositionEnd(const base::string16& text) {
   return SendCompositionEventToPlugin(PP_INPUTEVENT_TYPE_IME_COMPOSITION_END,
                                       text);
 }
 
-bool PluginInstance::HandleTextInput(const string16& text) {
+bool PluginInstance::HandleTextInput(const base::string16& text) {
   return SendCompositionEventToPlugin(PP_INPUTEVENT_TYPE_IME_TEXT,
                                       text);
 }
 
-void PluginInstance::GetSurroundingText(string16* text,
+void PluginInstance::GetSurroundingText(base::string16* text,
                                         ui::Range* range) const {
   std::vector<size_t> offsets;
   offsets.push_back(selection_anchor_);
   offsets.push_back(selection_caret_);
   *text = base::UTF8ToUTF16AndAdjustOffsets(surrounding_text_, &offsets);
-  range->set_start(offsets[0] == string16::npos ? text->size() : offsets[0]);
-  range->set_end(offsets[1] == string16::npos ? text->size() : offsets[1]);
+  range->set_start(offsets[0] == base::string16::npos ? text->size()
+                                                      : offsets[0]);
+  range->set_end(offsets[1] == base::string16::npos ? text->size()
+                                                    : offsets[1]);
 }
 
 bool PluginInstance::IsPluginAcceptingCompositionEvents() const {
@@ -784,10 +785,11 @@ bool PluginInstance::HandleInputEvent(const WebKit::WebInputEvent& event,
       // Allow the user gesture to be pending after the plugin handles the
       // event. This allows out-of-process plugins to respond to the user
       // gesture after processing has finished here.
-      WebFrame* frame = container_->element().document().frame();
-      if (frame->isProcessingUserGesture()) {
+      if (WebUserGestureIndicator::isProcessingUserGesture()) {
         pending_user_gesture_ =
             ::ppapi::EventTimeToPPTimeTicks(event.timeStampSeconds);
+        pending_user_gesture_token_ =
+            WebUserGestureIndicator::currentUserGestureToken();
       }
 
       // Each input event may generate more than one PP_InputEvent.
@@ -997,16 +999,16 @@ bool PluginInstance::GetBitmapForOptimizedPluginPaint(
   return true;
 }
 
-string16 PluginInstance::GetSelectedText(bool html) {
+base::string16 PluginInstance::GetSelectedText(bool html) {
   // Keep a reference on the stack. See NOTE above.
   scoped_refptr<PluginInstance> ref(this);
   if (!LoadSelectionInterface())
-    return string16();
+    return base::string16();
 
   PP_Var rv = plugin_selection_interface_->GetSelectedText(pp_instance(),
                                                            PP_FromBool(html));
   StringVar* string = StringVar::FromPPVar(rv);
-  string16 selection;
+  base::string16 selection;
   if (string)
     selection = UTF8ToUTF16(string->value());
   // Release the ref the plugin transfered to us.
@@ -1014,18 +1016,18 @@ string16 PluginInstance::GetSelectedText(bool html) {
   return selection;
 }
 
-string16 PluginInstance::GetLinkAtPosition(const gfx::Point& point) {
+base::string16 PluginInstance::GetLinkAtPosition(const gfx::Point& point) {
   // Keep a reference on the stack. See NOTE above.
   scoped_refptr<PluginInstance> ref(this);
   if (!LoadPdfInterface())
-    return string16();
+    return base::string16();
 
   PP_Point p;
   p.x = point.x();
   p.y = point.y();
   PP_Var rv = plugin_pdf_interface_->GetLinkAtPosition(pp_instance(), p);
   StringVar* string = StringVar::FromPPVar(rv);
-  string16 link;
+  base::string16 link;
   if (string)
     link = UTF8ToUTF16(string->value());
   // Release the ref the plugin transfered to us.
@@ -1051,7 +1053,7 @@ void PluginInstance::Zoom(double factor, bool text_only) {
   plugin_zoom_interface_->Zoom(pp_instance(), factor, PP_FromBool(text_only));
 }
 
-bool PluginInstance::StartFind(const string16& search_text,
+bool PluginInstance::StartFind(const base::string16& search_text,
                                bool case_sensitive,
                                int identifier) {
   // Keep a reference on the stack. See NOTE above.
@@ -1191,6 +1193,10 @@ bool PluginInstance::PluginHasFocus() const {
 }
 
 void PluginInstance::SendFocusChangeNotification() {
+  // This call can happen during PluginInstance destruction, because WebKit
+  // informs the plugin it's losing focus. See crbug.com/236574
+  if (!delegate_ || !instance_interface_)
+    return;
   bool has_focus = PluginHasFocus();
   delegate()->PluginFocusChanged(this, has_focus);
   instance_interface_->DidChangeFocus(pp_instance(), PP_FromBool(has_focus));
@@ -1320,10 +1326,8 @@ int PluginInstance::PrintBegin(const WebPrintParams& print_params) {
   if (!num_pages)
     return 0;
   current_print_settings_ = print_settings;
-#if defined(USE_SKIA)
   canvas_ = NULL;
   ranges_.clear();
-#endif  // USE_SKIA
   return num_pages;
 }
 
@@ -1332,7 +1336,6 @@ bool PluginInstance::PrintPage(int page_number, WebKit::WebCanvas* canvas) {
   DCHECK(plugin_print_interface_);
   PP_PrintPageNumberRange_Dev page_range;
   page_range.first_page_number = page_range.last_page_number = page_number;
-#if defined(USE_SKIA)
   // The canvas only has a metafile on it for print preview.
   bool save_for_later =
       (printing::MetafileSkiaWrapper::GetMetafileFromCanvas(*canvas) != NULL);
@@ -1343,9 +1346,7 @@ bool PluginInstance::PrintPage(int page_number, WebKit::WebCanvas* canvas) {
     ranges_.push_back(page_range);
     canvas_ = canvas;
     return true;
-  } else
-#endif  // USE_SKIA
-  {
+  } else {
     return PrintPageHelper(&page_range, 1, canvas);
   }
 #else  // defined(ENABLED_PRINTING)
@@ -1380,12 +1381,10 @@ bool PluginInstance::PrintPageHelper(PP_PrintPageNumberRange_Dev* page_ranges,
 void PluginInstance::PrintEnd() {
   // Keep a reference on the stack. See NOTE above.
   scoped_refptr<PluginInstance> ref(this);
-#if defined(USE_SKIA)
   if (!ranges_.empty())
     PrintPageHelper(&(ranges_.front()), ranges_.size(), canvas_.get());
   canvas_ = NULL;
   ranges_.clear();
-#endif  // USE_SKIA
 
   DCHECK(plugin_print_interface_);
   if (plugin_print_interface_)
@@ -1456,7 +1455,7 @@ bool PluginInstance::SetFullscreen(bool fullscreen) {
 
   if (fullscreen) {
     // Create the user gesture in case we're processing one that's pending.
-    WebScopedUserGesture user_gesture;
+    WebScopedUserGesture user_gesture(CurrentUserGestureToken());
     // WebKit does not resize the plugin to fill the screen in fullscreen mode,
     // so we will tweak plugin's attributes to support the expected behavior.
     KeepSizeAttributesBeforeFullscreen();
@@ -1529,7 +1528,7 @@ void PluginInstance::UpdateFlashFullscreenState(bool flash_fullscreen) {
     } else {
       // Open a user gesture here so the Webkit user gesture checks will succeed
       // for out-of-process plugins.
-      WebScopedUserGesture user_gesture;
+      WebScopedUserGesture user_gesture(CurrentUserGestureToken());
       if (!delegate()->LockMouse(this))
         lock_mouse_callback_->Run(PP_ERROR_FAILED);
     }
@@ -1637,7 +1636,7 @@ bool PluginInstance::PrintPDFOutput(PP_Resource print_output,
 #endif  // defined(OS_WIN)
 
   bool ret = false;
-#if defined(OS_LINUX) || (defined(OS_MACOSX) && defined(USE_SKIA))
+#if defined(OS_LINUX) || defined(OS_MACOSX)
   // On Linux we just set the final bits in the native metafile
   // (NativeMetafile and PreviewMetafile must have compatible formats,
   // i.e. both PDF for this to work).
@@ -1646,24 +1645,6 @@ bool PluginInstance::PrintPDFOutput(PP_Resource print_output,
   DCHECK(metafile != NULL);
   if (metafile)
     ret = metafile->InitFromData(mapper.data(), mapper.size());
-#elif defined(OS_MACOSX)
-  printing::NativeMetafile metafile;
-  // Create a PDF metafile and render from there into the passed in context.
-  if (metafile.InitFromData(mapper.data(), mapper.size())) {
-    // Flip the transform.
-    CGContextRef cgContext = canvas;
-    gfx::ScopedCGContextSaveGState save_gstate(cgContext)
-    CGContextTranslateCTM(cgContext, 0,
-                          current_print_settings_.printable_area.size.height);
-    CGContextScaleCTM(cgContext, 1.0, -1.0);
-    CGRect page_rect;
-    page_rect.origin.x = current_print_settings_.printable_area.point.x;
-    page_rect.origin.y = current_print_settings_.printable_area.point.y;
-    page_rect.size.width = current_print_settings_.printable_area.size.width;
-    page_rect.size.height = current_print_settings_.printable_area.size.height;
-
-    ret = metafile.RenderPage(1, cgContext, page_rect, true, false, true, true);
-  }
 #elif defined(OS_WIN)
   printing::Metafile* metafile =
     printing::MetafileSkiaWrapper::GetMetafileFromCanvas(*canvas);
@@ -1730,27 +1711,37 @@ void PluginInstance::UpdateLayer() {
   if (!container_)
     return;
 
-  // If we have a fullscreen_container_ (under PPB_FlashFullscreen) then the
-  // plugin is fullscreen (for Flash) or transitioning to fullscreen. In either
-  // case we do not want a layer.
-  bool want_layer = GetBackingTextureId() && !fullscreen_container_;
+  bool want_layer = GetBackingTextureId();
 
-  if (want_layer == !!texture_layer_.get())
+  if (want_layer == !!texture_layer_.get() &&
+      layer_bound_to_fullscreen_ == !!fullscreen_container_)
     return;
 
-  if (!want_layer) {
-    texture_layer_->willModifyTexture();
-    texture_layer_->clearClient();
-    container_->setWebLayer(NULL);
+  if (texture_layer_) {
+    texture_layer_->ClearClient();
+    if (!layer_bound_to_fullscreen_)
+      container_->setWebLayer(NULL);
+    else if (fullscreen_container_)
+      fullscreen_container_->SetLayer(NULL);
     web_layer_.reset();
     texture_layer_ = NULL;
-  } else {
-    DCHECK(bound_graphics_3d_.get());
-    texture_layer_ = cc::TextureLayer::create(this);
-    web_layer_.reset(new WebKit::WebLayerImpl(texture_layer_));
-    container_->setWebLayer(web_layer_.get());
-    texture_layer_->setContentsOpaque(bound_graphics_3d_->IsOpaque());
   }
+  if (want_layer) {
+    DCHECK(bound_graphics_3d_.get());
+    texture_layer_ = cc::TextureLayer::Create(this);
+    web_layer_.reset(new webkit::WebLayerImpl(texture_layer_));
+    if (fullscreen_container_) {
+      fullscreen_container_->SetLayer(web_layer_.get());
+      // Ignore transparency in fullscreen, since that's what Flash always
+      // wants to do, and that lets it not recreate a context if
+      // wmode=transparent was specified.
+      texture_layer_->SetContentsOpaque(true);
+    } else {
+      container_->setWebLayer(web_layer_.get());
+      texture_layer_->SetContentsOpaque(bound_graphics_3d_->IsOpaque());
+    }
+  }
+  layer_bound_to_fullscreen_ = !!fullscreen_container_;
 }
 
 void PluginInstance::AddPluginObject(PluginObject* plugin_object) {
@@ -1775,7 +1766,14 @@ bool PluginInstance::IsProcessingUserGesture() {
       ::ppapi::TimeTicksToPPTimeTicks(base::TimeTicks::Now());
   // Give a lot of slack so tests won't be flaky.
   const PP_TimeTicks kUserGestureDurationInSeconds = 10.0;
-  return (now - pending_user_gesture_ < kUserGestureDurationInSeconds);
+  return pending_user_gesture_token_.hasGestures() &&
+         (now - pending_user_gesture_ < kUserGestureDurationInSeconds);
+}
+
+WebUserGestureToken PluginInstance::CurrentUserGestureToken() {
+  if (!IsProcessingUserGesture())
+    pending_user_gesture_token_ = WebUserGestureToken();
+  return pending_user_gesture_token_;
 }
 
 void PluginInstance::OnLockMouseACK(bool succeeded) {
@@ -1846,7 +1844,7 @@ void PluginInstance::SimulateImeSetCompositionEvent(
                  input_event.composition_segment_offsets.begin(),
                  input_event.composition_segment_offsets.end());
 
-  string16 utf16_text =
+  base::string16 utf16_text =
       base::UTF8ToUTF16AndAdjustOffsets(input_event.character_text, &offsets);
 
   std::vector<WebKit::WebCompositionUnderline> underlines;
@@ -1907,30 +1905,31 @@ PP_Bool PluginInstance::BindGraphics(PP_Instance instance,
       desired_fullscreen_state_ != view_data_.is_fullscreen)
     return PP_FALSE;
 
-  bound_graphics_2d_platform_ = delegate_->GetGraphics2D(this, device);
+  PluginDelegate::PlatformGraphics2D* graphics_2d =
+      delegate_->GetGraphics2D(this, device);
   EnterResourceNoLock<PPB_Graphics3D_API> enter_3d(device, false);
   PPB_Graphics3D_Impl* graphics_3d = enter_3d.succeeded() ?
       static_cast<PPB_Graphics3D_Impl*>(enter_3d.object()) : NULL;
 
-  if (bound_graphics_2d_platform_) {
-    if (!bound_graphics_2d_platform_->BindToInstance(this))
-      return PP_FALSE;  // Can't bind to more than one instance.
+  if (graphics_2d) {
+    if (graphics_2d->BindToInstance(this)) {
+      bound_graphics_2d_platform_ = graphics_2d;
+      UpdateLayer();
+      return PP_TRUE;
+    }
   } else if (graphics_3d) {
     // Make sure graphics can only be bound to the instance it is
     // associated with.
-    if (graphics_3d->pp_instance() != pp_instance())
-      return PP_FALSE;
-    if (!graphics_3d->BindToInstance(true))
-      return PP_FALSE;
-
-    bound_graphics_3d_ = graphics_3d;
-  } else {
-    // The device is not a valid resource type.
-    return PP_FALSE;
+    if (graphics_3d->pp_instance() == pp_instance() &&
+        graphics_3d->BindToInstance(true)) {
+      bound_graphics_3d_ = graphics_3d;
+      UpdateLayer();
+      return PP_TRUE;
+    }
   }
-  UpdateLayer();
 
-  return PP_TRUE;
+  // The instance cannot be bound or the device is not a valid resource type.
+  return PP_FALSE;
 }
 
 PP_Bool PluginInstance::IsFullFrame(PP_Instance instance) {
@@ -1993,7 +1992,7 @@ PP_Var PluginInstance::ExecuteScript(PP_Instance instance,
   NPVariant result;
   bool ok = false;
   if (IsProcessingUserGesture()) {
-    WebKit::WebScopedUserGesture user_gesture;
+    WebKit::WebScopedUserGesture user_gesture(CurrentUserGestureToken());
     ok = WebBindings::evaluate(NULL, frame->windowObject(), &np_script,
                                &result);
   } else {
@@ -2105,14 +2104,18 @@ void PluginInstance::DeliverSamples(PP_Instance instance,
   content_decryptor_delegate_->DeliverSamples(audio_frames, block_info);
 }
 
-unsigned PluginInstance::prepareTexture(cc::ResourceUpdateQueue&) {
+unsigned PluginInstance::PrepareTexture(cc::ResourceUpdateQueue* queue) {
   return GetBackingTextureId();
 }
 
-WebKit::WebGraphicsContext3D* PluginInstance::context() {
+WebKit::WebGraphicsContext3D* PluginInstance::Context3d() {
   DCHECK(bound_graphics_3d_.get());
   DCHECK(bound_graphics_3d_->platform_context());
   return bound_graphics_3d_->platform_context()->GetParentContext();
+}
+
+bool PluginInstance::PrepareTextureMailbox(cc::TextureMailbox* mailbox) {
+  return false;
 }
 
 void PluginInstance::NumberOfFindResultsChanged(PP_Instance instance,
@@ -2127,6 +2130,10 @@ void PluginInstance::SelectedFindResultChanged(PP_Instance instance,
                                                int32_t index) {
   DCHECK_NE(find_identifier_, -1);
   delegate_->SelectedFindResultChanged(find_identifier_, index);
+}
+
+PP_Bool PluginInstance::IsFullscreen(PP_Instance instance) {
+  return PP_FromBool(view_data_.is_fullscreen);
 }
 
 PP_Bool PluginInstance::SetFullscreen(PP_Instance instance,
@@ -2147,10 +2154,13 @@ PP_Bool PluginInstance::GetScreenSize(PP_Instance instance, PP_Size* size) {
   switch (id) {
     case ::ppapi::BROKER_SINGLETON_ID:
     case ::ppapi::BROWSER_FONT_SINGLETON_ID:
+    case ::ppapi::EXTENSIONS_COMMON_SINGLETON_ID:
     case ::ppapi::FLASH_CLIPBOARD_SINGLETON_ID:
     case ::ppapi::FLASH_FILE_SINGLETON_ID:
     case ::ppapi::FLASH_FULLSCREEN_SINGLETON_ID:
     case ::ppapi::FLASH_SINGLETON_ID:
+    case ::ppapi::PDF_SINGLETON_ID:
+    case ::ppapi::TRUETYPE_FONT_SINGLETON_ID:
       NOTIMPLEMENTED();
       return NULL;
     case ::ppapi::GAMEPAD_SINGLETON_ID:
@@ -2264,7 +2274,7 @@ int32_t PluginInstance::LockMouse(PP_Instance instance,
   if (!FlashIsFullscreenOrPending() || flash_fullscreen()) {
     // Open a user gesture here so the Webkit user gesture checks will succeed
     // for out-of-process plugins.
-    WebScopedUserGesture user_gesture;
+    WebScopedUserGesture user_gesture(CurrentUserGestureToken());
     if (!delegate()->LockMouse(this))
       return PP_ERROR_FAILED;
   }
@@ -2425,8 +2435,8 @@ PP_NaClResult PluginInstance::ResetAsProxied(
   plugin_zoom_interface_ = NULL;
 
   // Re-send the DidCreate event via the proxy.
-  scoped_array<const char*> argn_array(StringVectorToArgArray(argn_));
-  scoped_array<const char*> argv_array(StringVectorToArgArray(argv_));
+  scoped_ptr<const char*[]> argn_array(StringVectorToArgArray(argn_));
+  scoped_ptr<const char*[]> argv_array(StringVectorToArgArray(argv_));
   if (!instance_interface_->DidCreate(pp_instance(), argn_.size(),
                                       argn_array.get(), argv_array.get()))
     return PP_NACL_ERROR_INSTANCE;

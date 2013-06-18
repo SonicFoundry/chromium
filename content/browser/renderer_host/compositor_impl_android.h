@@ -9,7 +9,7 @@
 #include "base/compiler_specific.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "cc/layer_tree_host_client.h"
+#include "cc/trees/layer_tree_host_client.h"
 #include "content/common/content_export.h"
 #include "content/common/gpu/client/webgraphicscontext3d_command_buffer_impl.h"
 #include "content/public/browser/android/compositor.h"
@@ -17,7 +17,7 @@
 struct ANativeWindow;
 
 namespace cc {
-class InputHandler;
+class InputHandlerClient;
 class Layer;
 class LayerTreeHost;
 }
@@ -42,15 +42,20 @@ class CONTENT_EXPORT CompositorImpl
   // Returns true if initialized with DIRECT_CONTEXT_ON_DRAW_THREAD.
   static bool UsesDirectGL();
 
+  // Returns the Java Surface object for a given view surface id.
+  static jobject GetSurface(int surface_id);
+
   // Compositor implementation.
   virtual void SetRootLayer(scoped_refptr<cc::Layer> root) OVERRIDE;
   virtual void SetWindowSurface(ANativeWindow* window) OVERRIDE;
+  virtual void SetSurface(jobject surface) OVERRIDE;
   virtual void SetVisible(bool visible) OVERRIDE;
   virtual void setDeviceScaleFactor(float factor) OVERRIDE;
   virtual void SetWindowBounds(const gfx::Size& size) OVERRIDE;
   virtual void SetHasTransparentBackground(bool flag) OVERRIDE;
   virtual bool CompositeAndReadback(
       void *pixels, const gfx::Rect& rect) OVERRIDE;
+  virtual void SetNeedsRedraw() OVERRIDE;
   virtual void Composite() OVERRIDE;
   virtual WebKit::WebGLId GenerateTexture(gfx::JavaBitmap& bitmap) OVERRIDE;
   virtual WebKit::WebGLId GenerateCompressedTexture(
@@ -63,20 +68,21 @@ class CONTENT_EXPORT CompositorImpl
                                    gfx::JavaBitmap& bitmap) OVERRIDE;
 
   // LayerTreeHostClient implementation.
-  virtual void willBeginFrame() OVERRIDE {}
-  virtual void didBeginFrame() OVERRIDE {}
-  virtual void animate(double monotonicFrameBeginTime) OVERRIDE;
-  virtual void layout() OVERRIDE;
-  virtual void applyScrollAndScale(gfx::Vector2d scrollDelta,
-                                   float pageScale) OVERRIDE;
-  virtual scoped_ptr<cc::OutputSurface> createOutputSurface() OVERRIDE;
-  virtual scoped_ptr<cc::InputHandler> createInputHandler() OVERRIDE;
-  virtual void didRecreateOutputSurface(bool success) OVERRIDE;
-  virtual void willCommit() OVERRIDE {}
-  virtual void didCommit() OVERRIDE;
-  virtual void didCommitAndDrawFrame() OVERRIDE;
-  virtual void didCompleteSwapBuffers() OVERRIDE;
-  virtual void scheduleComposite() OVERRIDE;
+  virtual void WillBeginFrame() OVERRIDE {}
+  virtual void DidBeginFrame() OVERRIDE {}
+  virtual void Animate(double frame_begin_time) OVERRIDE {}
+  virtual void Layout() OVERRIDE {}
+  virtual void ApplyScrollAndScale(gfx::Vector2d scroll_delta,
+                                   float page_scale) OVERRIDE {}
+  virtual scoped_ptr<cc::OutputSurface> CreateOutputSurface() OVERRIDE;
+  virtual scoped_ptr<cc::InputHandlerClient> CreateInputHandlerClient()
+      OVERRIDE;
+  virtual void DidRecreateOutputSurface(bool success) OVERRIDE {}
+  virtual void WillCommit() OVERRIDE {}
+  virtual void DidCommit() OVERRIDE {}
+  virtual void DidCommitAndDrawFrame() OVERRIDE {}
+  virtual void DidCompleteSwapBuffers() OVERRIDE;
+  virtual void ScheduleComposite() OVERRIDE;
   virtual scoped_refptr<cc::ContextProvider>
       OffscreenContextProviderForMainThread() OVERRIDE;
   virtual scoped_refptr<cc::ContextProvider>

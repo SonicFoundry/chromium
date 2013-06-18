@@ -5,17 +5,18 @@
 #include "webkit/compositor_bindings/web_layer_tree_view_impl_for_testing.h"
 
 #include "base/command_line.h"
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/synchronization/lock.h"
-#include "cc/context_provider.h"
-#include "cc/fake_web_graphics_context_3d.h"
-#include "cc/input_handler.h"
-#include "cc/layer.h"
-#include "cc/layer_tree_host.h"
-#include "cc/output_surface.h"
-#include "cc/switches.h"
-#include "cc/thread.h"
-#include "cc/thread_impl.h"
+#include "cc/base/switches.h"
+#include "cc/base/thread.h"
+#include "cc/base/thread_impl.h"
+#include "cc/debug/fake_web_graphics_context_3d.h"
+#include "cc/input/input_handler.h"
+#include "cc/layers/layer.h"
+#include "cc/output/context_provider.h"
+#include "cc/output/output_surface.h"
+#include "cc/output/software_output_device.h"
+#include "cc/trees/layer_tree_host.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/Platform.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebGraphicsContext3D.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebInputHandler.h"
@@ -24,14 +25,20 @@
 #include "third_party/WebKit/Source/Platform/chromium/public/WebRenderingStats.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebSize.h"
 #include "webkit/compositor_bindings/web_compositor_support_impl.h"
-#include "webkit/compositor_bindings/web_compositor_support_software_output_device.h"
 #include "webkit/compositor_bindings/web_layer_impl.h"
 #include "webkit/compositor_bindings/web_rendering_stats_impl.h"
 #include "webkit/compositor_bindings/web_to_ccinput_handler_adapter.h"
 #include "webkit/gpu/test_context_provider_factory.h"
 #include "webkit/support/test_webkit_platform_support.h"
 
-namespace WebKit {
+using WebKit::WebColor;
+using WebKit::WebGraphicsContext3D;
+using WebKit::WebRect;
+using WebKit::WebRenderingStats;
+using WebKit::WebSize;
+
+namespace webkit {
+
 WebLayerTreeViewImplForTesting::WebLayerTreeViewImplForTesting(
     webkit_support::LayerTreeViewType type,
     webkit_support::DRTLayerTreeViewClient* client)
@@ -45,136 +52,131 @@ bool WebLayerTreeViewImplForTesting::initialize(
   cc::LayerTreeSettings settings;
   // Accelerated animations are disabled for layout tests, but enabled for unit
   // tests.
-  settings.acceleratedAnimationEnabled = type_ == webkit_support::FAKE_CONTEXT;
+  settings.accelerated_animation_enabled =
+      type_ == webkit_support::FAKE_CONTEXT;
   layer_tree_host_ =
-      cc::LayerTreeHost::create(this, settings, compositor_thread.Pass());
+      cc::LayerTreeHost::Create(this, settings, compositor_thread.Pass());
   if (!layer_tree_host_.get())
     return false;
   return true;
 }
 
 void WebLayerTreeViewImplForTesting::setSurfaceReady() {
-  layer_tree_host_->setSurfaceReady();
+  layer_tree_host_->SetSurfaceReady();
 }
 
-void WebLayerTreeViewImplForTesting::setRootLayer(const WebLayer& root) {
-  layer_tree_host_->setRootLayer(static_cast<const WebLayerImpl*>(&root)
-                                     ->layer());
+void WebLayerTreeViewImplForTesting::setRootLayer(
+    const WebKit::WebLayer& root) {
+  layer_tree_host_->SetRootLayer(
+      static_cast<const WebLayerImpl*>(&root)->layer());
 }
 
 void WebLayerTreeViewImplForTesting::clearRootLayer() {
-  layer_tree_host_->setRootLayer(scoped_refptr<cc::Layer>());
+  layer_tree_host_->SetRootLayer(scoped_refptr<cc::Layer>());
 }
 
 void WebLayerTreeViewImplForTesting::setViewportSize(
-    const WebSize& layout_viewport_size,
+    const WebSize& unused_deprecated,
     const WebSize& device_viewport_size) {
-  layer_tree_host_->setViewportSize(layout_viewport_size, device_viewport_size);
+  layer_tree_host_->SetViewportSize(device_viewport_size);
 }
 
 WebSize WebLayerTreeViewImplForTesting::layoutViewportSize() const {
-  return layer_tree_host_->layoutViewportSize();
+  return layer_tree_host_->device_viewport_size();
 }
 
 WebSize WebLayerTreeViewImplForTesting::deviceViewportSize() const {
-  return layer_tree_host_->deviceViewportSize();
+  return layer_tree_host_->device_viewport_size();
 }
 
 void WebLayerTreeViewImplForTesting::setDeviceScaleFactor(
     float device_scale_factor) {
-  layer_tree_host_->setDeviceScaleFactor(device_scale_factor);
+  layer_tree_host_->SetDeviceScaleFactor(device_scale_factor);
 }
 
 float WebLayerTreeViewImplForTesting::deviceScaleFactor() const {
-  return layer_tree_host_->deviceScaleFactor();
+  return layer_tree_host_->device_scale_factor();
 }
 
 void WebLayerTreeViewImplForTesting::setBackgroundColor(WebColor color) {
-  layer_tree_host_->setBackgroundColor(color);
+  layer_tree_host_->set_background_color(color);
 }
 
 void WebLayerTreeViewImplForTesting::setHasTransparentBackground(
     bool transparent) {
-  layer_tree_host_->setHasTransparentBackground(transparent);
+  layer_tree_host_->set_has_transparent_background(transparent);
 }
 
 void WebLayerTreeViewImplForTesting::setVisible(bool visible) {
-  layer_tree_host_->setVisible(visible);
+  layer_tree_host_->SetVisible(visible);
 }
 
 void WebLayerTreeViewImplForTesting::setPageScaleFactorAndLimits(
     float page_scale_factor,
     float minimum,
     float maximum) {
-  layer_tree_host_->setPageScaleFactorAndLimits(
+  layer_tree_host_->SetPageScaleFactorAndLimits(
       page_scale_factor, minimum, maximum);
 }
 
 void WebLayerTreeViewImplForTesting::startPageScaleAnimation(
-    const WebPoint& scroll,
+    const WebKit::WebPoint& scroll,
     bool use_anchor,
     float new_page_scale,
     double duration_sec) {}
 
 void WebLayerTreeViewImplForTesting::setNeedsAnimate() {
-  layer_tree_host_->setNeedsAnimate();
+  layer_tree_host_->SetNeedsAnimate();
 }
 
 void WebLayerTreeViewImplForTesting::setNeedsRedraw() {
-  layer_tree_host_->setNeedsRedraw();
+  layer_tree_host_->SetNeedsRedraw();
 }
 
 bool WebLayerTreeViewImplForTesting::commitRequested() const {
-  return layer_tree_host_->commitRequested();
+  return layer_tree_host_->CommitRequested();
 }
 
 void WebLayerTreeViewImplForTesting::composite() {
-  layer_tree_host_->composite();
+  layer_tree_host_->Composite(base::TimeTicks::Now());
 }
 
 void WebLayerTreeViewImplForTesting::updateAnimations(
     double frame_begin_timeSeconds) {
   base::TimeTicks frame_begin_time = base::TimeTicks::FromInternalValue(
       frame_begin_timeSeconds * base::Time::kMicrosecondsPerMillisecond);
-  layer_tree_host_->updateAnimations(frame_begin_time);
+  layer_tree_host_->UpdateAnimations(frame_begin_time);
 }
 
 void WebLayerTreeViewImplForTesting::didStopFlinging() {}
 
-bool WebLayerTreeViewImplForTesting::compositeAndReadback(void* pixels,
-                                                          const WebRect& rect) {
-  return layer_tree_host_->compositeAndReadback(pixels, rect);
+bool WebLayerTreeViewImplForTesting::compositeAndReadback(
+    void* pixels, const WebRect& rect_in_device_viewport) {
+  return layer_tree_host_->CompositeAndReadback(pixels,
+                                                rect_in_device_viewport);
 }
 
 void WebLayerTreeViewImplForTesting::finishAllRendering() {
-  layer_tree_host_->finishAllRendering();
+  layer_tree_host_->FinishAllRendering();
 }
 
 void WebLayerTreeViewImplForTesting::setDeferCommits(bool defer_commits) {
-  layer_tree_host_->setDeferCommits(defer_commits);
+  layer_tree_host_->SetDeferCommits(defer_commits);
 }
 
 void WebLayerTreeViewImplForTesting::renderingStats(WebRenderingStats&) const {}
 
-void WebLayerTreeViewImplForTesting::willBeginFrame() {}
-
-void WebLayerTreeViewImplForTesting::didBeginFrame() {}
-
-void WebLayerTreeViewImplForTesting::animate(
-    double monotonic_frame_begin_time) {
-}
-
-void WebLayerTreeViewImplForTesting::layout() {
+void WebLayerTreeViewImplForTesting::Layout() {
   if (client_)
     client_->Layout();
 }
 
-void WebLayerTreeViewImplForTesting::applyScrollAndScale(
+void WebLayerTreeViewImplForTesting::ApplyScrollAndScale(
     gfx::Vector2d scroll_delta,
     float page_scale) {}
 
 scoped_ptr<cc::OutputSurface>
-WebLayerTreeViewImplForTesting::createOutputSurface() {
+WebLayerTreeViewImplForTesting::CreateOutputSurface() {
   scoped_ptr<cc::OutputSurface> surface;
   switch (type_) {
     case webkit_support::FAKE_CONTEXT: {
@@ -184,11 +186,9 @@ WebLayerTreeViewImplForTesting::createOutputSurface() {
       break;
     }
     case webkit_support::SOFTWARE_CONTEXT: {
-      using webkit::WebCompositorSupportSoftwareOutputDevice;
-      scoped_ptr<WebCompositorSupportSoftwareOutputDevice> software_device =
-          make_scoped_ptr(new WebCompositorSupportSoftwareOutputDevice);
-      surface.reset(new cc::OutputSurface(
-          software_device.PassAs<cc::SoftwareOutputDevice>()));
+      scoped_ptr<cc::SoftwareOutputDevice> software_device =
+          make_scoped_ptr(new cc::SoftwareOutputDevice);
+      surface.reset(new cc::OutputSurface(software_device.Pass()));
       break;
     }
     case webkit_support::MESA_CONTEXT: {
@@ -202,22 +202,12 @@ WebLayerTreeViewImplForTesting::createOutputSurface() {
   return surface.Pass();
 }
 
-void WebLayerTreeViewImplForTesting::didRecreateOutputSurface(bool success) {}
-
-scoped_ptr<cc::InputHandler>
-WebLayerTreeViewImplForTesting::createInputHandler() {
-  return scoped_ptr<cc::InputHandler>();
+scoped_ptr<cc::InputHandlerClient>
+WebLayerTreeViewImplForTesting::CreateInputHandlerClient() {
+  return scoped_ptr<cc::InputHandlerClient>();
 }
 
-void WebLayerTreeViewImplForTesting::willCommit() {}
-
-void WebLayerTreeViewImplForTesting::didCommit() {}
-
-void WebLayerTreeViewImplForTesting::didCommitAndDrawFrame() {}
-
-void WebLayerTreeViewImplForTesting::didCompleteSwapBuffers() {}
-
-void WebLayerTreeViewImplForTesting::scheduleComposite() {
+void WebLayerTreeViewImplForTesting::ScheduleComposite() {
   if (client_)
     client_->ScheduleComposite();
 }
@@ -234,4 +224,4 @@ WebLayerTreeViewImplForTesting::OffscreenContextProviderForCompositorThread() {
       OffscreenContextProviderForCompositorThread();
 }
 
-}  // namespace WebKit
+}  // namespace webkit

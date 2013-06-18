@@ -9,19 +9,23 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/prefs/public/pref_member.h"
+#include "base/prefs/pref_member.h"
 #include "chrome/browser/chromeos/language_preferences.h"
 #include "chrome/browser/prefs/pref_service_syncable_observer.h"
 
 class PrefRegistrySimple;
-class PrefRegistrySyncable;
 class PrefService;
 class PrefServiceSyncable;
 
+namespace user_prefs {
+class PrefRegistrySyncable;
+}
+
 namespace chromeos {
+
 namespace input_method {
 class InputMethodManager;
-}  // namespace input_method
+}
 
 // The Preferences class handles Chrome OS preferences. When the class
 // is first initialized, it will initialize the OS settings to what's stored in
@@ -36,7 +40,7 @@ class Preferences : public PrefServiceSyncableObserver {
 
   // These method will register the prefs associated with Chrome OS settings.
   static void RegisterPrefs(PrefRegistrySimple* registry);
-  static void RegisterUserPrefs(PrefRegistrySyncable* registry);
+  static void RegisterUserPrefs(user_prefs::PrefRegistrySyncable* registry);
 
   // This method will initialize Chrome OS settings to values in user prefs.
   void Init(PrefServiceSyncable* prefs);
@@ -124,6 +128,8 @@ class Preferences : public PrefServiceSyncableObserver {
   BooleanPrefMember disable_drive_over_cellular_;
   BooleanPrefMember disable_drive_hosted_files_;
   FilePathPrefMember download_default_directory_;
+  FilePathPrefMember select_file_last_directory_;
+  FilePathPrefMember save_file_default_directory_;
 
   // Input method preferences.
   StringPrefMember preferred_languages_;
@@ -165,16 +171,20 @@ class Preferences : public PrefServiceSyncableObserver {
   IntegerPrefMember power_ac_screen_dim_delay_ms_;
   IntegerPrefMember power_ac_screen_off_delay_ms_;
   IntegerPrefMember power_ac_screen_lock_delay_ms_;
+  IntegerPrefMember power_ac_idle_warning_delay_ms_;
   IntegerPrefMember power_ac_idle_delay_ms_;
   IntegerPrefMember power_battery_screen_dim_delay_ms_;
   IntegerPrefMember power_battery_screen_off_delay_ms_;
   IntegerPrefMember power_battery_screen_lock_delay_ms_;
+  IntegerPrefMember power_battery_idle_warning_delay_ms_;
   IntegerPrefMember power_battery_idle_delay_ms_;
   IntegerPrefMember power_idle_action_;
   IntegerPrefMember power_lid_closed_action_;
   BooleanPrefMember power_use_audio_activity_;
   BooleanPrefMember power_use_video_activity_;
+  BooleanPrefMember power_allow_screen_wake_locks_;
   DoublePrefMember power_presentation_idle_delay_factor_;
+  DoublePrefMember power_user_activity_screen_dim_delay_factor_;
 
   DISALLOW_COPY_AND_ASSIGN(Preferences);
 };

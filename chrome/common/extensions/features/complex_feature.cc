@@ -38,16 +38,19 @@ Feature::Availability ComplexFeature::IsAvailableToManifest(
 }
 
 Feature::Availability ComplexFeature::IsAvailableToContext(
-    const Extension* extension, Context context, Platform platform) const {
+    const Extension* extension,
+    Context context,
+    const GURL& url,
+    Platform platform) const {
   Feature::Availability first_availability =
-      features_[0]->IsAvailableToContext(extension, context, platform);
+      features_[0]->IsAvailableToContext(extension, context, url, platform);
   if (first_availability.is_available())
     return first_availability;
 
   for (FeatureList::const_iterator it = features_.begin() + 1;
        it != features_.end(); ++it) {
     Availability availability =
-        (*it)->IsAvailableToContext(extension, context, platform);
+        (*it)->IsAvailableToContext(extension, context, url, platform);
     if (availability.is_available())
       return availability;
   }
@@ -64,14 +67,29 @@ std::set<Feature::Context>* ComplexFeature::GetContexts() {
   return features_[0]->GetContexts();
 }
 
+bool ComplexFeature::IsInternal() const {
+  NOTREACHED();
+  return false;
+}
+
 std::string ComplexFeature::GetAvailabilityMessage(AvailabilityResult result,
-                                                   Manifest::Type type) const {
+                                                   Manifest::Type type,
+                                                   const GURL& url) const {
   if (result == IS_AVAILABLE)
-    return "";
+    return std::string();
 
   // TODO(justinlin): Form some kind of combined availabilities/messages from
   // SimpleFeatures.
-  return features_[0]->GetAvailabilityMessage(result, type);
+  return features_[0]->GetAvailabilityMessage(result, type, url);
+}
+
+bool ComplexFeature::IsIdInWhitelist(const std::string& extension_id) const {
+  for (FeatureList::const_iterator it = features_.begin();
+       it != features_.end(); ++it) {
+    if ((*it)->IsIdInWhitelist(extension_id))
+      return true;
+  }
+  return false;
 }
 
 }  // namespace extensions

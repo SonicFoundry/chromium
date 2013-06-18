@@ -5,7 +5,6 @@
 [
   {
     "namespace": "tabs",
-    "dependencies": [ "extension", "windows" ],
     "types": [
       {
         "id": "Tab",
@@ -722,6 +721,11 @@
                 "type": "boolean",
                 "optional": true,
                 "description": "The tab's new pinned state."
+              },
+              "favIconUrl": {
+                "type": "string",
+                "optional": true,
+                "description": "The tab's new favicon URL."
               }
             }
           },

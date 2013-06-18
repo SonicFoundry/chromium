@@ -143,7 +143,7 @@ class HttpPipelinedConnectionImplTest : public testing::Test {
     HttpStream* stream = pipeline_->CreateNewStream();
     HttpRequestInfo* request_info = GetRequestInfo(filename);
     int rv = stream->InitializeStream(
-        request_info, BoundNetLog(), CompletionCallback());
+        request_info, DEFAULT_PRIORITY, BoundNetLog(), CompletionCallback());
     DCHECK_EQ(OK, rv);
     return stream;
   }
@@ -998,8 +998,8 @@ class StreamDeleter {
  public:
   StreamDeleter(HttpStream* stream)
       : stream_(stream),
-        ALLOW_THIS_IN_INITIALIZER_LIST(callback_(
-            base::Bind(&StreamDeleter::OnIOComplete, base::Unretained(this)))) {
+        callback_(base::Bind(&StreamDeleter::OnIOComplete,
+                             base::Unretained(this))) {
   }
 
   ~StreamDeleter() {

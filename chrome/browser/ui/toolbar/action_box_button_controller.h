@@ -44,6 +44,10 @@ class ActionBoxButtonController : public ui::SimpleMenuModel::Delegate,
   ActionBoxButtonController(Browser* browser, Delegate* delegate);
   virtual ~ActionBoxButtonController();
 
+  // Creates and populates an ActionBoxMenuModel according to the current
+  // state of the browser.
+  scoped_ptr<ActionBoxMenuModel> CreateMenuModel();
+
   // Notifies this that the action box button has been clicked.
   // Methods on the Delegate may be called re-entrantly.
   void OnButtonClicked();
@@ -54,7 +58,7 @@ class ActionBoxButtonController : public ui::SimpleMenuModel::Delegate,
   virtual bool GetAcceleratorForCommandId(
       int command_id,
       ui::Accelerator* accelerator) OVERRIDE;
-  virtual void ExecuteCommand(int command_id) OVERRIDE;
+  virtual void ExecuteCommand(int command_id, int event_flags) OVERRIDE;
 
  private:
   // Gets the command ID for an extension, creating a new one if necessary.

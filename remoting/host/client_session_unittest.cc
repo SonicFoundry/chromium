@@ -26,12 +26,13 @@ using protocol::SessionConfig;
 
 using testing::_;
 using testing::AnyNumber;
+using testing::AtMost;
 using testing::DeleteArg;
 using testing::DoAll;
 using testing::Expectation;
-using testing::InSequence;
 using testing::Return;
 using testing::ReturnRef;
+using testing::Sequence;
 
 namespace {
 
@@ -48,7 +49,7 @@ ACTION_P2(InjectMouseEvent, connection, event) {
 }
 
 ACTION_P2(LocalMouseMoved, client_session, event) {
-  client_session->LocalMouseMoved(SkIPoint::Make(event.x(), event.y()));
+  client_session->OnLocalMouseMoved(SkIPoint::Make(event.x(), event.y()));
 }
 
 }  // namespace
@@ -71,17 +72,13 @@ class ClientSessionTest : public testing::Test {
   // DesktopEnvironmentFactory::Create().
   DesktopEnvironment* CreateDesktopEnvironment();
 
-  // Returns |event_executor_| created and initialized by SetUp(), to mock
-  // DesktopEnvironment::CreateEventExecutor().
-  EventExecutor* CreateEventExecutor(
-      scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner);
+  // Returns |input_injector_| created and initialized by SetUp(), to mock
+  // DesktopEnvironment::CreateInputInjector().
+  InputInjector* CreateInputInjector();
 
   // Creates a fake media::ScreenCapturer, to mock
   // DesktopEnvironment::CreateVideoCapturer().
-  media::ScreenCapturer* CreateVideoCapturer(
-      scoped_refptr<base::SingleThreadTaskRunner> capture_task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> encode_task_runner);
+  media::ScreenCapturer* CreateVideoCapturer();
 
   // Notifies the client session that the client connection has been
   // authenticated and channels have been connected. This effectively enables
@@ -93,10 +90,10 @@ class ClientSessionTest : public testing::Test {
   void QuitMainMessageLoop();
 
   // Message loop passed to |client_session_| to perform all functions on.
-  MessageLoop message_loop_;
+  base::MessageLoop message_loop_;
 
   // ClientSession instance under test.
-  scoped_refptr<ClientSession> client_session_;
+  scoped_ptr<ClientSession> client_session_;
 
   // ClientSession::EventHandler mock for use in tests.
   MockClientSessionEventHandler session_event_handler_;
@@ -109,9 +106,9 @@ class ClientSessionTest : public testing::Test {
   MockClientStub client_stub_;
   MockVideoStub video_stub_;
 
-  // DesktopEnvironment owns |event_executor_|, but input injection tests need
+  // DesktopEnvironment owns |input_injector_|, but input injection tests need
   // to express expectations on it.
-  scoped_ptr<MockEventExecutor> event_executor_;
+  scoped_ptr<MockInputInjector> input_injector_;
 
   // ClientSession owns |connection_| but tests need it to inject fake events.
   MockConnectionToClient* connection_;
@@ -135,7 +132,7 @@ void ClientSessionTest::SetUp() {
       .Times(AnyNumber())
       .WillRepeatedly(Return(false));
 
-  event_executor_.reset(new MockEventExecutor());
+  input_injector_.reset(new MockInputInjector());
 
   session_config_ = SessionConfig::ForTest();
 
@@ -156,7 +153,7 @@ void ClientSessionTest::SetUp() {
   EXPECT_CALL(*connection, Disconnect());
   connection_ = connection.get();
 
-  client_session_ = new ClientSession(
+  client_session_.reset(new ClientSession(
       &session_event_handler_,
       ui_task_runner, // Audio thread.
       ui_task_runner, // Input thread.
@@ -166,51 +163,51 @@ void ClientSessionTest::SetUp() {
       ui_task_runner, // UI thread.
       connection.PassAs<protocol::ConnectionToClient>(),
       desktop_environment_factory_.get(),
-      base::TimeDelta());
+      base::TimeDelta()));
 }
 
 void ClientSessionTest::TearDown() {
   // Verify that the client session has been stopped.
-  EXPECT_TRUE(client_session_.get() == NULL);
+  EXPECT_TRUE(!client_session_);
 }
 
 void ClientSessionTest::DisconnectClientSession() {
-  client_session_->Disconnect();
+  client_session_->DisconnectSession();
   // MockSession won't trigger OnConnectionClosed, so fake it.
   client_session_->OnConnectionClosed(client_session_->connection(),
                                       protocol::OK);
 }
 
 void ClientSessionTest::StopClientSession() {
-  // MockClientSessionEventHandler won't trigger Stop, so fake it.
-  client_session_->Stop();
-  client_session_ = NULL;
+  client_session_.reset();
 
   desktop_environment_factory_.reset();
 }
 
 DesktopEnvironment* ClientSessionTest::CreateDesktopEnvironment() {
   MockDesktopEnvironment* desktop_environment = new MockDesktopEnvironment();
-  EXPECT_CALL(*desktop_environment, CreateAudioCapturerPtr(_))
+  EXPECT_CALL(*desktop_environment, CreateAudioCapturerPtr())
       .Times(0);
-  EXPECT_CALL(*desktop_environment, CreateEventExecutorPtr(_, _))
-      .WillOnce(Invoke(this, &ClientSessionTest::CreateEventExecutor));
-  EXPECT_CALL(*desktop_environment, CreateVideoCapturerPtr(_, _))
+  EXPECT_CALL(*desktop_environment, CreateInputInjectorPtr())
+      .WillOnce(Invoke(this, &ClientSessionTest::CreateInputInjector));
+  EXPECT_CALL(*desktop_environment, CreateScreenControlsPtr())
+      .Times(AtMost(1));
+  EXPECT_CALL(*desktop_environment, CreateVideoCapturerPtr())
       .WillOnce(Invoke(this, &ClientSessionTest::CreateVideoCapturer));
+  EXPECT_CALL(*desktop_environment, GetCapabilities())
+      .Times(AtMost(1));
+  EXPECT_CALL(*desktop_environment, SetCapabilities(_))
+      .Times(AtMost(1));
 
   return desktop_environment;
 }
 
-EventExecutor* ClientSessionTest::CreateEventExecutor(
-    scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner) {
-  EXPECT_TRUE(event_executor_);
-  return event_executor_.release();
+InputInjector* ClientSessionTest::CreateInputInjector() {
+  EXPECT_TRUE(input_injector_);
+  return input_injector_.release();
 }
 
-media::ScreenCapturer* ClientSessionTest::CreateVideoCapturer(
-    scoped_refptr<base::SingleThreadTaskRunner> capture_task_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> encode_task_runner) {
+media::ScreenCapturer* ClientSessionTest::CreateVideoCapturer() {
   return new media::ScreenCapturerFake();
 }
 
@@ -220,7 +217,7 @@ void ClientSessionTest::ConnectClientSession() {
 }
 
 void ClientSessionTest::QuitMainMessageLoop() {
-  message_loop_.PostTask(FROM_HERE, MessageLoop::QuitClosure());
+  message_loop_.PostTask(FROM_HERE, base::MessageLoop::QuitClosure());
 }
 
 MATCHER_P2(EqualsClipboardEvent, m, d, "") {
@@ -241,15 +238,21 @@ TEST_F(ClientSessionTest, ClipboardStubFilter) {
   clipboard_event3.set_mime_type(kMimeTypeTextUtf8);
   clipboard_event3.set_data("c");
 
-  InSequence s;
-  EXPECT_CALL(session_event_handler_, OnSessionAuthenticated(_));
-  EXPECT_CALL(*event_executor_, StartPtr(_));
-  EXPECT_CALL(session_event_handler_, OnSessionChannelsConnected(_));
+  Expectation authenticated =
+      EXPECT_CALL(session_event_handler_, OnSessionAuthenticated(_))
+          .WillOnce(Return(true));
+  EXPECT_CALL(*input_injector_, StartPtr(_))
+      .After(authenticated);
+  EXPECT_CALL(session_event_handler_, OnSessionChannelsConnected(_))
+      .After(authenticated);
 
   // Wait for the first video packet to be captured to make sure that
   // the injected input will go though. Otherwise mouse events will be blocked
   // by the mouse clamping filter.
+  Sequence s;
   EXPECT_CALL(video_stub_, ProcessVideoPacketPtr(_, _))
+      .InSequence(s)
+      .After(authenticated)
       .WillOnce(DoAll(
           // This event should get through to the clipboard stub.
           InjectClipboardEvent(connection_, clipboard_event2),
@@ -258,9 +261,11 @@ TEST_F(ClientSessionTest, ClipboardStubFilter) {
           // because the client has disconnected.
           InjectClipboardEvent(connection_, clipboard_event3),
           InvokeWithoutArgs(this, &ClientSessionTest::StopClientSession)));
-  EXPECT_CALL(*event_executor_, InjectClipboardEvent(EqualsClipboardEvent(
-      kMimeTypeTextUtf8, "b")));
-  EXPECT_CALL(session_event_handler_, OnSessionClosed(_));
+  EXPECT_CALL(*input_injector_, InjectClipboardEvent(EqualsClipboardEvent(
+      kMimeTypeTextUtf8, "b")))
+      .InSequence(s);
+  EXPECT_CALL(session_event_handler_, OnSessionClosed(_))
+      .InSequence(s);
 
   // This event should not get through to the clipboard stub,
   // because the client isn't authenticated yet.
@@ -312,15 +317,21 @@ TEST_F(ClientSessionTest, InputStubFilter) {
   mouse_event3.set_x(300);
   mouse_event3.set_y(301);
 
-  InSequence s;
-  EXPECT_CALL(session_event_handler_, OnSessionAuthenticated(_));
-  EXPECT_CALL(*event_executor_, StartPtr(_));
-  EXPECT_CALL(session_event_handler_, OnSessionChannelsConnected(_));
+  Expectation authenticated =
+      EXPECT_CALL(session_event_handler_, OnSessionAuthenticated(_))
+          .WillOnce(Return(true));
+  EXPECT_CALL(*input_injector_, StartPtr(_))
+      .After(authenticated);
+  EXPECT_CALL(session_event_handler_, OnSessionChannelsConnected(_))
+      .After(authenticated);
 
   // Wait for the first video packet to be captured to make sure that
   // the injected input will go though. Otherwise mouse events will be blocked
   // by the mouse clamping filter.
+  Sequence s;
   EXPECT_CALL(video_stub_, ProcessVideoPacketPtr(_, _))
+      .InSequence(s)
+      .After(authenticated)
       .WillOnce(DoAll(
           // These events should get through to the input stub.
           InjectKeyEvent(connection_, key_event2_down),
@@ -332,10 +343,14 @@ TEST_F(ClientSessionTest, InputStubFilter) {
           InjectKeyEvent(connection_, key_event3),
           InjectMouseEvent(connection_, mouse_event3),
           InvokeWithoutArgs(this, &ClientSessionTest::StopClientSession)));
-  EXPECT_CALL(*event_executor_, InjectKeyEvent(EqualsUsbEvent(2, true)));
-  EXPECT_CALL(*event_executor_, InjectKeyEvent(EqualsUsbEvent(2, false)));
-  EXPECT_CALL(*event_executor_, InjectMouseEvent(EqualsMouseEvent(200, 201)));
-  EXPECT_CALL(session_event_handler_, OnSessionClosed(_));
+  EXPECT_CALL(*input_injector_, InjectKeyEvent(EqualsUsbEvent(2, true)))
+      .InSequence(s);
+  EXPECT_CALL(*input_injector_, InjectKeyEvent(EqualsUsbEvent(2, false)))
+      .InSequence(s);
+  EXPECT_CALL(*input_injector_, InjectMouseEvent(EqualsMouseEvent(200, 201)))
+      .InSequence(s);
+  EXPECT_CALL(session_event_handler_, OnSessionClosed(_))
+      .InSequence(s);
 
   // These events should not get through to the input stub,
   // because the client isn't authenticated yet.
@@ -357,15 +372,21 @@ TEST_F(ClientSessionTest, LocalInputTest) {
   mouse_event3.set_x(300);
   mouse_event3.set_y(301);
 
-  InSequence s;
-  EXPECT_CALL(session_event_handler_, OnSessionAuthenticated(_));
-  EXPECT_CALL(*event_executor_, StartPtr(_));
-  EXPECT_CALL(session_event_handler_, OnSessionChannelsConnected(_));
+  Expectation authenticated =
+      EXPECT_CALL(session_event_handler_, OnSessionAuthenticated(_))
+          .WillOnce(Return(true));
+  EXPECT_CALL(*input_injector_, StartPtr(_))
+      .After(authenticated);
+  EXPECT_CALL(session_event_handler_, OnSessionChannelsConnected(_))
+      .After(authenticated);
 
   // Wait for the first video packet to be captured to make sure that
   // the injected input will go though. Otherwise mouse events will be blocked
   // by the mouse clamping filter.
+  Sequence s;
   EXPECT_CALL(video_stub_, ProcessVideoPacketPtr(_, _))
+      .InSequence(s)
+      .After(authenticated)
       .WillOnce(DoAll(
           // This event should get through to the input stub.
           InjectMouseEvent(connection_, mouse_event1),
@@ -384,9 +405,12 @@ TEST_F(ClientSessionTest, LocalInputTest) {
           // eventually (via dependency injection, not sleep!)
           InvokeWithoutArgs(this, &ClientSessionTest::DisconnectClientSession),
           InvokeWithoutArgs(this, &ClientSessionTest::StopClientSession)));
-  EXPECT_CALL(*event_executor_, InjectMouseEvent(EqualsMouseEvent(100, 101)));
-  EXPECT_CALL(*event_executor_, InjectMouseEvent(EqualsMouseEvent(200, 201)));
-  EXPECT_CALL(session_event_handler_, OnSessionClosed(_));
+  EXPECT_CALL(*input_injector_, InjectMouseEvent(EqualsMouseEvent(100, 101)))
+      .InSequence(s);
+  EXPECT_CALL(*input_injector_, InjectMouseEvent(EqualsMouseEvent(200, 201)))
+      .InSequence(s);
+  EXPECT_CALL(session_event_handler_, OnSessionClosed(_))
+      .InSequence(s);
 
   ConnectClientSession();
   message_loop_.Run();
@@ -405,41 +429,60 @@ TEST_F(ClientSessionTest, RestoreEventState) {
   mousedown.set_button(protocol::MouseEvent::BUTTON_LEFT);
   mousedown.set_button_down(true);
 
-  InSequence s;
-  EXPECT_CALL(session_event_handler_, OnSessionAuthenticated(_));
-  EXPECT_CALL(*event_executor_, StartPtr(_));
-  EXPECT_CALL(session_event_handler_, OnSessionChannelsConnected(_));
+  Expectation authenticated =
+      EXPECT_CALL(session_event_handler_, OnSessionAuthenticated(_))
+          .WillOnce(Return(true));
+  EXPECT_CALL(*input_injector_, StartPtr(_))
+      .After(authenticated);
+  EXPECT_CALL(session_event_handler_, OnSessionChannelsConnected(_))
+      .After(authenticated);
 
   // Wait for the first video packet to be captured to make sure that
   // the injected input will go though. Otherwise mouse events will be blocked
   // by the mouse clamping filter.
+  Sequence s;
   EXPECT_CALL(video_stub_, ProcessVideoPacketPtr(_, _))
+      .InSequence(s)
+      .After(authenticated)
       .WillOnce(DoAll(
           InjectKeyEvent(connection_, key1),
           InjectKeyEvent(connection_, key2),
           InjectMouseEvent(connection_, mousedown),
           InvokeWithoutArgs(this, &ClientSessionTest::DisconnectClientSession),
           InvokeWithoutArgs(this, &ClientSessionTest::StopClientSession)));
-  EXPECT_CALL(*event_executor_, InjectKeyEvent(EqualsUsbEvent(1, true)));
-  EXPECT_CALL(*event_executor_, InjectKeyEvent(EqualsUsbEvent(2, true)));
-  EXPECT_CALL(*event_executor_, InjectMouseEvent(EqualsMouseButtonEvent(
-      protocol::MouseEvent::BUTTON_LEFT, true)));
-  EXPECT_CALL(*event_executor_, InjectKeyEvent(EqualsUsbEvent(1, false)));
-  EXPECT_CALL(*event_executor_, InjectKeyEvent(EqualsUsbEvent(2, false)));
-  EXPECT_CALL(*event_executor_, InjectMouseEvent(EqualsMouseButtonEvent(
-      protocol::MouseEvent::BUTTON_LEFT, false)));
-  EXPECT_CALL(session_event_handler_, OnSessionClosed(_));
+  EXPECT_CALL(*input_injector_, InjectKeyEvent(EqualsUsbEvent(1, true)))
+      .InSequence(s);
+  EXPECT_CALL(*input_injector_, InjectKeyEvent(EqualsUsbEvent(2, true)))
+      .InSequence(s);
+  EXPECT_CALL(*input_injector_, InjectMouseEvent(EqualsMouseButtonEvent(
+      protocol::MouseEvent::BUTTON_LEFT, true)))
+      .InSequence(s);
+  EXPECT_CALL(*input_injector_, InjectKeyEvent(EqualsUsbEvent(1, false)))
+      .InSequence(s);
+  EXPECT_CALL(*input_injector_, InjectKeyEvent(EqualsUsbEvent(2, false)))
+      .InSequence(s);
+  EXPECT_CALL(*input_injector_, InjectMouseEvent(EqualsMouseButtonEvent(
+      protocol::MouseEvent::BUTTON_LEFT, false)))
+      .InSequence(s);
+  EXPECT_CALL(session_event_handler_, OnSessionClosed(_))
+      .InSequence(s);
 
   ConnectClientSession();
   message_loop_.Run();
 }
 
 TEST_F(ClientSessionTest, ClampMouseEvents) {
-  EXPECT_CALL(session_event_handler_, OnSessionAuthenticated(_));
-  EXPECT_CALL(*event_executor_, StartPtr(_));
-  Expectation connected =
-      EXPECT_CALL(session_event_handler_, OnSessionChannelsConnected(_));
-  EXPECT_CALL(session_event_handler_, OnSessionClosed(_));
+  Expectation authenticated =
+      EXPECT_CALL(session_event_handler_, OnSessionAuthenticated(_))
+          .WillOnce(Return(true));
+  EXPECT_CALL(*input_injector_, StartPtr(_))
+      .After(authenticated);
+  EXPECT_CALL(session_event_handler_, OnSessionChannelsConnected(_))
+      .After(authenticated);
+  EXPECT_CALL(session_event_handler_, OnSessionClosed(_))
+      .After(authenticated);
+
+  Expectation connected = authenticated;
 
   int input_x[3] = { -999, 100, 999 };
   int expected_x[3] = { 0, 100, media::ScreenCapturerFake::kWidth - 1 };
@@ -463,7 +506,7 @@ TEST_F(ClientSessionTest, ClampMouseEvents) {
         // Every next event is injected once the previous event has been
         // received.
         connected =
-            EXPECT_CALL(*event_executor_,
+            EXPECT_CALL(*input_injector_,
                         InjectMouseEvent(EqualsMouseEvent(expected_event.x(),
                                                           expected_event.y())))
                 .After(connected)
@@ -476,7 +519,7 @@ TEST_F(ClientSessionTest, ClampMouseEvents) {
   }
 
   // Shutdown the connection once the last event has been received.
-  EXPECT_CALL(*event_executor_,
+  EXPECT_CALL(*input_injector_,
               InjectMouseEvent(EqualsMouseEvent(expected_event.x(),
                                                 expected_event.y())))
       .After(connected)

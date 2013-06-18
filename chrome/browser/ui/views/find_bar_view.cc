@@ -23,6 +23,7 @@
 #include "grit/theme_resources.h"
 #include "grit/ui_resources.h"
 #include "third_party/skia/include/effects/SkGradientShader.h"
+#include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/base/events/event.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -80,7 +81,7 @@ FindBarView::FindBarView(FindBarHost* host)
   set_id(VIEW_ID_FIND_IN_PAGE);
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
 
-  find_text_ = new SearchTextfieldView();
+  find_text_ = new SearchTextfieldView;
   find_text_->set_id(VIEW_ID_FIND_IN_PAGE_TEXT_FIELD);
   find_text_->SetFont(rb.GetFont(ui::ResourceBundle::BaseFont));
   find_text_->set_default_width_in_chars(kDefaultCharWidth);
@@ -135,11 +136,11 @@ FindBarView::FindBarView(FindBarHost* host)
   close_button_->set_tag(CLOSE_TAG);
   close_button_->set_focusable(true);
   close_button_->SetImage(views::CustomButton::STATE_NORMAL,
-                          rb.GetImageSkiaNamed(IDR_TAB_CLOSE));
+                          rb.GetImageSkiaNamed(IDR_CLOSE_1));
   close_button_->SetImage(views::CustomButton::STATE_HOVERED,
-                          rb.GetImageSkiaNamed(IDR_TAB_CLOSE_H));
+                          rb.GetImageSkiaNamed(IDR_CLOSE_1_H));
   close_button_->SetImage(views::CustomButton::STATE_PRESSED,
-                          rb.GetImageSkiaNamed(IDR_TAB_CLOSE_P));
+                          rb.GetImageSkiaNamed(IDR_CLOSE_1_P));
   close_button_->SetTooltipText(
       l10n_util::GetStringUTF16(IDS_FIND_IN_PAGE_CLOSE_TOOLTIP));
   close_button_->SetAccessibleName(
@@ -191,7 +192,7 @@ void FindBarView::UpdateForResult(const FindNotificationDetails& result,
   // composed by them. To avoid this problem, we should check the IME status and
   // update the text only when the IME is not composing text.
   if (find_text_->text() != find_text && !find_text_->IsIMEComposing()) {
-    find_text_->SetText(find_text);
+    SetFindText(find_text);
     find_text_->SelectAll(true);
   }
 
@@ -458,9 +459,27 @@ bool FindBarView::HandleKeyEvent(views::Textfield* sender,
                                     !key_event.IsShiftDown(),
                                     false);  // Not case sensitive.
     }
+    return true;
   }
 
   return false;
+}
+
+void FindBarView::OnAfterCutOrCopy() {
+  Profile* profile = host()->browser_view()->browser()->profile();
+  ui::SourceTag source_tag =
+      content::BrowserContext::GetMarkerForOffTheRecordContext(profile);
+  if (source_tag != ui::SourceTag()) {
+    // Overwrite the clipboard with the correct SourceTag
+    ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
+    string16 text;
+    clipboard->ReadText(ui::Clipboard::BUFFER_STANDARD, &text);
+
+    ui::ScopedClipboardWriter scw(clipboard,
+                                  ui::Clipboard::BUFFER_STANDARD,
+                                  source_tag);
+    scw.WriteText(text);
+  }
 }
 
 void FindBarView::UpdateMatchCountAppearance(bool no_match) {
@@ -475,24 +494,34 @@ void FindBarView::UpdateMatchCountAppearance(bool no_match) {
 
 bool FindBarView::FocusForwarderView::OnMousePressed(
     const ui::MouseEvent& event) {
-  if (view_to_focus_on_mousedown_) {
-    view_to_focus_on_mousedown_->ClearSelection();
+  if (view_to_focus_on_mousedown_)
     view_to_focus_on_mousedown_->RequestFocus();
-  }
   return true;
 }
 
-FindBarView::SearchTextfieldView::SearchTextfieldView() {
+FindBarView::SearchTextfieldView::SearchTextfieldView()
+    : select_all_on_focus_(true) {}
+
+FindBarView::SearchTextfieldView::~SearchTextfieldView() {}
+
+bool FindBarView::SearchTextfieldView::OnMousePressed(
+    const ui::MouseEvent& event) {
+  // Avoid temporarily selecting all the text on focus from a mouse press; this
+  // prevents flickering before setting a cursor or dragging to select text.
+  select_all_on_focus_ = false;
+  return views::Textfield::OnMousePressed(event);
 }
 
-FindBarView::SearchTextfieldView::~SearchTextfieldView() {
+void FindBarView::SearchTextfieldView::OnMouseReleased(
+    const ui::MouseEvent& event) {
+  views::Textfield::OnMouseReleased(event);
+  select_all_on_focus_ = true;
 }
 
-void FindBarView::SearchTextfieldView::RequestFocus() {
-  if (HasFocus())
-    return;
-  views::View::RequestFocus();
-  SelectAll(true);
+void FindBarView::SearchTextfieldView::OnFocus() {
+  views::Textfield::OnFocus();
+  if (select_all_on_focus_)
+    SelectAll(true);
 }
 
 FindBarHost* FindBarView::find_bar_host() const {
@@ -504,7 +533,7 @@ void FindBarView::OnThemeChanged() {
   if (GetThemeProvider()) {
     close_button_->SetBackground(
         GetThemeProvider()->GetColor(ThemeProperties::COLOR_TAB_TEXT),
-        rb.GetImageSkiaNamed(IDR_TAB_CLOSE),
-        rb.GetImageSkiaNamed(IDR_TAB_CLOSE_MASK));
+        rb.GetImageSkiaNamed(IDR_CLOSE_1),
+        rb.GetImageSkiaNamed(IDR_CLOSE_1_MASK));
   }
 }

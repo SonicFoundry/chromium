@@ -32,9 +32,10 @@ class FileSystemEntryFunction : public AsyncExtensionFunction {
 
   bool HasFileSystemWritePermission();
 
-  // Called on the FILE thread. This is called when a writable file entry is
-  // being returned. The function will ensure the file exists, creating it if
-  // necessary, and also check that the file is not a link.
+  // This is called when a writable file entry is being returned. The function
+  // will ensure the file exists, creating it if necessary, and also check that
+  // the file is not a link. If it succeeds it proceeds to
+  // RegisterFileSystemAndSendResponse, otherwise to HandleWritableFileError.
   void CheckWritableFile(const base::FilePath& path);
 
   // This will finish the choose file process. This is either called directly
@@ -71,8 +72,14 @@ class FileSystemChooseEntryFunction : public FileSystemEntryFunction {
  public:
   // Allow picker UI to be skipped in testing.
   static void SkipPickerAndAlwaysSelectPathForTest(base::FilePath* path);
+  static void SkipPickerAndSelectSuggestedPathForTest();
   static void SkipPickerAndAlwaysCancelForTest();
   static void StopSkippingPickerForTest();
+  // Call this with the directory for test file paths. On Chrome OS, accessed
+  // path needs to be explicitly registered for smooth integration with Google
+  // Drive support.
+  static void RegisterTempExternalFileSystemForTest(const std::string& name,
+                                                    const base::FilePath& path);
 
   DECLARE_EXTENSION_FUNCTION("fileSystem.chooseEntry", FILESYSTEM_CHOOSEENTRY)
 
@@ -93,15 +100,19 @@ class FileSystemChooseEntryFunction : public FileSystemEntryFunction {
 
   virtual ~FileSystemChooseEntryFunction() {}
   virtual bool RunImpl() OVERRIDE;
-  bool ShowPicker(const base::FilePath& suggested_path,
-                  const ui::SelectFileDialog::FileTypeInfo& file_type_info,
+  void ShowPicker(const ui::SelectFileDialog::FileTypeInfo& file_type_info,
                   ui::SelectFileDialog::Type picker_type,
                   EntryType entry_type);
 
  private:
+  void SetInitialPathOnFileThread(const base::FilePath& suggested_name,
+                                  const base::FilePath& previous_path);
+
   // FileSelected and FileSelectionCanceled are called by the file picker.
   void FileSelected(const base::FilePath& path, EntryType entry_type);
   void FileSelectionCanceled();
+
+  base::FilePath initial_path_;
 };
 
 }  // namespace extensions

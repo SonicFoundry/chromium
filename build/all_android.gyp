@@ -43,6 +43,7 @@
         '../android_webview/android_webview.gyp:android_webview_unittests',
         '../base/android/jni_generator/jni_generator.gyp:jni_generator_tests',
         '../base/base.gyp:base_unittests',
+        '../build/android/tests/multiple_proguards/multiple_proguards.gyp:multiple_proguards_test_apk',
         '../cc/cc_tests.gyp:cc_perftests_apk',
         '../cc/cc_tests.gyp:cc_unittests',
         '../chrome/chrome.gyp:unit_tests',
@@ -50,6 +51,7 @@
         '../content/content.gyp:content_browsertests',
         '../content/content.gyp:content_shell_test_apk',
         '../content/content.gyp:content_unittests',
+        '../gpu/gpu.gyp:gl_tests',
         '../gpu/gpu.gyp:gpu_unittests',
         '../ipc/ipc.gyp:ipc_tests',
         '../media/media.gyp:media_unittests',
@@ -82,11 +84,6 @@
         }],
         ['"<(gtest_target_type)"=="shared_library"', {
           'dependencies': [
-            # The first item is simply the template.  We add as a dep
-            # to make sure it builds in ungenerated form.  TODO(jrg):
-            # once stable, transition to a test-only (optional)
-            # target.
-            '../testing/android/native_test.gyp:native_test_apk',
             # Unit test bundles packaged as an apk.
             '../android_webview/android_webview.gyp:android_webview_unittests_apk',
             '../base/base.gyp:base_unittests_apk',
@@ -95,6 +92,7 @@
             '../components/components.gyp:components_unittests_apk',
             '../content/content.gyp:content_browsertests_apk',
             '../content/content.gyp:content_unittests_apk',
+            '../gpu/gpu.gyp:gl_tests_apk',
             '../gpu/gpu.gyp:gpu_unittests_apk',
             '../ipc/ipc.gyp:ipc_tests_apk',
             '../media/media.gyp:media_unittests_apk',
@@ -105,6 +103,7 @@
             '../ui/ui.gyp:ui_unittests_apk',
             '../android_webview/android_webview.gyp:android_webview_test_apk',
             '../chrome/chrome.gyp:chromium_testshell_test_apk',
+            '../chrome/chrome.gyp:chromium_testshell_uiautomator_tests',
             '../webkit/compositor_bindings/compositor_bindings_tests.gyp:webkit_compositor_bindings_unittests_apk'
           ],
         }],

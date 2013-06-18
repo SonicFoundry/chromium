@@ -5,17 +5,17 @@
 #include "content/common/gpu/stream_texture_manager_android.h"
 
 #include "base/bind.h"
-#include "content/common/android/surface_texture_bridge.h"
 #include "content/common/gpu/gpu_channel.h"
 #include "content/common/gpu/gpu_messages.h"
 #include "gpu/command_buffer/service/stream_texture.h"
 #include "ui/gfx/size.h"
+#include "ui/gl/android/surface_texture_bridge.h"
 
 namespace content {
 
 StreamTextureManagerAndroid::StreamTextureAndroid::StreamTextureAndroid(
     GpuChannel* channel, int service_id)
-    : surface_texture_bridge_(new SurfaceTextureBridge(service_id)),
+    : surface_texture_bridge_(new gfx::SurfaceTextureBridge(service_id)),
       has_updated_(false),
       channel_(channel) {
   memset(current_matrix_, 0, sizeof(current_matrix_));
@@ -119,15 +119,13 @@ void StreamTextureManagerAndroid::RegisterStreamTextureProxy(
 }
 
 void StreamTextureManagerAndroid::EstablishStreamTexture(
-    int32 stream_id, SurfaceTexturePeer::SurfaceTextureTarget type,
-    int32 primary_id, int32 secondary_id) {
+    int32 stream_id, int32 primary_id, int32 secondary_id) {
   StreamTextureAndroid* stream_texture = textures_.Lookup(stream_id);
   base::ProcessHandle process = channel_->renderer_pid();
 
   if (stream_texture) {
     SurfaceTexturePeer::GetInstance()->EstablishSurfaceTexturePeer(
         process,
-        type,
         stream_texture->surface_texture_bridge(),
         primary_id,
         secondary_id);

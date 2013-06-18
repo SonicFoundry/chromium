@@ -10,7 +10,7 @@
 #include "base/file_util.h"
 #include "base/message_loop_proxy.h"
 #include "base/time.h"
-#include "content/browser/download/byte_stream.h"
+#include "content/browser/byte_stream.h"
 #include "content/browser/download/download_create_info.h"
 #include "content/browser/download/download_interrupt_reasons_impl.h"
 #include "content/browser/download/download_net_log_parameters.h"
@@ -50,7 +50,7 @@ DownloadFileImpl::DownloadFileImpl(
           bytes_seen_(0),
           bound_net_log_(bound_net_log),
           observer_(observer),
-          weak_factory_(ALLOW_THIS_IN_INITIALIZER_LIST(this)),
+          weak_factory_(this),
           power_save_blocker_(power_save_blocker.Pass()) {
 }
 
@@ -75,6 +75,9 @@ void DownloadFileImpl::Initialize(const InitializeCallback& callback) {
       base::Bind(&DownloadFileImpl::StreamActive, weak_factory_.GetWeakPtr()));
 
   download_start_ = base::TimeTicks::Now();
+
+  // Primarily to make reset to zero in restart visible to owner.
+  SendUpdate();
 
   // Initial pull from the straw.
   StreamActive();
@@ -105,11 +108,11 @@ void DownloadFileImpl::RenameAndUniquify(
 
   base::FilePath new_path(full_path);
 
-  int uniquifier =
-      file_util::GetUniquePathNumber(new_path, FILE_PATH_LITERAL(""));
+  int uniquifier = file_util::GetUniquePathNumber(
+      new_path, base::FilePath::StringType());
   if (uniquifier > 0) {
     new_path = new_path.InsertBeforeExtensionASCII(
-        StringPrintf(" (%d)", uniquifier));
+        base::StringPrintf(" (%d)", uniquifier));
   }
 
   DownloadInterruptReason reason = file_.Rename(new_path);

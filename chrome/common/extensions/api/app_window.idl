@@ -10,6 +10,13 @@ namespace app.window {
     long? height;
   };
 
+  // State of a window: normal, fullscreen, maximized, minimized.
+  enum State { normal, fullscreen, maximized, minimized };
+
+  // 'shell' is the default window type. 'panel' is managed by the OS
+  // (Currently experimental, Ash only).
+  [nodoc] enum WindowType { shell, panel };
+
   dictionary CreateWindowOptions {
     // Id to identify the window. This will be used to remember the size
     // and position of the window and restore that geometry when a window
@@ -44,35 +51,36 @@ namespace app.window {
     // Y coordinate of the window. (Deprecated; use 'bounds'.)
     [nodoc] long? top;
 
-    // Minimum width of the window.
+    // Minimum width for the lifetime of the window.
     long? minWidth;
 
-    // Minimum height of the window.
+    // Minimum height for the lifetime of the window.
     long? minHeight;
 
-    // Maximum width of the window.
+    // Maximum width for the lifetime of the window.
     long? maxWidth;
 
-    // Maximum height of the window.
+    // Maximum height for the lifetime of the window.
     long? maxHeight;
 
-    // Window type:
-    //  'shell' - the default window type
-    //  'panel' - a panel, managed by the OS (Currently experimental, Ash only)
-    [nodoc] DOMString? type;
+    // Type of window to create.
+    [nodoc] WindowType? type;
 
     // Frame type: 'none' or 'chrome' (defaults to 'chrome').
     DOMString? frame;
 
     // Size of the content in the window (excluding the titlebar). If specified
-    // in addition to any of the left/top/width/height parameters, this field
-    // takes precedence. If a frameBounds is specified, the frameBounds take
-    // precedence.
+    // in addition to any of the deprecated left/top/width/height parameters,
+    // this field takes precedence.
     Bounds? bounds;
 
     // Enable window background transparency.
     // Only supported in ash. Requires experimental API permission.
     boolean? transparentBackground;
+
+    // The initial state of the window, allowing it to be created already
+    // fullscreen, maximized, or minimized. Defaults to 'normal'.
+    State? state;
 
     // If true, the window will be created in a hidden state. Call show() on
     // the window to show it once it has been created. Defaults to false.
@@ -96,6 +104,12 @@ namespace app.window {
     // Focus the window.
     static void focus();
 
+    // Fullscreens the window.
+    static void fullscreen();
+
+    // Is the window fullscreen?
+    static boolean isFullscreen();
+
     // Minimize the window.
     static void minimize();
 
@@ -108,7 +122,7 @@ namespace app.window {
     // Is the window maximized?
     static boolean isMaximized();
 
-    // Restore the window.
+    // Restore the window, exiting a maximized, minimized, or fullscreen state.
     static void restore();
 
     // Move the window to the position (|left|, |top|).
@@ -192,6 +206,9 @@ namespace app.window {
 
     // Fired when the window is closed.
     [nocompile] static void onClosed();
+
+    // Fired when the window is fullscreened.
+    [nocompile] static void onFullscreened();
 
     // Fired when the window is maximized.
     [nocompile] static void onMaximized();

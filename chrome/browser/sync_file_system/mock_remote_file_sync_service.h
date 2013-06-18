@@ -37,18 +37,26 @@ class MockRemoteFileSyncService : public RemoteFileSyncService {
                void(const GURL& origin, const SyncStatusCallback& callback));
   MOCK_METHOD2(UnregisterOriginForTrackingChanges,
                void(const GURL& origin, const SyncStatusCallback& callback));
-  MOCK_METHOD2(ProcessRemoteChange,
-               void(RemoteChangeProcessor* processor,
-                    const SyncFileCallback& callback));
+  MOCK_METHOD2(EnableOriginForTrackingChanges,
+               void(const GURL& origin, const SyncStatusCallback& callback));
+  MOCK_METHOD2(DisableOriginForTrackingChanges,
+               void(const GURL& origin, const SyncStatusCallback& callback));
+  MOCK_METHOD2(UninstallOrigin,
+               void(const GURL& origin, const SyncStatusCallback& callback));
+  MOCK_METHOD1(ProcessRemoteChange,
+               void(const SyncFileCallback& callback));
+  MOCK_METHOD1(SetRemoteChangeProcessor,
+               void(RemoteChangeProcessor* processor));
   MOCK_METHOD0(GetLocalChangeProcessor, LocalChangeProcessor*());
   MOCK_METHOD1(IsConflicting, bool(const fileapi::FileSystemURL& url));
-  MOCK_METHOD2(GetRemoteFileMetadata,
-               void(const fileapi::FileSystemURL& url,
-                    const SyncFileMetadataCallback& callback));
   MOCK_CONST_METHOD0(GetCurrentState,
                      RemoteServiceState());
   MOCK_CONST_METHOD0(GetServiceName, const char*());
   MOCK_METHOD1(SetSyncEnabled, void(bool));
+  MOCK_METHOD1(SetConflictResolutionPolicy,
+               SyncStatusCode(ConflictResolutionPolicy));
+  MOCK_CONST_METHOD0(GetConflictResolutionPolicy,
+                     ConflictResolutionPolicy());
 
   // Send notifications to the observers.
   // Can be used in the mock implementation.
@@ -62,44 +70,27 @@ class MockRemoteFileSyncService : public RemoteFileSyncService {
       SyncAction action_taken,
       SyncDirection direction);
 
-  // Sets conflict file information.  The information is returned by
-  // the default action for GetRemoteConflictFileInfo.
-  void add_conflict_file(const fileapi::FileSystemURL& url,
-                         const SyncFileMetadata& metadata) {
-    conflict_file_urls_[url.origin()].insert(url);
-    conflict_file_metadata_[url] = metadata;
-  }
-
-  void reset_conflict_files() {
-    conflict_file_urls_.clear();
-    conflict_file_metadata_.clear();
-  }
-
  private:
-  typedef std::map<GURL, fileapi::FileSystemURLSet> OriginToURLSetMap;
-  typedef std::map<fileapi::FileSystemURL, SyncFileMetadata,
-                   fileapi::FileSystemURL::Comparator> FileMetadataMap;
-
   void AddServiceObserverStub(Observer* observer);
   void AddFileStatusObserverStub(FileStatusObserver* observer);
   void RegisterOriginForTrackingChangesStub(
       const GURL& origin, const SyncStatusCallback& callback);
   void UnregisterOriginForTrackingChangesStub(
       const GURL& origin, const SyncStatusCallback& callback);
-  void ProcessRemoteChangeStub(
-      RemoteChangeProcessor* processor, const SyncFileCallback& callback);
-  void GetRemoteFileMetadataStub(
-      const fileapi::FileSystemURL& url,
-      const SyncFileMetadataCallback& callback);
-
-  OriginToURLSetMap conflict_file_urls_;
-  FileMetadataMap conflict_file_metadata_;
+  void DeleteOriginDirectoryStub(
+      const GURL& origin, const SyncStatusCallback& callback);
+  void ProcessRemoteChangeStub(const SyncFileCallback& callback);
+  SyncStatusCode SetConflictResolutionPolicyStub(
+      ConflictResolutionPolicy policy);
+  ConflictResolutionPolicy GetConflictResolutionPolicyStub() const;
 
   // For default implementation.
-  MockLocalChangeProcessor mock_local_change_processor_;
+  ::testing::NiceMock<MockLocalChangeProcessor> mock_local_change_processor_;
 
   ObserverList<Observer> service_observers_;
   ObserverList<FileStatusObserver> file_status_observers_;
+
+  ConflictResolutionPolicy conflict_resolution_policy_;
 
   DISALLOW_COPY_AND_ASSIGN(MockRemoteFileSyncService);
 };

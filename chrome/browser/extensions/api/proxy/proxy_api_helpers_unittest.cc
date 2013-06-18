@@ -222,41 +222,71 @@ TEST(ExtensionProxyApiHelpers, CreateProxyConfigDict) {
   std::string error;
   scoped_ptr<DictionaryValue> exp_direct(ProxyConfigDictionary::CreateDirect());
   scoped_ptr<DictionaryValue> out_direct(
-      CreateProxyConfigDict(ProxyPrefs::MODE_DIRECT, false, "", "", "", "",
+      CreateProxyConfigDict(ProxyPrefs::MODE_DIRECT,
+                            false,
+                            std::string(),
+                            std::string(),
+                            std::string(),
+                            std::string(),
                             &error));
   EXPECT_TRUE(Value::Equals(exp_direct.get(), out_direct.get()));
 
   scoped_ptr<DictionaryValue> exp_auto(
       ProxyConfigDictionary::CreateAutoDetect());
   scoped_ptr<DictionaryValue> out_auto(
-      CreateProxyConfigDict(ProxyPrefs::MODE_AUTO_DETECT, false, "", "", "", "",
+      CreateProxyConfigDict(ProxyPrefs::MODE_AUTO_DETECT,
+                            false,
+                            std::string(),
+                            std::string(),
+                            std::string(),
+                            std::string(),
                             &error));
   EXPECT_TRUE(Value::Equals(exp_auto.get(), out_auto.get()));
 
   scoped_ptr<DictionaryValue> exp_pac_url(
       ProxyConfigDictionary::CreatePacScript(kSamplePacScriptUrl, false));
   scoped_ptr<DictionaryValue> out_pac_url(
-        CreateProxyConfigDict(ProxyPrefs::MODE_PAC_SCRIPT, false,
-                              kSamplePacScriptUrl, "", "", "", &error));
+      CreateProxyConfigDict(ProxyPrefs::MODE_PAC_SCRIPT,
+                            false,
+                            kSamplePacScriptUrl,
+                            std::string(),
+                            std::string(),
+                            std::string(),
+                            &error));
   EXPECT_TRUE(Value::Equals(exp_pac_url.get(), out_pac_url.get()));
 
   scoped_ptr<DictionaryValue> exp_pac_data(
       ProxyConfigDictionary::CreatePacScript(kSamplePacScriptAsDataUrl, false));
   scoped_ptr<DictionaryValue> out_pac_data(
-          CreateProxyConfigDict(ProxyPrefs::MODE_PAC_SCRIPT, false, "",
-                                kSamplePacScript, "", "", &error));
+      CreateProxyConfigDict(ProxyPrefs::MODE_PAC_SCRIPT,
+                            false,
+                            std::string(),
+                            kSamplePacScript,
+                            std::string(),
+                            std::string(),
+                            &error));
   EXPECT_TRUE(Value::Equals(exp_pac_data.get(), out_pac_data.get()));
 
   scoped_ptr<DictionaryValue> exp_fixed(
       ProxyConfigDictionary::CreateFixedServers("foo:80", "localhost"));
   scoped_ptr<DictionaryValue> out_fixed(
-          CreateProxyConfigDict(ProxyPrefs::MODE_FIXED_SERVERS, false, "", "",
-                                "foo:80", "localhost", &error));
+      CreateProxyConfigDict(ProxyPrefs::MODE_FIXED_SERVERS,
+                            false,
+                            std::string(),
+                            std::string(),
+                            "foo:80",
+                            "localhost",
+                            &error));
   EXPECT_TRUE(Value::Equals(exp_fixed.get(), out_fixed.get()));
 
   scoped_ptr<DictionaryValue> exp_system(ProxyConfigDictionary::CreateSystem());
   scoped_ptr<DictionaryValue> out_system(
-      CreateProxyConfigDict(ProxyPrefs::MODE_SYSTEM, false, "", "", "", "",
+      CreateProxyConfigDict(ProxyPrefs::MODE_SYSTEM,
+                            false,
+                            std::string(),
+                            std::string(),
+                            std::string(),
+                            std::string(),
                             &error));
   EXPECT_TRUE(Value::Equals(exp_system.get(), out_system.get()));
 
@@ -307,6 +337,33 @@ TEST(ExtensionProxyApiHelpers, CreateProxyRulesDict) {
   scoped_ptr<DictionaryValue> browser_pref(
       ProxyConfigDictionary::CreateFixedServers(
           "http=proxy1:80;https=proxy2:80;ftp=proxy3:80;socks=proxy4:80",
+          "localhost"));
+  ProxyConfigDictionary config(browser_pref.get());
+  scoped_ptr<DictionaryValue> extension_pref(CreateProxyRulesDict(config));
+  ASSERT_TRUE(extension_pref.get());
+
+  scoped_ptr<DictionaryValue> expected(new DictionaryValue);
+  expected->Set("proxyForHttp",
+                CreateTestProxyServerDict("http", "proxy1", 80));
+  expected->Set("proxyForHttps",
+                CreateTestProxyServerDict("http", "proxy2", 80));
+  expected->Set("proxyForFtp",
+                CreateTestProxyServerDict("http", "proxy3", 80));
+  expected->Set("fallbackProxy",
+                CreateTestProxyServerDict("socks4", "proxy4", 80));
+  ListValue* bypass_list = new ListValue;
+  bypass_list->Append(Value::CreateStringValue("localhost"));
+  expected->Set(keys::kProxyConfigBypassList, bypass_list);
+
+  EXPECT_TRUE(Value::Equals(expected.get(), extension_pref.get()));
+}
+
+// Test multiple proxies per scheme -- expect that only the first is returned.
+TEST(ExtensionProxyApiHelpers, CreateProxyRulesDictMultipleProxies) {
+  scoped_ptr<DictionaryValue> browser_pref(
+      ProxyConfigDictionary::CreateFixedServers(
+          "http=proxy1:80,default://;https=proxy2:80,proxy1:80;ftp=proxy3:80,"
+          "https://proxy5:443;socks=proxy4:80,proxy1:80",
           "localhost"));
   ProxyConfigDictionary config(browser_pref.get());
   scoped_ptr<DictionaryValue> extension_pref(CreateProxyRulesDict(config));

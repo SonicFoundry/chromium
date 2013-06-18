@@ -8,6 +8,7 @@ import logging
 import copy
 
 from telemetry.core import browser_finder
+from telemetry.core import profile_types
 from telemetry.core import wpr_modes
 
 class BrowserOptions(optparse.Values):
@@ -23,11 +24,11 @@ class BrowserOptions(optparse.Values):
     self.cros_ssh_identity = None
 
     self.dont_override_profile = False
+    self.profile_dir = None
     self.extra_browser_args = []
     self.extra_wpr_args = []
     self.show_stdout = False
     self.extensions_to_load = []
-    self.cros_desktop = False
 
     self.cros_remote = None
     self.wpr_mode = wpr_modes.WPR_OFF
@@ -83,9 +84,14 @@ class BrowserOptions(optparse.Values):
 
     # Browser options
     group = optparse.OptionGroup(parser, 'Browser options')
-    group.add_option('--dont-override-profile', action='store_true',
-        dest='dont_override_profile',
-        help='Uses the regular user profile instead of a clean one')
+    profile_choices = ['clean', 'default'] + profile_types.PROFILE_TYPES
+    group.add_option('--profile-type',
+        dest='profile_type',
+        type='choice',
+        default='clean',
+        choices=profile_choices,
+        help=('The user profile to use. A clean profile is used by default. '
+              'Supported values: ' + ', '.join(profile_choices)))
     group.add_option('--extra-browser-args',
         dest='extra_browser_args_as_string',
         help='Additional arguments to pass to the browser when it starts')
@@ -96,11 +102,6 @@ class BrowserOptions(optparse.Values):
     group.add_option('--show-stdout',
         action='store_true',
         help='When possible, will display the stdout of the process')
-    # --cros-desktop is linux only.
-    if sys.platform.startswith('linux'):
-      group.add_option('--cros-desktop',
-          action='store_true',
-          help='Run ChromeOS desktop')
     parser.add_option_group(group)
 
     # Page set options
@@ -125,7 +126,7 @@ class BrowserOptions(optparse.Values):
     group.add_option('--allow-live-sites',
         dest='allow_live_sites', action='store_true',
         help='Run against live sites if the Web Page Replay archives don\'t '
-             'exist. Without this flag, the benchmark will just fail instead '
+             'exist. Without this flag, the test will just fail instead '
              'of running against live sites.')
     parser.add_option_group(group)
 
@@ -137,13 +138,16 @@ class BrowserOptions(optparse.Values):
     group.add_option(
       '-v', '--verbose', action='count', dest='verbosity',
       help='Increase verbosity level (repeat as needed)')
+    group.add_option('--print-bootstrap-deps',
+                     action='store_true',
+                     help='Output bootstrap deps list.')
     parser.add_option_group(group)
 
     # Platform options
     group = optparse.OptionGroup(parser, 'Platform options')
     group.add_option('--no-performance-mode', action='store_true',
         help='Some platforms run on "full performance mode" where the '
-        'benchmark is executed at maximum CPU speed in order to minimize noise '
+        'test is executed at maximum CPU speed in order to minimize noise '
         '(specially important for dashboards / continuous builds). '
         'This option prevents Telemetry from tweaking such platform settings.')
     parser.add_option_group(group)
@@ -171,10 +175,14 @@ class BrowserOptions(optparse.Values):
                          'Use --browser=list for valid options.\n')
         sys.exit(1)
       if self.browser_type == 'list':
-        types = browser_finder.GetAllAvailableBrowserTypes(self)
-        sys.stderr.write('Available browsers:\n')
+        try:
+          types = browser_finder.GetAllAvailableBrowserTypes(self)
+        except browser_finder.BrowserFinderException, ex:
+          sys.stderr.write('ERROR: ' + str(ex))
+          sys.exit(1)
+        sys.stdout.write('Available browsers:\n')
         sys.stdout.write('  %s\n' % '\n  '.join(types))
-        sys.exit(1)
+        sys.exit(0)
       if self.extra_browser_args_as_string: # pylint: disable=E1101
         tmp = shlex.split(
           self.extra_browser_args_as_string) # pylint: disable=E1101
@@ -185,6 +193,11 @@ class BrowserOptions(optparse.Values):
           self.extra_wpr_args_as_string) # pylint: disable=E1101
         self.extra_wpr_args.extend(tmp)
         delattr(self, 'extra_wpr_args_as_string')
+      if self.profile_type == 'default':
+        self.dont_override_profile = True
+      elif self.profile_type != 'clean':
+        self.profile_dir = profile_types.GetProfileDir(self.profile_type)
+      delattr(self, 'profile_type')
       return ret
     parser.parse_args = ParseArgs
     return parser

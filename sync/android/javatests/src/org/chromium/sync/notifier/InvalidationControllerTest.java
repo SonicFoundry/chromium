@@ -22,6 +22,7 @@ import org.chromium.base.test.util.Feature;
 import org.chromium.sync.internal_api.pub.base.ModelType;
 import org.chromium.sync.notifier.InvalidationController.IntentProtocol;
 import org.chromium.sync.signin.AccountManagerHelper;
+import org.chromium.sync.signin.ChromeSigninController;
 import org.chromium.sync.test.util.MockSyncContentResolverDelegate;
 
 import java.util.ArrayList;
@@ -117,8 +118,9 @@ public class InvalidationControllerTest extends InstrumentationTestCase {
         // We don't want to use the system content resolver, so we override it.
         SyncStatusHelper.overrideSyncStatusHelperForTests(mContext, contentResolver);
         Account account = AccountManagerHelper.createAccountFromName("test@gmail.com");
+        ChromeSigninController chromeSigninController = ChromeSigninController.get(mContext);
+        chromeSigninController.setSignedInAccountName(account.name);
         SyncStatusHelper syncStatusHelper = SyncStatusHelper.get(mContext);
-        syncStatusHelper.setSignedInAccountName(account.name);
         if (syncEnabled) {
             syncStatusHelper.enableAndroidSync(account);
         } else {
@@ -150,20 +152,7 @@ public class InvalidationControllerTest extends InstrumentationTestCase {
     @SmallTest
     @Feature({"Sync"})
     public void testRegisterForSpecificTypes() {
-        final String controllerFlag = "resolveModelTypes";
-        final ModelTypeResolver resolver = new ModelTypeResolver() {
-            @Override
-            public Set<ModelType> resolveModelTypes(Set<ModelType> modelTypes) {
-                mContext.setFlag(controllerFlag);
-                return modelTypes;
-            }
-        };
-        InvalidationController controller = new InvalidationController(mContext) {
-            @Override
-            ModelTypeResolver getModelTypeResolver() {
-                return resolver;
-            }
-        };
+        InvalidationController controller = new InvalidationController(mContext);
         Account account = new Account("test@example.com", "bogus");
         controller.setRegisteredTypes(account, false,
                 Sets.newHashSet(ModelType.BOOKMARK, ModelType.SESSION));
@@ -184,7 +173,6 @@ public class InvalidationControllerTest extends InstrumentationTestCase {
         Set<String> actualTypes = Sets.newHashSet();
         actualTypes.addAll(intent.getStringArrayListExtra(IntentProtocol.EXTRA_REGISTERED_TYPES));
         assertEquals(expectedTypes, actualTypes);
-        assertTrue(mContext.isFlagSet(controllerFlag));
     }
 
     @SmallTest
@@ -221,6 +209,9 @@ public class InvalidationControllerTest extends InstrumentationTestCase {
         Set<String> storedModelTypes = new HashSet<String>();
         storedModelTypes.add(ModelType.BOOKMARK.name());
         storedModelTypes.add(ModelType.TYPED_URL.name());
+        Set<ModelType> refreshedTypes = new HashSet<ModelType>();
+        refreshedTypes.add(ModelType.BOOKMARK);
+        refreshedTypes.add(ModelType.TYPED_URL);
         invalidationPreferences.setSyncTypes(edit, storedModelTypes);
         Account storedAccount = AccountManagerHelper.createAccountFromName("test@gmail.com");
         invalidationPreferences.setAccount(edit, storedAccount);
@@ -242,7 +233,7 @@ public class InvalidationControllerTest extends InstrumentationTestCase {
         };
 
         // Execute the test.
-        controller.refreshRegisteredTypes();
+        controller.refreshRegisteredTypes(refreshedTypes);
 
         // Validate the values.
         assertEquals(storedAccount, resultAccount.get());
@@ -281,7 +272,7 @@ public class InvalidationControllerTest extends InstrumentationTestCase {
         };
 
         // Execute the test.
-        controller.refreshRegisteredTypes();
+        controller.refreshRegisteredTypes(new HashSet<ModelType>());
 
         // Validate the values.
         assertEquals(storedAccount, resultAccount.get());

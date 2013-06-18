@@ -50,6 +50,22 @@ static void AddFeature(const std::string& feature_name,
   VLOG(2) << "Browser feature: " << feature->name() << " " << feature->value();
 }
 
+static void AddMalwareFeature(const std::string& feature_name,
+                              const std::set<std::string>& meta_infos,
+                              double feature_value,
+                              ClientMalwareRequest* request) {
+  DCHECK(request);
+  ClientMalwareRequest::Feature* feature =
+      request->add_feature_map();
+  feature->set_name(feature_name);
+  feature->set_value(feature_value);
+  for (std::set<std::string>::const_iterator it = meta_infos.begin();
+       it != meta_infos.end(); ++it) {
+    feature->add_metainfo(*it);
+  }
+  VLOG(2) << "Browser feature: " << feature->name() << " " << feature->value();
+}
+
 static void AddNavigationFeatures(
     const std::string& feature_prefix,
     const NavigationController& controller,
@@ -59,10 +75,10 @@ static void AddNavigationFeatures(
   NavigationEntry* entry = controller.GetEntryAtIndex(index);
   bool is_secure_referrer = entry->GetReferrer().url.SchemeIsSecure();
   if (!is_secure_referrer) {
-    AddFeature(StringPrintf("%s%s=%s",
-                            feature_prefix.c_str(),
-                            features::kReferrer,
-                            entry->GetReferrer().url.spec().c_str()),
+    AddFeature(base::StringPrintf("%s%s=%s",
+                                  feature_prefix.c_str(),
+                                  features::kReferrer,
+                                  entry->GetReferrer().url.spec().c_str()),
                1.0,
                request);
   }
@@ -102,11 +118,11 @@ static void AddNavigationFeatures(
     if (redirect_chain[i].SchemeIsSecure()) {
       printable_redirect = features::kSecureRedirectValue;
     }
-    AddFeature(StringPrintf("%s%s[%"PRIuS"]=%s",
-                            feature_prefix.c_str(),
-                            features::kRedirect,
-                            i,
-                            printable_redirect.c_str()),
+    AddFeature(base::StringPrintf("%s%s[%"PRIuS"]=%s",
+                                  feature_prefix.c_str(),
+                                  features::kRedirect,
+                                  i,
+                                  printable_redirect.c_str()),
                1.0,
                request);
   }
@@ -117,7 +133,7 @@ BrowserFeatureExtractor::BrowserFeatureExtractor(
     ClientSideDetectionService* service)
     : tab_(tab),
       service_(service),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+      weak_factory_(this) {
   DCHECK(tab);
 }
 
@@ -192,8 +208,8 @@ void BrowserFeatureExtractor::ExtractFeatures(const BrowseInfo* info,
   //   2) The first url on the same host as the candidate url (assuming that
   //      it's different from the candidate url).
   if (url_index != -1) {
-    AddNavigationFeatures("", controller, url_index, info->url_redirects,
-                          request);
+    AddNavigationFeatures(
+        std::string(), controller, url_index, info->url_redirects, request);
   }
   if (first_host_index != -1) {
     AddNavigationFeatures(features::kHostPrefix,
@@ -211,14 +227,33 @@ void BrowserFeatureExtractor::ExtractFeatures(const BrowseInfo* info,
                  weak_factory_.GetWeakPtr(), request, callback));
 }
 
+void BrowserFeatureExtractor::ExtractMalwareFeatures(
+    const BrowseInfo* info,
+    ClientMalwareRequest* request) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(request);
+  DCHECK(info);
+  DCHECK_EQ(0U, request->url().find("http:"));
+  // get the IPs and hosts that match the malware blacklisted IP list.
+  if (service_) {
+    for (IPHostMap::const_iterator it = info->ips.begin();
+         it != info->ips.end(); ++it) {
+      if (service_->IsBadIpAddress(it->first)) {
+        AddMalwareFeature(features::kBadIpFetch + it->first,
+                          it->second, 1.0, request);
+      }
+    }
+  }
+}
+
 void BrowserFeatureExtractor::ExtractBrowseInfoFeatures(
     const BrowseInfo& info,
     ClientPhishingRequest* request) {
   if (service_) {
-    for (std::set<std::string>::const_iterator it = info.ips.begin();
+    for (IPHostMap::const_iterator it = info.ips.begin();
          it != info.ips.end(); ++it) {
-      if (service_->IsBadIpAddress(*it)) {
-        AddFeature(features::kBadIpFetch + *it, 1.0, request);
+      if (service_->IsBadIpAddress(it->first)) {
+        AddFeature(features::kBadIpFetch + it->first, 1.0, request);
       }
     }
   }

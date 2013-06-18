@@ -5,8 +5,9 @@
 #ifndef MEDIA_BASE_AUDIO_DECODER_CONFIG_H_
 #define MEDIA_BASE_AUDIO_DECODER_CONFIG_H_
 
+#include <vector>
+
 #include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
 #include "media/base/channel_layout.h"
 #include "media/base/media_export.h"
 
@@ -29,6 +30,7 @@ enum AudioCodec {
   kCodecPCM_S16BE,
   kCodecPCM_S24BE,
   kCodecOpus,
+  kCodecEAC3,
   // DO NOT ADD RANDOM AUDIO CODECS!
   //
   // The only acceptable time to add a new codec is if there is production code
@@ -78,9 +80,6 @@ class MEDIA_EXPORT AudioDecoderConfig {
                   const uint8* extra_data, size_t extra_data_size,
                   bool is_encrypted, bool record_stats);
 
-  // Deep copies |audio_config|.
-  void CopyFrom(const AudioDecoderConfig& audio_config);
-
   // Returns true if this object has appropriate configuration values, false
   // otherwise.
   bool IsValidConfig() const;
@@ -98,8 +97,10 @@ class MEDIA_EXPORT AudioDecoderConfig {
 
   // Optional byte data required to initialize audio decoders such as Vorbis
   // codebooks.
-  uint8* extra_data() const { return extra_data_.get(); }
-  size_t extra_data_size() const { return extra_data_size_; }
+  const uint8* extra_data() const {
+    return extra_data_.empty() ? NULL : &extra_data_[0];
+  }
+  size_t extra_data_size() const { return extra_data_.size(); }
 
   // Whether the audio stream is potentially encrypted.
   // Note that in a potentially encrypted audio stream, individual buffers
@@ -113,13 +114,12 @@ class MEDIA_EXPORT AudioDecoderConfig {
   ChannelLayout channel_layout_;
   int samples_per_second_;
   int bytes_per_frame_;
-
-  scoped_array<uint8> extra_data_;
-  size_t extra_data_size_;
-
+  std::vector<uint8> extra_data_;
   bool is_encrypted_;
 
-  DISALLOW_COPY_AND_ASSIGN(AudioDecoderConfig);
+  // Not using DISALLOW_COPY_AND_ASSIGN here intentionally to allow the compiler
+  // generated copy constructor and assignment operator. Since the extra data is
+  // typically small, the performance impact is minimal.
 };
 
 }  // namespace media

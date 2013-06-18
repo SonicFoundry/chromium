@@ -3,10 +3,10 @@
 // found in the LICENSE file.
 
 #include "base/prefs/mock_pref_change_callback.h"
-#include "base/prefs/public/pref_change_registrar.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
+#include "base/prefs/pref_change_registrar.h"
 #include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/test/base/testing_pref_service_syncable.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -22,7 +22,7 @@ class ScopedUserPrefUpdateTest : public testing::Test {
   virtual void SetUp() {
     prefs_.registry()->RegisterDictionaryPref(
         kPref,
-        PrefRegistrySyncable::UNSYNCABLE_PREF);
+        user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
     registrar_.Init(&prefs_);
     registrar_.Add(kPref, observer_.GetCallback());
   }

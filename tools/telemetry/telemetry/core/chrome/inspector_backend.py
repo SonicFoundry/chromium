@@ -9,6 +9,7 @@ import sys
 from telemetry.core import util
 from telemetry.core import exceptions
 from telemetry.core.chrome import inspector_console
+from telemetry.core.chrome import inspector_memory
 from telemetry.core.chrome import inspector_page
 from telemetry.core.chrome import inspector_runtime
 from telemetry.core.chrome import inspector_timeline
@@ -30,6 +31,7 @@ class InspectorBackend(object):
     self._next_request_id = 0
 
     self._console = inspector_console.InspectorConsole(self)
+    self._memory = inspector_memory.InspectorMemory(self)
     self._page = inspector_page.InspectorPage(self)
     self._runtime = inspector_runtime.InspectorRuntime(self)
     self._timeline = inspector_timeline.InspectorTimeline(self)
@@ -40,7 +42,14 @@ class InspectorBackend(object):
   def _Connect(self):
     if self._socket:
       return
-    self._socket = websocket.create_connection(self._debugger_url)
+    try:
+      self._socket = websocket.create_connection(self._debugger_url)
+    except (websocket.WebSocketException):
+      if self._browser_backend.IsBrowserRunning():
+        raise exceptions.TabCrashException()
+      else:
+        raise exceptions.BrowserGoneException()
+
     self._cur_socket_timeout = 0
     self._next_request_id = 0
 
@@ -97,10 +106,7 @@ class InspectorBackend(object):
         'window.chrome.gpuBenchmarking.beginWindowSnapshotPNG === undefined'):
       return False
 
-    # TODO(dtu): Also check for Chrome branch number, because of a bug in
-    # beginWindowSnapshotPNG in older versions. crbug.com/171592
-
-    return True
+    return self._browser_backend.chrome_branch_number >= 1391
 
   def Screenshot(self, timeout):
     if self._runtime.Evaluate(
@@ -152,13 +158,23 @@ class InspectorBackend(object):
   def message_output_stream(self, stream):  # pylint: disable=E0202
     self._console.message_output_stream = stream
 
+  # Memory public methods.
+
+  def GetDOMStats(self, timeout):
+    dom_counters = self._memory.GetDOMCounters(timeout)
+    return {
+      'document_count': dom_counters['documents'],
+      'node_count': dom_counters['nodes'],
+      'event_listener_count': dom_counters['jsEventListeners']
+    }
+
   # Page public methods.
 
   def PerformActionAndWaitForNavigate(self, action_function, timeout):
     self._page.PerformActionAndWaitForNavigate(action_function, timeout)
 
-  def Navigate(self, url, timeout):
-    self._page.Navigate(url, timeout)
+  def Navigate(self, url, script_to_evaluate_on_commit, timeout):
+    self._page.Navigate(url, script_to_evaluate_on_commit, timeout)
 
   def GetCookieByName(self, name, timeout):
     return self._page.GetCookieByName(name, timeout)
@@ -296,3 +312,6 @@ class InspectorBackend(object):
     """Unregisters a previously registered domain."""
     assert domain_name in self._domain_handlers
     self._domain_handlers.pop(domain_name)
+
+  def CollectGarbage(self):
+    self._page.CollectGarbage()

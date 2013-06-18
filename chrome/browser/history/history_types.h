@@ -14,6 +14,7 @@
 #include "base/basictypes.h"
 #include "base/containers/stack_container.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/memory/scoped_vector.h"
 #include "base/string16.h"
 #include "base/time.h"
 #include "chrome/browser/history/snippet.h"
@@ -300,6 +301,11 @@ class URLResult : public URLRow {
 
   const Snippet& snippet() const { return snippet_; }
 
+  bool blocked_visit() const { return blocked_visit_; }
+  void set_blocked_visit(bool blocked_visit) {
+    blocked_visit_ = blocked_visit;
+  }
+
   // If this is a title match, title_match_positions contains an entry for
   // every word in the title that matched one of the query parameters. Each
   // entry contains the start and end of the match.
@@ -318,6 +324,9 @@ class URLResult : public URLRow {
   // These values are typically set by HistoryBackend.
   Snippet snippet_;
   Snippet::MatchPositions title_match_positions_;
+
+  // Whether a managed user was blocked when attempting to visit this URL.
+  bool blocked_visit_;
 
   // We support the implicit copy constructor and operator=.
 };
@@ -417,7 +426,7 @@ class QueryResults {
 
   // The ordered list of results. The pointers inside this are owned by this
   // QueryResults object.
-  URLResultVector results_;
+  ScopedVector<URLResult> results_;
 
   // Maps URLs to entries in results_.
   URLToResultIndices url_to_results_;
@@ -461,7 +470,10 @@ struct QueryOptions {
     // Omit visits for which there is a more recent visit to the same URL on
     // the same day. Each URL will appear no more than once per day, where the
     // day is defined by the local timezone.
-    REMOVE_DUPLICATES_PER_DAY
+    REMOVE_DUPLICATES_PER_DAY,
+
+    // Return all visits without deduping.
+    KEEP_ALL_DUPLICATES
   };
 
   // Allows the caller to specify how duplicate URLs in the result set should
@@ -816,6 +828,19 @@ class VisitDatabaseObserver {
  public:
   virtual ~VisitDatabaseObserver();
   virtual void OnAddVisit(const BriefVisitInfo& info) = 0;
+};
+
+struct ExpireHistoryArgs {
+  ExpireHistoryArgs();
+  ~ExpireHistoryArgs();
+
+  // Sets |begin_time| and |end_time| to the beginning and end of the day (in
+  // local time) on which |time| occurs.
+  void SetTimeRangeForOneDay(base::Time time);
+
+  std::set<GURL> urls;
+  base::Time begin_time;
+  base::Time end_time;
 };
 
 }  // namespace history

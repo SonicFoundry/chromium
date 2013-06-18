@@ -402,8 +402,8 @@ class WebSocketFrameTestMaskBenchmark : public testing::Test {
         1000 * (TimeTicks::HighResNow() - start).InMillisecondsF() /
         iterations_;
     LOG(INFO) << "Payload size " << size
-              << StringPrintf(" took %.03f microseconds per iteration",
-                              total_time_ms);
+              << base::StringPrintf(" took %.03f microseconds per iteration",
+                                    total_time_ms);
   }
 
  private:
@@ -418,7 +418,7 @@ TEST_F(WebSocketFrameTestMaskBenchmark, BenchmarkMaskShortPayload) {
 }
 
 TEST_F(WebSocketFrameTestMaskBenchmark, BenchmarkMaskLongPayload) {
-  scoped_array<char> payload(new char[kLongPayloadSize]);
+  scoped_ptr<char[]> payload(new char[kLongPayloadSize]);
   std::fill(payload.get(), payload.get() + kLongPayloadSize, 'a');
   Benchmark(payload.get(), kLongPayloadSize);
 }

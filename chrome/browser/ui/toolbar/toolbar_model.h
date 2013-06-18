@@ -29,6 +29,20 @@ class ToolbarModel {
 #undef DEFINE_TOOLBAR_MODEL_SECURITY_LEVEL
   };
 
+  // If search URLs may be displayed as search terms, these are the types of
+  // search terms that may be extracted from the URL.  See comments on GetText()
+  // and GetSearchTermsType().
+  enum SearchTermsType {
+    // There are no search terms.
+    NO_SEARCH_TERMS,
+    // There are regular search terms.
+    NORMAL_SEARCH_TERMS,
+    // There are search terms that require a more prominent UI. For example,
+    // if the search term looks like a URL then it should be clear to the user
+    // that a search term is being displayed.
+    URL_LIKE_SEARCH_TERMS,
+  };
+
   virtual ~ToolbarModel() {}
 
   // Returns the text for the current page's URL. This will have been formatted
@@ -40,12 +54,22 @@ class ToolbarModel {
   //   will be displayed in place of the URL.
   virtual string16 GetText(bool display_search_urls_as_search_terms) const = 0;
 
+  // Some search URLs bundle a special "corpus" param that we can extract and
+  // display next to users' search terms in cases where we'd show the search
+  // terms instead of the URL anyway.  For example, a Google image search might
+  // show the corpus "Images:" plus a search string.  This is only used on
+  // mobile.
+  virtual string16 GetCorpusNameForMobile() const = 0;
+
   // Returns the URL of the current navigation entry.
   virtual GURL GetURL() const = 0;
 
-  // Returns true if a call to GetText(true) would successfully replace the URL
-  // with search terms.
-  virtual bool WouldReplaceSearchURLWithSearchTerms() const = 0;
+  // This indicates the type of search terms returned by a call to
+  // GetText(true).
+  virtual SearchTermsType GetSearchTermsType() const = 0;
+
+  // Setter for whether extraction of URL like search terms is allowed.
+  virtual void SetSupportsExtractionOfURLLikeSearchTerms(bool value) = 0;
 
   // Returns the security level that the toolbar should display.
   virtual SecurityLevel GetSecurityLevel() const = 0;

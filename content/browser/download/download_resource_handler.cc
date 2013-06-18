@@ -12,11 +12,11 @@
 #include "base/metrics/histogram.h"
 #include "base/metrics/stats_counters.h"
 #include "base/stringprintf.h"
+#include "content/browser/byte_stream.h"
 #include "content/browser/download/download_create_info.h"
 #include "content/browser/download/download_interrupt_reasons_impl.h"
 #include "content/browser/download/download_manager_impl.h"
 #include "content/browser/download/download_request_handle.h"
-#include "content/browser/download/byte_stream.h"
 #include "content/browser/download/download_stats.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/browser/loader/resource_request_info_impl.h"
@@ -380,7 +380,7 @@ bool DownloadResourceHandler::OnResponseCompleted(
 
   // Send the info down the stream.  Conditional is in case we get
   // OnResponseCompleted without OnResponseStarted.
-  if (stream_writer_.get())
+  if (stream_writer_)
     stream_writer_->Close(reason);
 
   // If the error mapped to something unknown, record it so that
@@ -480,7 +480,7 @@ DownloadResourceHandler::~DownloadResourceHandler() {
   CallStartedCB(NULL, net::ERR_ACCESS_DENIED);
 
   // Remove output stream callback if a stream exists.
-  if (stream_writer_.get())
+  if (stream_writer_)
     stream_writer_->RegisterCallback(base::Closure());
 
   UMA_HISTOGRAM_TIMES("SB2.DownloadDuration",

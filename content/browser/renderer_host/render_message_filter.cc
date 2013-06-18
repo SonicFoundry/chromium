@@ -12,10 +12,11 @@
 #include "base/debug/alias.h"
 #include "base/file_util.h"
 #include "base/process_util.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "base/threading/thread.h"
 #include "base/threading/worker_pool.h"
 #include "base/utf_string_conversions.h"
+#include "content/browser/browser_main_loop.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/dom_storage/dom_storage_context_impl.h"
 #include "content/browser/dom_storage/session_storage_namespace_impl.h"
@@ -32,7 +33,9 @@
 #include "content/common/child_process_host_impl.h"
 #include "content/common/child_process_messages.h"
 #include "content/common/desktop_notification_messages.h"
+#include "content/common/media/media_param_traits.h"
 #include "content/common/view_messages.h"
+#include "content/public/browser/browser_child_process_host.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
@@ -45,12 +48,14 @@
 #include "content/public/common/url_constants.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_platform_file.h"
+#include "media/audio/audio_manager.h"
 #include "media/audio/audio_manager_base.h"
-#include "media/audio/audio_util.h"
+#include "media/audio/audio_parameters.h"
 #include "media/base/media_log_event.h"
 #include "net/base/io_buffer.h"
 #include "net/base/keygen_handler.h"
 #include "net/base/mime_util.h"
+#include "net/base/request_priority.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_monster.h"
 #include "net/http/http_cache.h"
@@ -77,6 +82,9 @@
 #if defined(OS_WIN)
 #include "content/browser/renderer_host/backing_store_win.h"
 #include "content/common/font_cache_dispatcher_win.h"
+#endif
+#if defined(OS_ANDROID)
+#include "media/base/android/webaudio_media_codec_bridge.h"
 #endif
 
 using net::CookieStore;
@@ -406,9 +414,12 @@ bool RenderMessageFilter::OnMessageReceived(const IPC::Message& message,
                         OnGetAudioHardwareConfig)
     IPC_MESSAGE_HANDLER(ViewHostMsg_GetMonitorColorProfile,
                         OnGetMonitorColorProfile)
-    IPC_MESSAGE_HANDLER(ViewHostMsg_MediaLogEvent, OnMediaLogEvent)
+    IPC_MESSAGE_HANDLER(ViewHostMsg_MediaLogEvents, OnMediaLogEvents)
     IPC_MESSAGE_HANDLER(ViewHostMsg_Are3DAPIsBlocked, OnAre3DAPIsBlocked)
     IPC_MESSAGE_HANDLER(ViewHostMsg_DidLose3DContext, OnDidLose3DContext)
+#if defined(OS_ANDROID)
+    IPC_MESSAGE_HANDLER(ViewHostMsg_RunWebAudioMediaCodec, OnWebAudioMediaCodec)
+#endif
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP_EX()
 
@@ -483,18 +494,21 @@ void RenderMessageFilter::OnCreateFullscreenWidget(int opener_id,
       opener_id, route_id, surface_id);
 }
 
-void RenderMessageFilter::OnGetProcessMemorySizes(
-    size_t* private_bytes, size_t* shared_bytes) {
+void RenderMessageFilter::OnGetProcessMemorySizes(size_t* private_bytes,
+                                                  size_t* shared_bytes) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   using base::ProcessMetrics;
 #if !defined(OS_MACOSX) || defined(OS_IOS)
-  scoped_ptr<ProcessMetrics> metrics(
-      ProcessMetrics::CreateProcessMetrics(peer_handle()));
+  scoped_ptr<ProcessMetrics> metrics(ProcessMetrics::CreateProcessMetrics(
+      peer_handle()));
 #else
-  scoped_ptr<ProcessMetrics> metrics(
-      ProcessMetrics::CreateProcessMetrics(peer_handle(), NULL));
+  scoped_ptr<ProcessMetrics> metrics(ProcessMetrics::CreateProcessMetrics(
+      peer_handle(), content::BrowserChildProcessHost::GetPortProvider()));
 #endif
-  metrics->GetMemoryBytes(private_bytes, shared_bytes);
+  if (!metrics->GetMemoryBytes(private_bytes, shared_bytes)) {
+    *private_bytes = 0;
+    *shared_bytes = 0;
+  }
 }
 
 void RenderMessageFilter::OnSetCookie(const IPC::Message& message,
@@ -777,16 +791,17 @@ void RenderMessageFilter::OnGetCPUUsage(int* cpu_usage) {
 }
 
 void RenderMessageFilter::OnGetAudioHardwareConfig(
-    int* output_buffer_size, int* output_sample_rate, int* input_sample_rate,
-    media::ChannelLayout* input_channel_layout) {
-  *output_buffer_size = media::GetAudioHardwareBufferSize();
-  *output_sample_rate = media::GetAudioHardwareSampleRate();
+    media::AudioParameters* input_params,
+    media::AudioParameters* output_params) {
+  DCHECK(input_params);
+  DCHECK(output_params);
+  media::AudioManager* audio_manager = BrowserMainLoop::GetAudioManager();
+  *output_params = audio_manager->GetDefaultOutputStreamParameters();
 
   // TODO(henrika): add support for all available input devices.
-  *input_sample_rate = media::GetAudioInputHardwareSampleRate(
-      media::AudioManagerBase::kDefaultDeviceId);
-  *input_channel_layout = media::GetAudioInputHardwareChannelLayout(
-      media::AudioManagerBase::kDefaultDeviceId);
+  *input_params =
+      audio_manager->GetInputStreamParameters(
+          media::AudioManagerBase::kDefaultDeviceId);
 }
 
 void RenderMessageFilter::OnGetMonitorColorProfile(std::vector<char>* profile) {
@@ -806,7 +821,7 @@ void RenderMessageFilter::OnDownloadUrl(const IPC::Message& message,
   save_info->suggested_name = suggested_name;
   scoped_ptr<net::URLRequest> request(
       resource_context_->GetRequestContext()->CreateRequest(url, NULL));
-  request->set_referrer(referrer.url.spec());
+  request->SetReferrer(referrer.url.spec());
   webkit_glue::ConfigureURLRequestForReferrerPolicy(
       request.get(), referrer.policy);
   RecordDownloadSource(INITIATED_BY_RENDERER);
@@ -887,10 +902,17 @@ void RenderMessageFilter::OnCacheableMetadataAvailable(
       http_transaction_factory()->GetCache();
   DCHECK(cache);
 
+  // Use the same priority for the metadata write as for script
+  // resources (see defaultPriorityForResourceType() in WebKit's
+  // CachedResource.cpp). Note that WebURLRequest::PriorityMedium
+  // corresponds to net::LOW (see ConvertWebKitPriorityToNetPriority()
+  // in weburlloader_impl.cc).
+  const net::RequestPriority kPriority = net::LOW;
   scoped_refptr<net::IOBuffer> buf(new net::IOBuffer(data.size()));
   memcpy(buf->data(), &data.front(), data.size());
   cache->WriteMetadata(
-      url, base::Time::FromDoubleT(expected_response_time), buf, data.size());
+      url, kPriority,
+      base::Time::FromDoubleT(expected_response_time), buf, data.size());
 }
 
 void RenderMessageFilter::OnKeygen(uint32 key_size_index,
@@ -991,9 +1013,10 @@ void RenderMessageFilter::AsyncOpenFileOnFileThread(const base::FilePath& path,
       base::Bind(base::IgnoreResult(&RenderMessageFilter::Send), this, reply));
 }
 
-void RenderMessageFilter::OnMediaLogEvent(const media::MediaLogEvent& event) {
+void RenderMessageFilter::OnMediaLogEvents(
+    const std::vector<media::MediaLogEvent>& events) {
   if (media_internals_)
-    media_internals_->OnMediaEvent(render_process_id_, event);
+    media_internals_->OnMediaEvents(render_process_id_, events);
 }
 
 void RenderMessageFilter::CheckPolicyForCookies(
@@ -1128,4 +1151,19 @@ void RenderMessageFilter::OnPreCacheFontCharacters(const LOGFONT& font,
 }
 #endif
 
+#if defined(OS_ANDROID)
+void RenderMessageFilter::OnWebAudioMediaCodec(
+    base::SharedMemoryHandle encoded_data_handle,
+    base::FileDescriptor pcm_output,
+    size_t data_size) {
+  // Let a WorkerPool handle this request since the WebAudio
+  // MediaCodec bridge is slow and can block while sending the data to
+  // the renderer.
+  base::WorkerPool::PostTask(
+      FROM_HERE,
+      base::Bind(&media::WebAudioMediaCodecBridge::RunWebAudioMediaCodec,
+                 encoded_data_handle, pcm_output, data_size),
+      true);
+}
+#endif
 }  // namespace content

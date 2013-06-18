@@ -28,7 +28,7 @@ typedef base::Callback<Status(
 
 // Execute a command on a specific element.
 Status ExecuteElementCommand(
-    ElementCommand command,
+    const ElementCommand& command,
     Session* session,
     WebView* web_view,
     const base::DictionaryValue& params,
@@ -62,6 +62,14 @@ Status ExecuteHoverOverElement(
 
 // Click on the element.
 Status ExecuteClickElement(
+    Session* session,
+    WebView* web_view,
+    const std::string& element_id,
+    const base::DictionaryValue& params,
+    scoped_ptr<base::Value>* value);
+
+// Touch click on the element.
+Status ExecuteTouchSingleTap(
     Session* session,
     WebView* web_view,
     const std::string& element_id,

@@ -10,7 +10,6 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/mac/mac_logging.h"
-#include "media/audio/audio_util.h"
 #include "media/audio/mac/audio_manager_mac.h"
 #include "media/base/media_switches.h"
 
@@ -79,9 +78,8 @@ AUAudioOutputStream::AUAudioOutputStream(
   DVLOG(1) << "Desired ouput format: " << format_;
 
   // Calculate the number of sample frames per callback.
-  number_of_frames_ = params.GetBytesPerBuffer() / format_.mBytesPerPacket;
+  number_of_frames_ = params.frames_per_buffer();
   DVLOG(1) << "Number of frames per callback: " << number_of_frames_;
-  CHECK_EQ(number_of_frames_, GetAudioHardwareBufferSize());
 }
 
 AUAudioOutputStream::~AUAudioOutputStream() {
@@ -97,7 +95,7 @@ bool AUAudioOutputStream::Open() {
                                                &size,
                                                &output_device_id_);
   if (result != noErr || output_device_id_ == kAudioObjectUnknown) {
-    OSSTATUS_DLOG(WARNING, result)
+    OSSTATUS_DLOG(ERROR, result)
         << "Could not get default audio output device.";
     return false;
   }
@@ -117,13 +115,13 @@ bool AUAudioOutputStream::Open() {
 
   result = AudioComponentInstanceNew(comp, &output_unit_);
   if (result != noErr) {
-    OSSTATUS_DLOG(WARNING, result) << "AudioComponentInstanceNew() failed.";
+    OSSTATUS_DLOG(ERROR, result) << "AudioComponentInstanceNew() failed.";
     return false;
   }
 
   result = AudioUnitInitialize(output_unit_);
   if (result != noErr) {
-    OSSTATUS_DLOG(WARNING, result) << "AudioUnitInitialize() failed.";
+    OSSTATUS_DLOG(ERROR, result) << "AudioUnitInitialize() failed.";
     return false;
   }
 
@@ -145,7 +143,7 @@ bool AUAudioOutputStream::Configure() {
       &input,
       sizeof(input));
   if (result != noErr) {
-    OSSTATUS_DLOG(WARNING, result)
+    OSSTATUS_DLOG(ERROR, result)
       << "AudioUnitSetProperty(kAudioUnitProperty_SetRenderCallback) failed.";
     return false;
   }
@@ -159,7 +157,7 @@ bool AUAudioOutputStream::Configure() {
       &format_,
       sizeof(format_));
   if (result != noErr) {
-    OSSTATUS_DLOG(WARNING, result)
+    OSSTATUS_DLOG(ERROR, result)
         << "AudioUnitSetProperty(kAudioUnitProperty_StreamFormat) failed.";
     return false;
   }
@@ -167,8 +165,16 @@ bool AUAudioOutputStream::Configure() {
   // Set the buffer frame size.
   // WARNING: Setting this value changes the frame size for all audio units in
   // the current process.  It's imperative that the input and output frame sizes
-  // be the same as audio_util::GetAudioHardwareBufferSize().
+  // be the same as the frames_per_buffer() returned by
+  // GetDefaultOutputStreamParameters.
   // See http://crbug.com/154352 for details.
+  const AudioParameters hw_params =
+      manager_->GetDefaultOutputStreamParameters();
+  if (number_of_frames_ != static_cast<size_t>(hw_params.frames_per_buffer())) {
+    DLOG(ERROR) << "Audio buffer size does not match hardware buffer size.";
+    return false;
+  }
+
   UInt32 buffer_size = number_of_frames_;
   result = AudioUnitSetProperty(
       output_unit_,
@@ -178,7 +184,7 @@ bool AUAudioOutputStream::Configure() {
       &buffer_size,
       sizeof(buffer_size));
   if (result != noErr) {
-    OSSTATUS_DLOG(WARNING, result)
+    OSSTATUS_DLOG(ERROR, result)
         << "AudioUnitSetProperty(kAudioDevicePropertyBufferFrameSize) failed.";
     return false;
   }
@@ -280,16 +286,9 @@ OSStatus AUAudioOutputStream::Render(UInt32 number_of_frames,
 
   // Note: If this ever changes to output raw float the data must be clipped and
   // sanitized since it may come from an untrusted source such as NaCl.
+  audio_bus_->Scale(volume_);
   audio_bus_->ToInterleaved(
       frames_filled, format_.mBitsPerChannel / 8, audio_data);
-  uint32 filled = frames_filled * format_.mBytesPerFrame;
-
-  // Perform in-place, software-volume adjustments.
-  media::AdjustVolume(audio_data,
-                      filled,
-                      audio_bus_->channels(),
-                      format_.mBitsPerChannel / 8,
-                      volume_);
 
   return noErr;
 }

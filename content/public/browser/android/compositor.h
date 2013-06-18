@@ -33,6 +33,9 @@ class CONTENT_EXPORT Compositor {
 
     // The compositor has completed swapping a frame.
     virtual void OnSwapBuffersCompleted() {}
+
+    // The compositor will eventually swap a frame.
+    virtual void OnSwapBuffersPosted() {}
   };
 
   virtual ~Compositor() {}
@@ -72,7 +75,11 @@ class CONTENT_EXPORT Compositor {
   virtual void SetVisible(bool visible) = 0;
 
   // Set the output surface handle which the compositor renders into.
+  // DEPRECATED: Use SetSurface() which takes a Java Surface object.
   virtual void SetWindowSurface(ANativeWindow* window) = 0;
+
+  // Set the output surface which the compositor renders into.
+  virtual void SetSurface(jobject surface) = 0;
 
   // Tells the view tree to assume a transparent background when rendering.
   virtual void SetHasTransparentBackground(bool flag) = 0;
@@ -81,6 +88,9 @@ class CONTENT_EXPORT Compositor {
   // The buffer must be at least window width * height * 4 (RGBA) bytes large.
   // The buffer is not modified if false is returned.
   virtual bool CompositeAndReadback(void *pixels, const gfx::Rect& rect) = 0;
+
+  // Invalidate the whole viewport.
+  virtual void SetNeedsRedraw() = 0;
 
   // Composite immediately. Used in single-threaded mode.
   virtual void Composite() = 0;

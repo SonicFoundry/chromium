@@ -13,6 +13,9 @@ namespace cryptohome {
 const char MockAsyncMethodCaller::kFakeAttestationEnrollRequest[] = "enrollreq";
 const char MockAsyncMethodCaller::kFakeAttestationCertRequest[] = "certreq";
 const char MockAsyncMethodCaller::kFakeAttestationCert[] = "cert";
+const char MockAsyncMethodCaller::kFakeSanitizedUsername[] = "01234567890ABC";
+const char MockAsyncMethodCaller::kFakeChallengeResponse[] =
+    "challenge_response";
 
 MockAsyncMethodCaller::MockAsyncMethodCaller()
     : success_(false), return_code_(cryptohome::MOUNT_ERROR_NONE) {
@@ -49,10 +52,22 @@ void MockAsyncMethodCaller::SetUp(bool success, MountError return_code) {
       .WillByDefault(
           WithArgs<1>(Invoke(this,
                              &MockAsyncMethodCaller::FakeCreateCertRequest)));
-  ON_CALL(*this, AsyncTpmAttestationFinishCertRequest(_, _))
+  ON_CALL(*this, AsyncTpmAttestationFinishCertRequest(_, _, _, _))
+      .WillByDefault(
+          WithArgs<3>(Invoke(this,
+                             &MockAsyncMethodCaller::FakeFinishCertRequest)));
+  ON_CALL(*this, AsyncGetSanitizedUsername(_, _))
       .WillByDefault(
           WithArgs<1>(Invoke(this,
-                             &MockAsyncMethodCaller::FakeFinishCertRequest)));
+                             &MockAsyncMethodCaller::
+                                 FakeGetSanitizedUsername)));
+  ON_CALL(*this, TpmAttestationSignEnterpriseChallenge(_, _, _, _, _, _, _))
+      .WillByDefault(
+          WithArgs<6>(Invoke(this,
+                             &MockAsyncMethodCaller::FakeEnterpriseChallenge)));
+  ON_CALL(*this, TpmAttestationRegisterKey(_, _, _))
+      .WillByDefault(
+          WithArgs<2>(Invoke(this, &MockAsyncMethodCaller::DoCallback)));
 }
 
 void MockAsyncMethodCaller::DoCallback(Callback callback) {
@@ -72,6 +87,16 @@ void MockAsyncMethodCaller::FakeCreateCertRequest(
 void MockAsyncMethodCaller::FakeFinishCertRequest(
     const DataCallback& callback) {
   callback.Run(success_, kFakeAttestationCert);
+}
+
+void MockAsyncMethodCaller::FakeGetSanitizedUsername(
+    const DataCallback& callback) {
+  callback.Run(success_, kFakeSanitizedUsername);
+}
+
+void MockAsyncMethodCaller::FakeEnterpriseChallenge(
+    const DataCallback& callback) {
+  callback.Run(success_, kFakeChallengeResponse);
 }
 
 }  // namespace cryptohome

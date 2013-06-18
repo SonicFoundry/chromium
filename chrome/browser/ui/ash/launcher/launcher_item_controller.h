@@ -31,7 +31,6 @@ class LauncherItemController {
   enum Type {
     TYPE_APP,
     TYPE_APP_PANEL,
-    TYPE_EXTENSION_PANEL,
     TYPE_SHORTCUT,
     TYPE_TABBED,
     TYPE_WINDOWED_APP
@@ -58,6 +57,11 @@ class LauncherItemController {
   }
   bool locked() { return locked_ > 0; }
 
+  bool image_set_by_controller() const { return image_set_by_controller_; }
+  void set_image_set_by_controller(bool image_set_by_controller) {
+    image_set_by_controller_ = image_set_by_controller;
+  }
+
   // Returns the title for this item.
   virtual string16 GetTitle() = 0;
 
@@ -66,6 +70,9 @@ class LauncherItemController {
 
   // Returns true if this item is open.
   virtual bool IsOpen() const = 0;
+
+  // Returns true if this item is visible (e.g. not minimized).
+  virtual bool IsVisible() const = 0;
 
   // Launches a new instance of the app associated with this item.
   virtual void Launch(int event_flags) = 0;
@@ -114,6 +121,9 @@ class LauncherItemController {
   // the launcher (0) or not (>0). It is being used for windowed V1
   // applications.
   int locked_;
+
+  // Set to true if the launcher item image has been set by the controller.
+  bool image_set_by_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(LauncherItemController);
 };

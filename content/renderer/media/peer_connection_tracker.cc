@@ -118,17 +118,17 @@ static string GetSignalingStateString(
   return result;
 }
 
-static string GetIceStateString(
-    WebRTCPeerConnectionHandlerClient::ICEState state) {
+static string GetIceConnectionStateString(
+    WebRTCPeerConnectionHandlerClient::ICEConnectionState state) {
   string result;
   switch (state) {
-    GET_STRING_OF_STATE(ICEStateStarting)
-    GET_STRING_OF_STATE(ICEStateChecking)
-    GET_STRING_OF_STATE(ICEStateConnected)
-    GET_STRING_OF_STATE(ICEStateCompleted)
-    GET_STRING_OF_STATE(ICEStateFailed)
-    GET_STRING_OF_STATE(ICEStateDisconnected)
-    GET_STRING_OF_STATE(ICEStateClosed)
+    GET_STRING_OF_STATE(ICEConnectionStateStarting)
+    GET_STRING_OF_STATE(ICEConnectionStateChecking)
+    GET_STRING_OF_STATE(ICEConnectionStateConnected)
+    GET_STRING_OF_STATE(ICEConnectionStateCompleted)
+    GET_STRING_OF_STATE(ICEConnectionStateFailed)
+    GET_STRING_OF_STATE(ICEConnectionStateDisconnected)
+    GET_STRING_OF_STATE(ICEConnectionStateClosed)
     default:
       NOTREACHED();
       break;
@@ -136,16 +136,33 @@ static string GetIceStateString(
   return result;
 }
 
-// Builds a DictionaryValue from the StatsElement.
+static string GetIceGatheringStateString(
+    WebRTCPeerConnectionHandlerClient::ICEGatheringState state) {
+  string result;
+  switch (state) {
+    GET_STRING_OF_STATE(ICEGatheringStateNew)
+    GET_STRING_OF_STATE(ICEGatheringStateGathering)
+    GET_STRING_OF_STATE(ICEGatheringStateComplete)
+    default:
+      NOTREACHED();
+      break;
+  }
+  return result;
+}
+
+// Builds a DictionaryValue from the StatsReport.
 // The caller takes the ownership of the returned value.
-static DictionaryValue* GetDictValue(const webrtc::StatsElement& elem) {
-  if (elem.values.empty())
+// Note:
+// The format must be consistent with what webrtc_internals.js expects.
+// If you change it here, you must change webrtc_internals.js as well.
+static DictionaryValue* GetDictValueStats(const webrtc::StatsReport& report) {
+  if (report.values.empty())
     return NULL;
 
   DictionaryValue* dict = new DictionaryValue();
   if (!dict)
     return NULL;
-  dict->SetDouble("timestamp", elem.timestamp);
+  dict->SetDouble("timestamp", report.timestamp);
 
   ListValue* values = new ListValue();
   if (!values) {
@@ -154,9 +171,9 @@ static DictionaryValue* GetDictValue(const webrtc::StatsElement& elem) {
   }
   dict->Set("values", values);
 
-  for (size_t i = 0; i < elem.values.size(); ++i) {
-    values->AppendString(elem.values[i].name);
-    values->AppendString(elem.values[i].value);
+  for (size_t i = 0; i < report.values.size(); ++i) {
+    values->AppendString(report.values[i].name);
+    values->AppendString(report.values[i].value);
   }
   return dict;
 }
@@ -164,21 +181,21 @@ static DictionaryValue* GetDictValue(const webrtc::StatsElement& elem) {
 // Builds a DictionaryValue from the StatsReport.
 // The caller takes the ownership of the returned value.
 static DictionaryValue* GetDictValue(const webrtc::StatsReport& report) {
-  scoped_ptr<DictionaryValue> local, remote, result;
+  scoped_ptr<DictionaryValue> stats, result;
 
-  local.reset(GetDictValue(report.local));
-  remote.reset(GetDictValue(report.remote));
-  if (!local.get() && !remote.get())
+  stats.reset(GetDictValueStats(report));
+  if (!stats)
     return NULL;
 
   result.reset(new DictionaryValue());
-  if (!result.get())
+  if (!result)
     return NULL;
 
-  if (local.get())
-    result->Set("local", local.release());
-  if (remote.get())
-    result->Set("remote", remote.release());
+  // Note:
+  // The format must be consistent with what webrtc_internals.js expects.
+  // If you change it here, you must change webrtc_internals.js as well.
+  if (stats)
+    result->Set("stats", stats.release());
   result->SetString("id", report.id);
   result->SetString("type", report.type);
 
@@ -296,12 +313,12 @@ void PeerConnectionTracker::TrackCreateAnswer(
 
 void PeerConnectionTracker::TrackSetSessionDescription(
     RTCPeerConnectionHandler* pc_handler,
-    const webrtc::SessionDescriptionInterface* desc,
+    const WebKit::WebRTCSessionDescription& desc,
     Source source) {
-  string sdp;
-  desc->ToString(&sdp);
+  string sdp = UTF16ToUTF8(desc.sdp());
+  string type = UTF16ToUTF8(desc.type());
 
-  string value = "type: " + desc->type() + ", sdp: " + sdp;
+  string value = "type: " + type + ", sdp: " + sdp;
   SendPeerConnectionUpdate(
       pc_handler,
       source == SOURCE_LOCAL ? "setLocalDescription" : "setRemoteDescription",
@@ -361,13 +378,8 @@ void PeerConnectionTracker::TrackCreateDataChannel(
       value);
 }
 
-void PeerConnectionTracker::TrackOnIceComplete(
-    RTCPeerConnectionHandler* pc_handler) {
-  SendPeerConnectionUpdate(pc_handler, "onIceCandidate(null)", "");
-}
-
 void PeerConnectionTracker::TrackStop(RTCPeerConnectionHandler* pc_handler) {
-  SendPeerConnectionUpdate(pc_handler, "stop", "");
+  SendPeerConnectionUpdate(pc_handler, "stop", std::string());
 }
 
 void PeerConnectionTracker::TrackSignalingStateChange(
@@ -377,12 +389,20 @@ void PeerConnectionTracker::TrackSignalingStateChange(
       pc_handler, "signalingStateChange", GetSignalingStateString(state));
 }
 
-void PeerConnectionTracker::TrackIceStateChange(
+void PeerConnectionTracker::TrackIceConnectionStateChange(
       RTCPeerConnectionHandler* pc_handler,
-      WebRTCPeerConnectionHandlerClient::ICEState state) {
-  // TODO (jiayl): Should update this when the new IceState handling is done.
+      WebRTCPeerConnectionHandlerClient::ICEConnectionState state) {
   SendPeerConnectionUpdate(
-      pc_handler, "IceStateChange", GetIceStateString(state));
+      pc_handler, "iceConnectionStateChange",
+      GetIceConnectionStateString(state));
+}
+
+void PeerConnectionTracker::TrackIceGatheringStateChange(
+      RTCPeerConnectionHandler* pc_handler,
+      WebRTCPeerConnectionHandlerClient::ICEGatheringState state) {
+  SendPeerConnectionUpdate(
+      pc_handler, "iceGatheringStateChange",
+      GetIceGatheringStateString(state));
 }
 
 void PeerConnectionTracker::TrackSessionDescriptionCallback(
@@ -409,6 +429,18 @@ void PeerConnectionTracker::TrackSessionDescriptionCallback(
   update_type += callback_type;
 
   SendPeerConnectionUpdate(pc_handler, update_type, value);
+}
+
+void PeerConnectionTracker::TrackOnRenegotiationNeeded(
+    RTCPeerConnectionHandler* pc_handler) {
+  SendPeerConnectionUpdate(pc_handler, "onRenegotiationNeeded", std::string());
+}
+
+void PeerConnectionTracker::TrackCreateDTMFSender(
+    RTCPeerConnectionHandler* pc_handler,
+    const WebKit::WebMediaStreamTrack& track) {
+  SendPeerConnectionUpdate(pc_handler, "createDTMFSender",
+                           UTF16ToUTF8(track.id()));
 }
 
 int PeerConnectionTracker::GetNextLocalID() {

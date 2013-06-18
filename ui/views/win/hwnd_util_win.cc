@@ -17,8 +17,24 @@ HWND HWNDForWidget(Widget* widget) {
   return widget->GetNativeView();
 }
 
+HWND HWNDForNativeView(gfx::NativeView view) {
+  return view;
+}
+
 HWND HWNDForNativeWindow(gfx::NativeWindow window) {
   return window;
 }
 
+gfx::Rect GetWindowBoundsForClientBounds(View* view,
+                                         const gfx::Rect& client_bounds,
+                                         BOOL has_menu) {
+  DCHECK(view);
+  HWND hwnd = view->GetWidget()->GetNativeWindow();
+  RECT rect = client_bounds.ToRECT();
+  DWORD style = ::GetWindowLong(hwnd, GWL_STYLE);
+  DWORD ex_style = ::GetWindowLong(hwnd, GWL_EXSTYLE);
+  AdjustWindowRectEx(&rect, style, has_menu, ex_style);
+  return gfx::Rect(rect);
 }
+
+}  // namespace views

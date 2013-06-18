@@ -11,6 +11,7 @@
 enum IPCMessageStart {
   AutomationMsgStart = 0,
   ViewMsgStart,
+  InputMsgStart,
   PluginMsgStart,
   ProfileImportMsgStart,
   TestMsgStart,
@@ -52,7 +53,7 @@ enum IPCMessageStart {
   ExtensionMsgStart,
   VideoCaptureMsgStart,
   QuotaMsgStart,
-  IconMsgStart,
+  ImageMsgStart,
   TextInputClientMsgStart,
   ChromeUtilityMsgStart,
   MediaStreamMsgStart,
@@ -75,6 +76,10 @@ enum IPCMessageStart {
   PeerConnectionTrackerMsgStart,
   VisitedLinkMsgStart,
   OneClickSigninMsgStart,
+  AppShimMsgStart,
+  ValidationMessageMsgStart,
+  WebRtcLoggingMsgStart,
+  TtsMsgStart,
   LastIPCMsgStart      // Must come last.
 };
 

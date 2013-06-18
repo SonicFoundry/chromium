@@ -69,6 +69,7 @@ class CONTENT_EXPORT WebContentsViewGtk
   virtual void SetPageTitle(const string16& title) OVERRIDE;
   virtual void RenderViewCreated(RenderViewHost* host) OVERRIDE;
   virtual void RenderViewSwappedIn(RenderViewHost* host) OVERRIDE;
+  virtual void SetOverscrollControllerEnabled(bool enabled) OVERRIDE;
 
   // Backend implementation of RenderViewHostDelegateView.
   virtual void ShowContextMenu(
@@ -96,6 +97,10 @@ class CONTENT_EXPORT WebContentsViewGtk
   // this will be perfectly happy to insert overlapping render views, so care
   // should be taken that the correct one is hidden/shown.
   void InsertIntoContentArea(GtkWidget* widget);
+
+  // Replaces, or updates, the existing WebDragDestGtk with one for |new_host|.
+  // This must be called when swapping in, or creating a swapped in, RVH.
+  void UpdateDragDest(RenderViewHost* new_host);
 
   // Handle focus traversal on the render widget native view. Can be overridden
   // by subclasses.

@@ -119,7 +119,7 @@ class TestWebKitPlatformSupport :
   virtual void sampleGamepads(WebKit::WebGamepads& data);
   void setGamepadData(const WebKit::WebGamepads& data);
 
-  virtual string16 GetLocalizedString(int message_id) OVERRIDE;
+  virtual base::string16 GetLocalizedString(int message_id) OVERRIDE;
   virtual base::StringPiece GetDataResource(
       int resource_id,
       ui::ScaleFactor scale_factor) OVERRIDE;
@@ -136,12 +136,6 @@ class TestWebKitPlatformSupport :
       WebKit::WebMediaStreamCenterClient* client);
   virtual WebKit::WebRTCPeerConnectionHandler* createRTCPeerConnectionHandler(
       WebKit::WebRTCPeerConnectionHandlerClient* client);
-  virtual bool canHyphenate(const WebKit::WebString& locale);
-  virtual size_t computeLastHyphenLocation(
-      const char16* characters,
-      size_t length,
-      size_t before_index,
-      const WebKit::WebString& locale);
 
   virtual WebKit::WebGestureCurve* createFlingAnimationCurve(
       int device_source,

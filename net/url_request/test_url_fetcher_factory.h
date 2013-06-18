@@ -13,6 +13,7 @@
 #include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/files/file_path.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/non_thread_safe.h"
@@ -90,6 +91,8 @@ class TestURLFetcher : public URLFetcher {
   virtual void SetUploadFilePath(
       const std::string& upload_content_type,
       const base::FilePath& file_path,
+      uint64 range_offset,
+      uint64 range_length,
       scoped_refptr<base::TaskRunner> file_task_runner) OVERRIDE;
   virtual void SetChunkedUpload(
       const std::string& upload_content_type) OVERRIDE;
@@ -136,8 +139,7 @@ class TestURLFetcher : public URLFetcher {
   virtual const URLRequestStatus& GetStatus() const OVERRIDE;
   virtual int GetResponseCode() const OVERRIDE;
   virtual const ResponseCookies& GetCookies() const OVERRIDE;
-  virtual bool FileErrorOccurred(
-      base::PlatformFileError* out_error_code) const OVERRIDE;
+  virtual bool FileErrorOccurred(int* out_error_code) const OVERRIDE;
   virtual void ReceivedContentWasMalformed() OVERRIDE;
   // Override response access functions to return fake data.
   virtual bool GetResponseAsString(

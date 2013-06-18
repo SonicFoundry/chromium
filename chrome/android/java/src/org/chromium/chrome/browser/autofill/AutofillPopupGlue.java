@@ -5,33 +5,36 @@
 package org.chromium.chrome.browser.autofill;
 
 import org.chromium.base.CalledByNative;
+import org.chromium.base.JNINamespace;
 import org.chromium.chrome.browser.autofill.AutofillPopup.AutofillPopupDelegate;
-import org.chromium.content.browser.ContainerViewDelegate;
-import org.chromium.ui.gfx.NativeWindow;
+import org.chromium.ui.ViewAndroid;
+import org.chromium.ui.ViewAndroidDelegate;
+import org.chromium.ui.WindowAndroid;
 
 /**
 * JNI call glue for AutofillExternalDelagate C++ and Java objects.
 */
+@JNINamespace("autofill")
 public class AutofillPopupGlue implements AutofillPopupDelegate{
     private final int mNativeAutofillPopup;
     private final AutofillPopup mAutofillPopup;
 
-    public AutofillPopupGlue(int nativeAutofillPopupViewAndroid, NativeWindow nativeWindow,
-            ContainerViewDelegate containerViewDelegate) {
+    public AutofillPopupGlue(int nativeAutofillPopupViewAndroid, WindowAndroid windowAndroid,
+            ViewAndroidDelegate containerViewDelegate) {
         mNativeAutofillPopup = nativeAutofillPopupViewAndroid;
-        mAutofillPopup = new AutofillPopup(nativeWindow, containerViewDelegate, this);
+        mAutofillPopup = new AutofillPopup(windowAndroid.getContext(), containerViewDelegate, this);
     }
 
     @CalledByNative
     private static AutofillPopupGlue create(int nativeAutofillPopupViewAndroid,
-            NativeWindow nativeWindow, ContainerViewDelegate containerViewDelegate) {
-        return new AutofillPopupGlue(nativeAutofillPopupViewAndroid, nativeWindow,
-                containerViewDelegate);
+            WindowAndroid windowAndroid, ViewAndroid viewAndroid) {
+        return new AutofillPopupGlue(nativeAutofillPopupViewAndroid, windowAndroid,
+                viewAndroid.getViewAndroidDelegate());
     }
 
     @Override
-    public void dismissed() {
-        nativeDismissed(mNativeAutofillPopup);
+    public void requestHide() {
+        nativeRequestHide(mNativeAutofillPopup);
     }
 
     @Override
@@ -40,12 +43,11 @@ public class AutofillPopupGlue implements AutofillPopupDelegate{
     }
 
     /**
-     * Dismisses the Autofill Popup, removes its anchor from the ContainerView and calls back
-     * to AutofillPopupDelegate.dismiss().
+     * Hides the Autofill Popup and removes its anchor from the ContainerView.
      */
     @CalledByNative
-    public void dismiss() {
-        mAutofillPopup.dismiss();
+    private void hide() {
+        mAutofillPopup.hide();
     }
 
     /**
@@ -53,7 +55,7 @@ public class AutofillPopupGlue implements AutofillPopupDelegate{
      * @param suggestions Autofill suggestions to be displayed.
      */
     @CalledByNative
-    public void show(AutofillSuggestion[] suggestions) {
+    private void show(AutofillSuggestion[] suggestions) {
         mAutofillPopup.show(suggestions);
     }
 
@@ -65,25 +67,31 @@ public class AutofillPopupGlue implements AutofillPopupDelegate{
      * @param height The height of the anchor.
      */
     @CalledByNative
-    public void setAnchorRect(float x, float y, float width, float height) {
+    private void setAnchorRect(float x, float y, float width, float height) {
         mAutofillPopup.setAnchorRect(x, y, width, height);
     }
 
+    // Helper methods for AutofillSuggestion
+
+    @CalledByNative
+    private static AutofillSuggestion[] createAutofillSuggestionArray(int size) {
+        return new AutofillSuggestion[size];
+    }
+
     /**
-     * Creates an Autofill Suggestion object with specified name and label.
+     * @param array AutofillSuggestion array that should get a new suggestion added.
+     * @param index Index in the array where to place a new suggestion.
      * @param name Name of the suggestion.
      * @param label Label of the suggestion.
      * @param uniqueId Unique suggestion id.
-     * @return The AutofillSuggestion object with the specified data.
      */
     @CalledByNative
-    public static AutofillSuggestion createAutofillSuggestion(String name, String label,
-            int uniqueId) {
-        return new AutofillSuggestion(name, label, uniqueId);
+    private static void addToAutofillSuggestionArray(AutofillSuggestion[] array, int index,
+            String name, String label, int uniqueId) {
+        array[index] = new AutofillSuggestion(name, label, uniqueId);
     }
 
-    private native void nativeDismissed(int nativeAutofillPopupViewAndroid);
+    private native void nativeRequestHide(int nativeAutofillPopupViewAndroid);
     private native void nativeSuggestionSelected(int nativeAutofillPopupViewAndroid,
             int listIndex);
-
 }

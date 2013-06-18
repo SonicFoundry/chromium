@@ -75,6 +75,7 @@ extern const char kOnTabCaptureStatusChanged[];
 
 // Bluetooth.
 extern const char kBluetoothOnAdapterStateChanged[];
+extern const char kBluetoothOnConnection[];
 extern const char kBluetoothOnDeviceDiscovered[];
 extern const char kBluetoothOnDeviceSearchFinished[];
 extern const char kBluetoothOnDeviceSearchResult[];
@@ -86,8 +87,8 @@ extern const char kOnPushMessage[];
 extern const char kOnCpuUpdated[];
 extern const char kOnDisplayChanged[];
 extern const char kOnStorageAvailableCapacityChanged[];
-extern const char kOnStorageAdded[];
-extern const char kOnStorageRemoved[];
+extern const char kOnStorageAttached[];
+extern const char kOnStorageDetached[];
 
 // System Indicator icon.
 extern const char kOnSystemIndicatorClicked[];
@@ -111,6 +112,13 @@ extern const char kOnNotificationButtonClicked[];
 // NetworkingPrivate
 extern const char kOnNetworksChanged[];
 extern const char kOnNetworkListChanged[];
+
+// Audio
+extern const char kOnAudioDeviceChanged[];
+
+// Runtime.
+extern const char kOnLaunched[];
+extern const char kOnRestarted[];
 
 }  // namespace event_names
 

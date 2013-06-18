@@ -5,9 +5,9 @@
 #include "net/http/http_request_headers.h"
 
 #include "base/logging.h"
-#include "base/stringprintf.h"
-#include "base/string_split.h"
 #include "base/string_util.h"
+#include "base/stringprintf.h"
+#include "base/strings/string_split.h"
 #include "base/values.h"
 #include "net/http/http_util.h"
 
@@ -85,16 +85,16 @@ void HttpRequestHeaders::SetHeader(const base::StringPiece& key,
                                    const base::StringPiece& value) {
   HeaderVector::iterator it = FindHeader(key);
   if (it != headers_.end())
-    it->value = value.as_string();
+    it->value.assign(value.data(), value.size());
   else
-    headers_.push_back(HeaderKeyValuePair(key.as_string(), value.as_string()));
+    headers_.push_back(HeaderKeyValuePair(key, value));
 }
 
 void HttpRequestHeaders::SetHeaderIfMissing(const base::StringPiece& key,
                                             const base::StringPiece& value) {
   HeaderVector::iterator it = FindHeader(key);
   if (it == headers_.end())
-    headers_.push_back(HeaderKeyValuePair(key.as_string(), value.as_string()));
+    headers_.push_back(HeaderKeyValuePair(key, value));
 }
 
 void HttpRequestHeaders::RemoveHeader(const base::StringPiece& key) {

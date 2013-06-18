@@ -159,6 +159,14 @@ class NavigationController {
     // navigated. This is currently only used in tests.
     std::string frame_name;
 
+    // Indicates that during this navigation, the session history should be
+    // cleared such that the resulting page is the first and only entry of the
+    // session history.
+    //
+    // The clearing is done asynchronously, and completes when this navigation
+    // commits.
+    bool should_clear_history_list;
+
     explicit LoadURLParams(const GURL& url);
     ~LoadURLParams();
 
@@ -368,8 +376,8 @@ class NavigationController {
   virtual void ContinuePendingReload() = 0;
 
   // Returns true if we are navigating to the URL the tab is opened with.
-  // Returns false after initial navigation has loaded in frame.
-  virtual bool IsInitialNavigation() = 0;
+  // Returns false after the initial navigation has committed.
+  virtual bool IsInitialNavigation() const = 0;
 
   // Broadcasts the NOTIFY_NAV_ENTRY_CHANGED notification for the given entry
   // (which must be at the given index). This will keep things in sync like
@@ -397,6 +405,11 @@ class NavigationController {
   // Clears all screenshots associated with navigation entries in this
   // controller. Useful to reduce memory consumption in low-memory situations.
   virtual void ClearAllScreenshots() = 0;
+
+ private:
+  // This interface should only be implemented inside content.
+  friend class NavigationControllerImpl;
+  NavigationController() {}
 };
 
 }  // namespace content

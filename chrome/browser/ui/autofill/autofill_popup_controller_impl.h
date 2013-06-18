@@ -14,9 +14,6 @@
 #include "ui/gfx/rect.h"
 #include "ui/gfx/rect_f.h"
 
-class AutofillPopupDelegate;
-class AutofillPopupView;
-
 namespace gfx {
 class Display;
 }
@@ -24,6 +21,11 @@ class Display;
 namespace ui {
 class KeyEvent;
 }
+
+namespace autofill {
+
+class AutofillPopupDelegate;
+class AutofillPopupView;
 
 // This class is a controller for an AutofillPopupView. It implements
 // AutofillPopupController to allow calls from AutofillPopupView. The
@@ -36,7 +38,7 @@ class AutofillPopupControllerImpl : public AutofillPopupController,
   // this call.
   static base::WeakPtr<AutofillPopupControllerImpl> GetOrCreate(
       base::WeakPtr<AutofillPopupControllerImpl> previous,
-      AutofillPopupDelegate* delegate,
+      base::WeakPtr<AutofillPopupDelegate> delegate,
       gfx::NativeView container_view,
       const gfx::RectF& element_bounds);
 
@@ -47,8 +49,11 @@ class AutofillPopupControllerImpl : public AutofillPopupController,
             const std::vector<int>& identifiers);
 
   // Hides the popup and destroys the controller. This also invalidates
-  // |delegate_|. Virtual for testing.
-  virtual void Hide();
+  // |delegate_|.
+  virtual void Hide() OVERRIDE;
+
+  // Invoked when the view was destroyed by by someone other than this class.
+  virtual void ViewDestroyed() OVERRIDE;
 
   // KeyboardListener implementation.
   virtual bool HandleKeyPressEvent(
@@ -57,14 +62,15 @@ class AutofillPopupControllerImpl : public AutofillPopupController,
  protected:
   FRIEND_TEST_ALL_PREFIXES(AutofillExternalDelegateBrowserTest,
                            CloseWidgetAndNoLeaking);
+  FRIEND_TEST_ALL_PREFIXES(AutofillPopupControllerUnitTest,
+                           ProperlyResetController);
 
-  AutofillPopupControllerImpl(AutofillPopupDelegate* delegate,
+  AutofillPopupControllerImpl(base::WeakPtr<AutofillPopupDelegate> delegate,
                               gfx::NativeView container_view,
                               const gfx::RectF& element_bounds);
   virtual ~AutofillPopupControllerImpl();
 
   // AutofillPopupController implementation.
-  virtual void ViewDestroyed() OVERRIDE;
   virtual void UpdateBoundsAndRedrawPopup() OVERRIDE;
   virtual void MouseHovered(int x, int y) OVERRIDE;
   virtual void MouseClicked(int x, int y) OVERRIDE;
@@ -87,7 +93,6 @@ class AutofillPopupControllerImpl : public AutofillPopupController,
   virtual const gfx::Font& subtext_font() const OVERRIDE;
 #endif
   virtual int selected_line() const OVERRIDE;
-  virtual bool delete_icon_hovered() const OVERRIDE;
 
   // Change which line is currently selected by the user.
   void SetSelectedLine(int selected_line);
@@ -110,15 +115,18 @@ class AutofillPopupControllerImpl : public AutofillPopupController,
   // Returns the height of a row depending on its type.
   int GetRowHeightFromId(int identifier) const;
 
-  // Returns true if the given |x| and |y| coordinates refer to a point that
-  // hits the delete icon in the current selected line.
-  bool DeleteIconIsUnder(int x, int y);
-
   // Returns true if the given id refers to an element that can be accepted.
   bool CanAccept(int id);
 
   // Returns true if the popup still has non-options entries to show the user.
   bool HasSuggestions();
+
+  // Set the Autofill entry values. Exposed to allow tests to set these values
+  // without showing the popup.
+  void SetValues(const std::vector<string16>& names,
+                 const std::vector<string16>& subtexts,
+                 const std::vector<string16>& icons,
+                 const std::vector<int>& identifier);
 
   AutofillPopupView* view() { return view_; }
 
@@ -133,18 +141,22 @@ class AutofillPopupControllerImpl : public AutofillPopupController,
 
   // Calculates the desired height of the popup based on its contents.
   int GetDesiredPopupHeight() const;
+
+  // Calculate the width of the row, excluding all the text. This provides
+  // the size of the row that won't be reducible (since all the text can be
+  // elided if there isn't enough space).
+  int RowWidthWithoutText(int row) const;
 #endif
 
   base::WeakPtr<AutofillPopupControllerImpl> GetWeakPtr();
 
  private:
+  // Clear the internal state of the controller. This is needed to ensure that
+  // when the popup is reused it doesn't leak values between uses.
+  void ClearState();
+
   const gfx::Rect RoundedElementBounds() const;
 #if !defined(OS_ANDROID)
-  // Calculate the width of the row, excluding all the text. This provides
-  // the size of the row that won't be reducible (since all the text can be
-  // elided if there isn't enough space).
-  int RowWidthWithoutText(int row) const;
-
   // Calculates and sets the bounds of the popup, including placing it properly
   // to prevent it from going off the screen.
   void UpdatePopupBounds();
@@ -169,7 +181,7 @@ class AutofillPopupControllerImpl : public AutofillPopupController,
       int popup_required_height) const;
 
   AutofillPopupView* view_;  // Weak reference.
-  AutofillPopupDelegate* delegate_;  // Weak reference.
+  base::WeakPtr<AutofillPopupDelegate> delegate_;
   gfx::NativeView container_view_;  // Weak reference.
 
   // The bounds of the text element that is the focus of the Autofill.
@@ -200,13 +212,9 @@ class AutofillPopupControllerImpl : public AutofillPopupController,
   // |kNoSelection| indicates that no line is currently selected.
   int selected_line_;
 
-  // Used to indicate if the delete icon within a row is currently selected.
-  bool delete_icon_hovered_;
-
-  // True if |HideInternal| has already been called.
-  bool is_hiding_;
-
   base::WeakPtrFactory<AutofillPopupControllerImpl> weak_ptr_factory_;
 };
+
+}  // namespace autofill
 
 #endif  // CHROME_BROWSER_UI_AUTOFILL_AUTOFILL_POPUP_CONTROLLER_IMPL_H_

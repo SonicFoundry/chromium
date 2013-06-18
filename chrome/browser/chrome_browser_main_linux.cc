@@ -4,11 +4,6 @@
 
 #include "chrome/browser/chrome_browser_main_linux.h"
 
-#include "base/message_loop_proxy.h"
-#include "chrome/browser/storage_monitor/media_transfer_protocol_device_observer_linux.h"
-#include "chrome/common/chrome_switches.h"
-#include "device/media_transfer_protocol/media_transfer_protocol_manager.h"
-
 #if !defined(OS_CHROMEOS)
 #include "chrome/browser/storage_monitor/storage_monitor_linux.h"
 #include "content/public/browser/browser_thread.h"
@@ -21,6 +16,7 @@
 #include "base/linux_util.h"
 #include "base/prefs/pref_service.h"
 #include "chrome/app/breakpad_linux.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/env_vars.h"
 #include "chrome/common/pref_names.h"
 
@@ -28,6 +24,7 @@
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/cros_settings_names.h"
 #include "chrome/common/chrome_version_info.h"
+#include "chromeos/chromeos_switches.h"
 #endif
 
 #endif  // defined(USE_LINUX_BREAKPAD)
@@ -64,8 +61,8 @@ bool IsCrashReportingEnabled(const PrefService* local_state) {
   bool breakpad_enabled = false;
   if (is_chrome_build) {
 #if defined(OS_CHROMEOS)
-    bool is_guest_session =
-        CommandLine::ForCurrentProcess()->HasSwitch(switches::kGuestSession);
+    bool is_guest_session = CommandLine::ForCurrentProcess()->HasSwitch(
+        chromeos::switches::kGuestSession);
     bool is_stable_channel =
         chrome::VersionInfo::GetChannel() ==
         chrome::VersionInfo::CHANNEL_STABLE;
@@ -108,13 +105,10 @@ bool IsCrashReportingEnabled(const PrefService* local_state) {
 
 ChromeBrowserMainPartsLinux::ChromeBrowserMainPartsLinux(
     const content::MainFunctionParams& parameters)
-    : ChromeBrowserMainPartsPosix(parameters),
-      initialized_media_transfer_protocol_manager_(false) {
+    : ChromeBrowserMainPartsPosix(parameters) {
 }
 
 ChromeBrowserMainPartsLinux::~ChromeBrowserMainPartsLinux() {
-  if (initialized_media_transfer_protocol_manager_)
-    device::MediaTransferProtocolManager::Shutdown();
 }
 
 void ChromeBrowserMainPartsLinux::PreProfileInit() {
@@ -133,44 +127,27 @@ void ChromeBrowserMainPartsLinux::PreProfileInit() {
 
 #if !defined(OS_CHROMEOS)
   const base::FilePath kDefaultMtabPath("/etc/mtab");
-  storage_monitor_ = new chrome::StorageMonitorLinux(kDefaultMtabPath);
-  storage_monitor_->Init();
+  storage_monitor_.reset(new chrome::StorageMonitorLinux(kDefaultMtabPath));
 #endif
-
-  if (!CommandLine::ForCurrentProcess()->HasSwitch(switches::kTestType)) {
-    scoped_refptr<base::MessageLoopProxy> loop_proxy;
-#if !defined(OS_CHROMEOS)
-    loop_proxy = content::BrowserThread::GetMessageLoopProxyForThread(
-        content::BrowserThread::FILE);
-#endif
-    device::MediaTransferProtocolManager::Initialize(loop_proxy);
-    initialized_media_transfer_protocol_manager_ = true;
-  }
 
   ChromeBrowserMainPartsPosix::PreProfileInit();
 }
 
 void ChromeBrowserMainPartsLinux::PostProfileInit() {
-  // TODO(gbillock): Make this owned by StorageMonitorLinux.
-  if (!CommandLine::ForCurrentProcess()->HasSwitch(switches::kTestType)) {
-    media_transfer_protocol_device_observer_.reset(
-        new chrome::MediaTransferProtocolDeviceObserverLinux());
-    media_transfer_protocol_device_observer_->SetNotifications(
-      chrome::StorageMonitor::GetInstance()->receiver());
-  }
+#if !defined(OS_CHROMEOS)
+  storage_monitor_->Init();
+#endif
 
   ChromeBrowserMainPartsPosix::PostProfileInit();
 }
 
 void ChromeBrowserMainPartsLinux::PostMainMessageLoopRun() {
 #if !defined(OS_CHROMEOS)
-  // Release it now. Otherwise the FILE thread would be gone when we try to
-  // release it in the dtor and Valgrind would report a leak on almost ever
+  // Delete it now. Otherwise the FILE thread would be gone when we try to
+  // release it in the dtor and Valgrind would report a leak on almost every
   // single browser_test.
-  storage_monitor_ = NULL;
+  storage_monitor_.reset();
 #endif
-
-  media_transfer_protocol_device_observer_.reset();
 
   ChromeBrowserMainPartsPosix::PostMainMessageLoopRun();
 }

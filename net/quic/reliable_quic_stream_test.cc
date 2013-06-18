@@ -32,12 +32,14 @@ class QuicReliableTestStream : public ReliableQuicStream {
     return 0;
   }
   using ReliableQuicStream::WriteData;
+  using ReliableQuicStream::CloseReadSide;
+  using ReliableQuicStream::CloseWriteSide;
 };
 
 class ReliableQuicStreamTest : public ::testing::TestWithParam<bool> {
  public:
   ReliableQuicStreamTest()
-      : connection_(new MockConnection(1, IPEndPoint())),
+      : connection_(new MockConnection(1, IPEndPoint(), false)),
         session_(connection_, true),
         stream_(1, &session_) {
   }
@@ -85,6 +87,16 @@ TEST_F(ReliableQuicStreamTest, WriteData) {
   EXPECT_CALL(session_, WriteData(_, _, _, _)).
       WillOnce(Return(QuicConsumedData(2, true)));
   stream_.OnCanWrite();
+}
+
+TEST_F(ReliableQuicStreamTest, ConnectionCloseAfterStreamClose) {
+  stream_.CloseReadSide();
+  stream_.CloseWriteSide();
+  EXPECT_EQ(QUIC_STREAM_NO_ERROR, stream_.stream_error());
+  EXPECT_EQ(QUIC_NO_ERROR, stream_.connection_error());
+  stream_.ConnectionClose(QUIC_INTERNAL_ERROR, false);
+  EXPECT_EQ(QUIC_STREAM_NO_ERROR, stream_.stream_error());
+  EXPECT_EQ(QUIC_NO_ERROR, stream_.connection_error());
 }
 
 }  // namespace

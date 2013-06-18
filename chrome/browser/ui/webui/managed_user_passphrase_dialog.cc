@@ -9,15 +9,15 @@
 
 #include "base/bind.h"
 #include "base/memory/weak_ptr.h"
+#include "base/metrics/histogram.h"
 #include "base/prefs/pref_service.h"
 #include "base/values.h"
 #include "chrome/browser/managed_mode/managed_user_passphrase.h"
-#include "chrome/browser/managed_mode/managed_user_service.h"
-#include "chrome/browser/managed_mode/managed_user_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/constrained_web_dialog_ui.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/browser/web_ui_message_handler.h"
@@ -25,6 +25,8 @@
 #include "grit/generated_resources.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/size.h"
+
+using content::UserMetricsAction;
 
 namespace {
 
@@ -52,7 +54,8 @@ class ManagedUserPassphraseDialogMessageHandler
 };
 
 ManagedUserPassphraseDialogMessageHandler
-    ::ManagedUserPassphraseDialogMessageHandler() : weak_factory_(this) {
+    ::ManagedUserPassphraseDialogMessageHandler()
+    : weak_factory_(this) {
 }
 
 void ManagedUserPassphraseDialogMessageHandler::RegisterMessages() {
@@ -83,17 +86,12 @@ void ManagedUserPassphraseDialogMessageHandler::CheckPassphrase(
   passphrase_key_generator.GenerateHashFromPassphrase(passphrase,
                                                       &encoded_passphrase_hash);
 
-  // Check if the entered passphrase is correct and possibly set the managed
-  // user into the elevated state which for example allows to modify settings.
-  ManagedUserService* managed_user_service =
-      ManagedUserServiceFactory::GetForProfile(profile);
-  if (stored_passphrase_hash == encoded_passphrase_hash) {
-    managed_user_service->SetElevated(true);
-    web_ui()->CallJavascriptFunction("passphraseCorrect");
-  } else {
-    managed_user_service->SetElevated(false);
-    web_ui()->CallJavascriptFunction("passphraseIncorrect");
-  }
+  // Check if the entered passphrase is correct and give the result back to the
+  // UI.
+  bool is_correct = stored_passphrase_hash == encoded_passphrase_hash;
+  base::FundamentalValue passphrase_correct(is_correct);
+  web_ui()->CallJavascriptFunction("passphraseResult", passphrase_correct);
+  UMA_HISTOGRAM_BOOLEAN("ManagedMode_PassphraseCorrect", is_correct);
 }
 
 }  // namespace
@@ -101,6 +99,7 @@ void ManagedUserPassphraseDialogMessageHandler::CheckPassphrase(
 ManagedUserPassphraseDialog::ManagedUserPassphraseDialog(
     content::WebContents* web_contents,
     const PassphraseCheckedCallback& callback) : callback_(callback) {
+  content::RecordAction(UserMetricsAction("ManagedMode_OpenPassphraseDialog"));
   Profile* profile =
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
   CreateDataSource(profile);
@@ -129,8 +128,8 @@ void ManagedUserPassphraseDialog::GetWebUIMessageHandlers(
 }
 
 void ManagedUserPassphraseDialog::GetDialogSize(gfx::Size* size) const {
-  const int kDialogWidth = 400;
-  const int kDialogHeight = 310;
+  const int kDialogWidth = 383;
+  const int kDialogHeight = 225;
   size->SetSize(kDialogWidth, kDialogHeight);
 }
 
@@ -143,6 +142,8 @@ void ManagedUserPassphraseDialog::OnDialogClosed(
   if (!callback_.is_null()) {
     callback_.Run(!json_retval.empty());
     callback_.Reset();
+    content::RecordAction(
+        UserMetricsAction("ManagedMode_ClosePassphraseDialog"));
   }
 }
 

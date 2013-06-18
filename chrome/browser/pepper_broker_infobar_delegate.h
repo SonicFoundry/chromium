@@ -7,7 +7,7 @@
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
-#include "chrome/browser/api/infobars/confirm_infobar_delegate.h"
+#include "chrome/browser/infobars/confirm_infobar_delegate.h"
 #include "googleurl/src/gurl.h"
 
 class HostContentSettingsMap;
@@ -32,16 +32,6 @@ class PepperBrokerInfoBarDelegate : public ConfirmInfoBarDelegate {
                      const base::FilePath& plugin_path,
                      const base::Callback<void(bool)>& callback);
 
-  // ConfirmInfoBarDelegate:
-  virtual string16 GetMessageText() const OVERRIDE;
-  virtual int GetButtons() const OVERRIDE;
-  virtual string16 GetButtonLabel(InfoBarButton button) const OVERRIDE;
-  virtual bool Accept() OVERRIDE;
-  virtual bool Cancel() OVERRIDE;
-  virtual string16 GetLinkText() const OVERRIDE;
-  virtual bool LinkClicked(WindowOpenDisposition disposition) OVERRIDE;
-  virtual gfx::Image* GetIcon() const OVERRIDE;
-
  private:
   PepperBrokerInfoBarDelegate(
       InfoBarService* infobar_service,
@@ -52,6 +42,16 @@ class PepperBrokerInfoBarDelegate : public ConfirmInfoBarDelegate {
       TabSpecificContentSettings* tab_content_settings,
       const base::Callback<void(bool)>& callback);
   virtual ~PepperBrokerInfoBarDelegate();
+
+  // ConfirmInfoBarDelegate:
+  virtual gfx::Image* GetIcon() const OVERRIDE;
+  virtual string16 GetMessageText() const OVERRIDE;
+  virtual int GetButtons() const OVERRIDE;
+  virtual string16 GetButtonLabel(InfoBarButton button) const OVERRIDE;
+  virtual bool Accept() OVERRIDE;
+  virtual bool Cancel() OVERRIDE;
+  virtual string16 GetLinkText() const OVERRIDE;
+  virtual bool LinkClicked(WindowOpenDisposition disposition) OVERRIDE;
 
   void DispatchCallback(bool result);
 

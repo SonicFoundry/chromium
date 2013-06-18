@@ -21,21 +21,19 @@ BrowserPpapiHost* BrowserPpapiHost::CreateExternalPluginProcess(
     IPC::ChannelProxy* channel,
     net::HostResolver* host_resolver,
     int render_process_id,
-    int render_view_id) {
-  // TODO(raymes): Figure out how to plumb plugin_name and
-  // profile_data_directory through for NaCl. They are currently only needed for
-  // PPB_Flash_File interfaces so it doesn't matter.
+    int render_view_id,
+    const base::FilePath& profile_directory) {
+  // TODO(raymes): Figure out how to plumb plugin_name through for NaCl. It is
+  // currently only needed for PPB_Flash_File interfaces so it doesn't matter.
   std::string plugin_name;
-  base::FilePath profile_data_directory;
   BrowserPpapiHostImpl* browser_ppapi_host =
       new BrowserPpapiHostImpl(sender, permissions, plugin_name,
-                               profile_data_directory,
-                               PROCESS_TYPE_NACL_LOADER);
+                               profile_directory,
+                               true);
   browser_ppapi_host->set_plugin_process_handle(plugin_child_process);
 
   channel->AddFilter(
-      new PepperMessageFilter(PROCESS_TYPE_NACL_LOADER,
-                              permissions,
+      new PepperMessageFilter(permissions,
                               host_resolver,
                               render_process_id,
                               render_view_id));
@@ -50,12 +48,12 @@ BrowserPpapiHostImpl::BrowserPpapiHostImpl(
     const ppapi::PpapiPermissions& permissions,
     const std::string& plugin_name,
     const base::FilePath& profile_data_directory,
-    ProcessType plugin_process_type)
+    bool external_plugin)
     : ppapi_host_(new ppapi::host::PpapiHost(sender, permissions)),
       plugin_process_handle_(base::kNullProcessHandle),
       plugin_name_(plugin_name),
       profile_data_directory_(profile_data_directory),
-      plugin_process_type_(plugin_process_type) {
+      external_plugin_(external_plugin) {
   message_filter_ = new HostMessageFilter(ppapi_host_.get());
   ppapi_host_->AddHostFactoryFilter(scoped_ptr<ppapi::host::HostFactory>(
       new ContentBrowserPepperHostFactory(this)));

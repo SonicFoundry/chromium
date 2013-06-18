@@ -9,6 +9,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/resources_util.h"
+#include "chrome/browser/search/instant_io_context.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
@@ -17,6 +18,7 @@
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "googleurl/src/gurl.h"
+#include "net/url_request/url_request.h"
 #include "ui/base/layout.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/webui/web_ui_util.h"
@@ -48,13 +50,14 @@ ThemeSource::ThemeSource(Profile* profile)
 ThemeSource::~ThemeSource() {
 }
 
-std::string ThemeSource::GetSource() {
+std::string ThemeSource::GetSource() const {
   return chrome::kChromeUIThemePath;
 }
 
 void ThemeSource::StartDataRequest(
     const std::string& path,
-    bool is_incognito,
+    int render_process_id,
+    int render_view_id,
     const content::URLDataSource::GotDataCallback& callback) {
   // Default scale factor if not specified.
   ui::ScaleFactor scale_factor;
@@ -66,8 +69,6 @@ void ThemeSource::StartDataRequest(
   if (uncached_path == kNewTabCSSPath ||
       uncached_path == kNewIncognitoTabCSSPath) {
     DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
-    DCHECK((uncached_path == kNewTabCSSPath && !is_incognito) ||
-           (uncached_path == kNewIncognitoTabCSSPath && is_incognito));
 
     callback.Run(css_bytes_);
     return;
@@ -120,6 +121,12 @@ bool ThemeSource::ShouldReplaceExistingSource() const {
   // We currently get the css_bytes_ in the ThemeSource constructor, so we need
   // to recreate the source itself when a theme changes.
   return true;
+}
+
+bool ThemeSource::ShouldServiceRequest(const net::URLRequest* request) const {
+  if (request->url().SchemeIs(chrome::kChromeSearchScheme))
+    return InstantIOContext::ShouldServiceRequest(request);
+  return URLDataSource::ShouldServiceRequest(request);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

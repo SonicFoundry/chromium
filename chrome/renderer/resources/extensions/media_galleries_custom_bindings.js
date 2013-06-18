@@ -2,16 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Custom bindings for the Media Gallery API.
+// Custom binding for the Media Gallery API.
+
+var binding = require('binding').Binding.create('mediaGalleries');
 
 var mediaGalleriesNatives = requireNative('mediaGalleries');
 
-var chromeHidden = requireNative('chrome_hidden').GetChromeHidden();
-
 var mediaGalleriesMetadata = {};
 
-chromeHidden.registerCustomHook('mediaGalleries',
-                                function(bindingsAPI, extensionId) {
+binding.registerCustomHook(function(bindingsAPI, extensionId) {
   var apiFunctions = bindingsAPI.apiFunctions;
 
   // getMediaFileSystems uses a custom callback so that it can instantiate and
@@ -24,13 +23,10 @@ chromeHidden.registerCustomHook('mediaGalleries',
       result = [];
       for (var i = 0; i < response.length; i++) {
         var filesystem = mediaGalleriesNatives.GetMediaFileSystemObject(
-            response[i].fsid, response[i].name);
+            response[i].fsid);
         result.push(filesystem);
         var metadata = response[i];
         delete metadata.fsid;
-        // TODO(vandebo) Until we remove the JSON name string (one release), we
-        // need to pull out the real name part for metadata.
-        metadata.name = JSON.parse(metadata.name).name;
         mediaGalleriesMetadata[filesystem.name] = metadata;
       }
     }
@@ -48,3 +44,5 @@ chromeHidden.registerCustomHook('mediaGalleries',
     return {};
   });
 });
+
+exports.binding = binding.generate();

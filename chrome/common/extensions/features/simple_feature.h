@@ -30,8 +30,9 @@ class SimpleFeature : public Feature {
 
   // Parses the JSON representation of a feature into the fields of this object.
   // Unspecified values in the JSON are not modified in the object. This allows
-  // us to implement inheritance by parsing one value after another.
-  void Parse(const DictionaryValue* value);
+  // us to implement inheritance by parsing one value after another. Returns
+  // the error found, or an empty string on success.
+  virtual std::string Parse(const DictionaryValue* value);
 
   // Returns true if the feature contains the same values as another.
   bool Equals(const SimpleFeature& other) const;
@@ -54,7 +55,17 @@ class SimpleFeature : public Feature {
 
   Availability IsAvailableToContext(const Extension* extension,
                                     Context context) const {
-    return IsAvailableToContext(extension, context, GetCurrentPlatform());
+    return IsAvailableToContext(extension, context, GURL());
+  }
+  Availability IsAvailableToContext(const Extension* extension,
+                                    Context context,
+                                    Platform platform) const {
+    return IsAvailableToContext(extension, context, GURL(), platform);
+  }
+  Availability IsAvailableToContext(const Extension* extension,
+                                    Context context,
+                                    const GURL& url) const {
+    return IsAvailableToContext(extension, context, url, GetCurrentPlatform());
   }
 
   // extension::Feature:
@@ -66,18 +77,25 @@ class SimpleFeature : public Feature {
 
   virtual Availability IsAvailableToContext(const Extension* extension,
                                             Context context,
+                                            const GURL& url,
                                             Platform platform) const OVERRIDE;
 
-  virtual std::string GetAvailabilityMessage(
-      AvailabilityResult result, Manifest::Type type) const OVERRIDE;
+  virtual std::string GetAvailabilityMessage(AvailabilityResult result,
+                                             Manifest::Type type,
+                                             const GURL& url) const OVERRIDE;
 
   virtual std::set<Context>* GetContexts() OVERRIDE;
+
+  virtual bool IsInternal() const OVERRIDE;
+
+  virtual bool IsIdInWhitelist(const std::string& extension_id) const OVERRIDE;
 
  protected:
   Availability CreateAvailability(AvailabilityResult result) const;
   Availability CreateAvailability(AvailabilityResult result,
                                   Manifest::Type type) const;
-  bool IsIdInWhitelist(const std::string& extension_id) const;
+  Availability CreateAvailability(AvailabilityResult result,
+                                  const GURL& url) const;
 
  private:
   // For clarity and consistency, we handle the default value of each of these
@@ -87,6 +105,7 @@ class SimpleFeature : public Feature {
   std::set<std::string> whitelist_;
   std::set<Manifest::Type> extension_types_;
   std::set<Context> contexts_;
+  URLPatternSet matches_;
   Location location_;  // we only care about component/not-component now
   Platform platform_;  // we only care about chromeos/not-chromeos now
   int min_manifest_version_;

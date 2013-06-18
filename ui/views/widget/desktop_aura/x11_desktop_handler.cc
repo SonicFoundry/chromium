@@ -13,7 +13,7 @@
 
 #if !defined(OS_CHROMEOS)
 #include "ui/views/ime/input_method.h"
-#include "ui/views/widget/desktop_aura/desktop_root_window_host_linux.h"
+#include "ui/views/widget/desktop_aura/desktop_root_window_host_x11.h"
 #endif
 
 namespace {
@@ -59,6 +59,8 @@ X11DesktopHandler::~X11DesktopHandler() {
 }
 
 void X11DesktopHandler::ActivateWindow(::Window window) {
+  DCHECK_EQ(base::MessagePumpAuraX11::GetDefaultXDisplay(), xdisplay_);
+
   XEvent xclient;
   memset(&xclient, 0, sizeof(xclient));
   xclient.type = ClientMessage;
@@ -110,13 +112,13 @@ void X11DesktopHandler::OnWillDestroyEnv() {
 }
 
 void X11DesktopHandler::OnActiveWindowChanged(::Window xid) {
-  DesktopRootWindowHostLinux* old_host =
-      views::DesktopRootWindowHostLinux::GetHostForXID(current_window_);
+  DesktopRootWindowHostX11* old_host =
+      views::DesktopRootWindowHostX11::GetHostForXID(current_window_);
   if (old_host)
     old_host->HandleNativeWidgetActivationChanged(false);
 
-  DesktopRootWindowHostLinux* new_host =
-      views::DesktopRootWindowHostLinux::GetHostForXID(xid);
+  DesktopRootWindowHostX11* new_host =
+      views::DesktopRootWindowHostX11::GetHostForXID(xid);
   if (new_host)
     new_host->HandleNativeWidgetActivationChanged(true);
 

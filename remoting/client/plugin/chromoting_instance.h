@@ -34,11 +34,14 @@
 #include "remoting/client/plugin/pepper_input_handler.h"
 #include "remoting/client/plugin/pepper_plugin_thread_delegate.h"
 #include "remoting/proto/event.pb.h"
+#include "remoting/protocol/client_stub.h"
 #include "remoting/protocol/clipboard_stub.h"
 #include "remoting/protocol/connection_to_host.h"
 #include "remoting/protocol/cursor_shape_stub.h"
 #include "remoting/protocol/input_event_tracker.h"
 #include "remoting/protocol/mouse_input_filter.h"
+#include "remoting/protocol/negotiating_client_authenticator.h"
+#include "remoting/protocol/third_party_client_authenticator.h"
 
 namespace base {
 class DictionaryValue;
@@ -56,6 +59,7 @@ class ChromotingStats;
 class ClientContext;
 class FrameConsumerProxy;
 class PepperAudioPlayer;
+class PepperTokenFetcher;
 class PepperView;
 class PepperXmppProxy;
 class RectangleUpdateDecoder;
@@ -76,6 +80,14 @@ class ChromotingInstance :
   // Plugin API features. This allows orthogonal features to be supported
   // without bumping the API version.
   static const char kApiFeatures[];
+
+  // Capabilities supported by the plugin that should also be supported by the
+  // webapp to be enabled.
+  static const char kRequestedCapabilities[];
+
+  // Capabilities supported by the plugin that do not need to be supported by
+  // the webapp to be enabled.
+  static const char kSupportedCapabilities[];
 
   // Backward-compatibility version used by for the messaging
   // interface. Should be updated whenever we remove support for
@@ -105,8 +117,11 @@ class ChromotingInstance :
   virtual void OnConnectionState(protocol::ConnectionToHost::State state,
                                  protocol::ErrorCode error) OVERRIDE;
   virtual void OnConnectionReady(bool ready) OVERRIDE;
+  virtual void SetCapabilities(const std::string& capabilities) OVERRIDE;
   virtual protocol::ClipboardStub* GetClipboardStub() OVERRIDE;
   virtual protocol::CursorShapeStub* GetCursorShapeStub() OVERRIDE;
+  virtual scoped_ptr<protocol::ThirdPartyClientAuthenticator::TokenFetcher>
+  GetTokenFetcher(const std::string& host_public_key) OVERRIDE;
 
   // protocol::ClipboardStub interface.
   virtual void InjectClipboardEvent(
@@ -119,20 +134,6 @@ class ChromotingInstance :
   // Called by PepperView.
   void SetDesktopSize(const SkISize& size, const SkIPoint& dpi);
   void OnFirstFrameReceived();
-
-  // Message handlers for messages that come from JavaScript. Called
-  // from HandleMessage().
-  void Connect(const ClientConfig& config);
-  void Disconnect();
-  void OnIncomingIq(const std::string& iq);
-  void ReleaseAllKeys();
-  void InjectKeyEvent(const protocol::KeyEvent& event);
-  void RemapKey(uint32 in_usb_keycode, uint32 out_usb_keycode);
-  void TrapKey(uint32 usb_keycode, bool trap);
-  void SendClipboardItem(const std::string& mime_type, const std::string& item);
-  void NotifyClientResolution(int width, int height, int x_dpi, int y_dpi);
-  void PauseVideo(bool pause);
-  void PauseAudio(bool pause);
 
   // Return statistics record by ChromotingClient.
   // If no connection is currently active then NULL will be returned.
@@ -160,8 +161,38 @@ class ChromotingInstance :
   static bool LogToUI(int severity, const char* file, int line,
                       size_t message_start, const std::string& str);
 
+  // Requests the webapp to fetch a third-party token.
+  void FetchThirdPartyToken(
+      const GURL& token_url,
+      const std::string& host_public_key,
+      const std::string& scope,
+      const base::WeakPtr<PepperTokenFetcher> pepper_token_fetcher);
+
  private:
   FRIEND_TEST_ALL_PREFIXES(ChromotingInstanceTest, TestCaseSetup);
+
+  // Used as the |FetchSecretCallback| for IT2Me (or Me2Me from old webapps).
+  // Immediately calls |secret_fetched_callback| with |shared_secret|.
+  static void FetchSecretFromString(
+      const std::string& shared_secret,
+      const protocol::SecretFetchedCallback& secret_fetched_callback);
+
+  // Message handlers for messages that come from JavaScript. Called
+  // from HandleMessage().
+  void Connect(const ClientConfig& config);
+  void Disconnect();
+  void OnIncomingIq(const std::string& iq);
+  void ReleaseAllKeys();
+  void InjectKeyEvent(const protocol::KeyEvent& event);
+  void RemapKey(uint32 in_usb_keycode, uint32 out_usb_keycode);
+  void TrapKey(uint32 usb_keycode, bool trap);
+  void SendClipboardItem(const std::string& mime_type, const std::string& item);
+  void NotifyClientResolution(int width, int height, int x_dpi, int y_dpi);
+  void PauseVideo(bool pause);
+  void PauseAudio(bool pause);
+  void OnPinFetched(const std::string& pin);
+  void OnThirdPartyTokenFetched(const std::string& token,
+                                const std::string& shared_secret);
 
   // Helper method to post messages to the webapp.
   void PostChromotingMessage(const std::string& method,
@@ -182,6 +213,11 @@ class ChromotingInstance :
 
   // Returns true if there is a ConnectionToHost and it is connected.
   bool IsConnected();
+
+  // Used as the |FetchSecretCallback| for Me2Me connections.
+  // Uses the PIN request dialog in the webapp to obtain the shared secret.
+  void FetchSecretFromDialog(
+      const protocol::SecretFetchedCallback& secret_fetched_callback);
 
   bool initialized_;
 
@@ -209,6 +245,12 @@ class ChromotingInstance :
   // jingle_glue objects. This is used when if we start a sandboxed jingle
   // connection.
   scoped_refptr<PepperXmppProxy> xmpp_proxy_;
+
+  // PIN Fetcher.
+  bool use_async_pin_dialog_;
+  protocol::SecretFetchedCallback secret_fetched_callback_;
+
+  base::WeakPtr<PepperTokenFetcher> pepper_token_fetcher_;
 
   base::WeakPtrFactory<ChromotingInstance> weak_factory_;
 

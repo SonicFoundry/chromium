@@ -138,7 +138,8 @@ void WebContentsViewMac::StartDragging(
 
   // The drag invokes a nested event loop, arrange to continue
   // processing events.
-  MessageLoop::ScopedNestableTaskAllower allow(MessageLoop::current());
+  base::MessageLoop::ScopedNestableTaskAllower allow(
+      base::MessageLoop::current());
   NSDragOperation mask = static_cast<NSDragOperation>(allowed_operations);
   NSPoint offset = NSPointFromCGPoint(
       gfx::PointAtOffsetFromOrigin(image_offset).ToCGPoint());
@@ -166,8 +167,11 @@ void WebContentsViewMac::SizeContents(const gfx::Size& size) {
 }
 
 void WebContentsViewMac::Focus() {
-  [[cocoa_view_.get() window] makeFirstResponder:GetContentNativeView()];
-  [[cocoa_view_.get() window] makeKeyAndOrderFront:GetContentNativeView()];
+  NSWindow* window = [cocoa_view_.get() window];
+  [window makeFirstResponder:GetContentNativeView()];
+  if (![window isVisible])
+    return;
+  [window makeKeyAndOrderFront:nil];
 }
 
 void WebContentsViewMac::SetInitialFocus() {
@@ -339,6 +343,9 @@ void WebContentsViewMac::RenderViewCreated(RenderViewHost* host) {
 void WebContentsViewMac::RenderViewSwappedIn(RenderViewHost* host) {
 }
 
+void WebContentsViewMac::SetOverscrollControllerEnabled(bool enabled) {
+}
+
 bool WebContentsViewMac::IsEventTracking() const {
   return base::MessagePumpMac::IsHandlingSendEvent();
 }
@@ -477,7 +484,7 @@ void WebContentsViewMac::CloseTab() {
 // Returns what kind of drag operations are available. This is a required
 // method for NSDraggingSource.
 - (NSDragOperation)draggingSourceOperationMaskForLocal:(BOOL)isLocal {
-  if (dragSource_.get())
+  if (dragSource_)
     return [dragSource_ draggingSourceOperationMaskForLocal:isLocal];
   // No web drag source - this is the case for dragging a file from the
   // downloads manager. Default to copy operation. Note: It is desirable to

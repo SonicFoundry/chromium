@@ -13,13 +13,11 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop.h"
 #include "base/string_number_conversions.h"
-#include "base/string_split.h"
 #include "base/string_util.h"
 #include "base/stringprintf.h"
+#include "base/strings/string_split.h"
 #include "base/time.h"
 #include "net/base/address_list.h"
-#include "net/base/host_cache.h"
-#include "net/base/host_resolver_impl.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_log.h"
@@ -27,6 +25,8 @@
 #include "net/dns/dns_client.h"
 #include "net/dns/dns_config_service.h"
 #include "net/dns/dns_protocol.h"
+#include "net/dns/host_cache.h"
+#include "net/dns/host_resolver_impl.h"
 #include "net/tools/gdig/file_net_log.h"
 
 #if defined(OS_MACOSX)

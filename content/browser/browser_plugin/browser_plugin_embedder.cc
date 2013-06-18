@@ -4,14 +4,15 @@
 
 #include "content/browser/browser_plugin/browser_plugin_embedder.h"
 
-#include "base/command_line.h"
-#include "base/stl_util.h"
 #include "content/browser/browser_plugin/browser_plugin_guest.h"
+#include "content/browser/browser_plugin/browser_plugin_guest_manager.h"
 #include "content/browser/browser_plugin/browser_plugin_host_factory.h"
-#include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
-#include "content/common/browser_plugin_messages.h"
+#include "content/common/browser_plugin/browser_plugin_constants.h"
+#include "content/common/browser_plugin/browser_plugin_messages.h"
+#include "content/common/drag_messages.h"
 #include "content/common/gpu/gpu_messages.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
@@ -23,13 +24,9 @@ namespace content {
 // static
 BrowserPluginHostFactory* BrowserPluginEmbedder::factory_ = NULL;
 
-BrowserPluginEmbedder::BrowserPluginEmbedder(
-    WebContentsImpl* web_contents,
-    RenderViewHost* render_view_host)
+BrowserPluginEmbedder::BrowserPluginEmbedder(WebContentsImpl* web_contents)
     : WebContentsObserver(web_contents),
-      render_view_host_(render_view_host),
-      next_get_render_view_request_id_(0),
-      next_instance_id_(0) {
+      next_get_render_view_request_id_(0) {
 }
 
 BrowserPluginEmbedder::~BrowserPluginEmbedder() {
@@ -38,108 +35,32 @@ BrowserPluginEmbedder::~BrowserPluginEmbedder() {
 
 // static
 BrowserPluginEmbedder* BrowserPluginEmbedder::Create(
-    WebContentsImpl* web_contents,
-    content::RenderViewHost* render_view_host) {
-  if (factory_) {
-    return factory_->CreateBrowserPluginEmbedder(web_contents,
-                                                 render_view_host);
-  }
-  return new BrowserPluginEmbedder(web_contents, render_view_host);
+    WebContentsImpl* web_contents) {
+  if (factory_)
+    return factory_->CreateBrowserPluginEmbedder(web_contents);
+  return new BrowserPluginEmbedder(web_contents);
 }
 
-void BrowserPluginEmbedder::CreateGuest(
-    int instance_id,
-    int routing_id,
-    BrowserPluginGuest* guest_opener,
-    const BrowserPluginHostMsg_CreateGuest_Params& params) {
-  SiteInstance* guest_site_instance = NULL;
-  BrowserPluginGuest* guest = GetGuestByInstanceID(instance_id);
-  CHECK(!guest);
-
-  // Validate that the partition id coming from the renderer is valid UTF-8,
-  // since we depend on this in other parts of the code, such as FilePath
-  // creation. If the validation fails, treat it as a bad message and kill the
-  // renderer process.
-  if (!IsStringUTF8(params.storage_partition_id)) {
-    content::RecordAction(UserMetricsAction("BadMessageTerminate_BPE"));
-    base::KillProcess(render_view_host_->GetProcess()->GetHandle(),
-                      content::RESULT_CODE_KILLED_BAD_MESSAGE, false);
-    return;
-  }
-
-  const CommandLine& command_line = *CommandLine::ForCurrentProcess();
-  if (command_line.HasSwitch(switches::kSitePerProcess)) {
-    // When --site-per-process is specified, the behavior of BrowserPlugin
-    // as <webview> is broken and we use it for rendering out-of-process
-    // iframes instead. We use the src URL sent by the renderer to find the
-    // right process in which to place this instance.
-    // Note: Since BrowserPlugin doesn't support cross-process navigation,
-    // the instance will stay in the initially assigned process, regardless
-    // of the site it is navigated to.
-    // TODO(nasko): Fix this, and such that cross-process navigations are
-    // supported.
-    guest_site_instance =
-        web_contents()->GetSiteInstance()->GetRelatedSiteInstance(
-            GURL(params.src));
-  } else {
-    const std::string& host =
-        render_view_host_->GetSiteInstance()->GetSiteURL().host();
-    std::string url_encoded_partition = net::EscapeQueryParamValue(
-        params.storage_partition_id, false);
-
-    if (guest_opener) {
-      guest_site_instance = guest_opener->GetWebContents()->GetSiteInstance();
-    } else {
-      // The SiteInstance of a given webview tag is based on the fact that it's
-      // a guest process in addition to which platform application the tag
-      // belongs to and what storage partition is in use, rather than the URL
-      // that the tag is being navigated to.
-      GURL guest_site(
-          base::StringPrintf("%s://%s/%s?%s", chrome::kGuestScheme,
-                             host.c_str(),
-                             params.persist_storage ? "persist" : "",
-                             url_encoded_partition.c_str()));
-
-      // If we already have a webview tag in the same app using the same storage
-      // partition, we should use the same SiteInstance so the existing tag and
-      // the new tag can script each other.
-      for (ContainerInstanceMap::const_iterator it =
-           guest_web_contents_by_instance_id_.begin();
-           it != guest_web_contents_by_instance_id_.end(); ++it) {
-        if (it->second->GetSiteInstance()->GetSiteURL() == guest_site) {
-          guest_site_instance = it->second->GetSiteInstance();
-          break;
-        }
-      }
-      if (!guest_site_instance) {
-        // Create the SiteInstance in a new BrowsingInstance, which will ensure
-        // that webview tags are also not allowed to send messages across
-        // different partitions.
-        guest_site_instance = SiteInstance::CreateForURL(
-            web_contents()->GetBrowserContext(), guest_site);
-      }
-    }
-  }
-
-  WebContentsImpl* opener_web_contents = static_cast<WebContentsImpl*>(
-      guest_opener ? guest_opener->GetWebContents() : NULL);
-  WebContentsImpl::CreateGuest(
-      web_contents()->GetBrowserContext(),
-      guest_site_instance,
-      routing_id,
-      static_cast<WebContentsImpl*>(web_contents()),
-      opener_web_contents,
-      instance_id,
-      params);
+void BrowserPluginEmbedder::DragEnteredGuest(BrowserPluginGuest* guest) {
+  guest_dragging_over_ = guest->AsWeakPtr();
 }
 
-BrowserPluginGuest* BrowserPluginEmbedder::GetGuestByInstanceID(
-    int instance_id) const {
-  ContainerInstanceMap::const_iterator it =
-      guest_web_contents_by_instance_id_.find(instance_id);
-  if (it != guest_web_contents_by_instance_id_.end())
-    return static_cast<WebContentsImpl*>(it->second)->GetBrowserPluginGuest();
-  return NULL;
+void BrowserPluginEmbedder::DragLeftGuest(BrowserPluginGuest* guest) {
+  // Avoid race conditions in switching between guests being hovered over by
+  // only un-setting if the caller is marked as the guest being dragged over.
+  if (guest_dragging_over_ == guest) {
+    guest_dragging_over_.reset();
+  }
+}
+
+void BrowserPluginEmbedder::StartDrag(BrowserPluginGuest* guest) {
+  guest_started_drag_ = guest->AsWeakPtr();
+}
+
+void BrowserPluginEmbedder::StopDrag(BrowserPluginGuest* guest) {
+  if (guest_started_drag_ == guest) {
+    guest_started_drag_.reset();
+  }
 }
 
 void BrowserPluginEmbedder::GetRenderViewHostAtPosition(
@@ -147,16 +68,11 @@ void BrowserPluginEmbedder::GetRenderViewHostAtPosition(
   // Store the callback so we can call it later when we have the response.
   pending_get_render_view_callbacks_.insert(
       std::make_pair(next_get_render_view_request_id_, callback));
-  render_view_host_->Send(
-      new BrowserPluginMsg_PluginAtPositionRequest(
-          render_view_host_->GetRoutingID(),
-          next_get_render_view_request_id_,
-          gfx::Point(x, y)));
+  Send(new BrowserPluginMsg_PluginAtPositionRequest(
+      routing_id(),
+      next_get_render_view_request_id_,
+      gfx::Point(x, y)));
   ++next_get_render_view_request_id_;
-}
-
-void BrowserPluginEmbedder::RenderViewDeleted(
-    RenderViewHost* render_view_host) {
 }
 
 void BrowserPluginEmbedder::RenderViewGone(base::TerminationStatus status) {
@@ -164,42 +80,49 @@ void BrowserPluginEmbedder::RenderViewGone(base::TerminationStatus status) {
 }
 
 bool BrowserPluginEmbedder::OnMessageReceived(const IPC::Message& message) {
-  if (ShouldForwardToBrowserPluginGuest(message)) {
-    int instance_id = 0;
-    // All allowed messages must have instance_id as their first parameter.
-    PickleIterator iter(message);
-    bool success = iter.ReadInt(&instance_id);
-    DCHECK(success);
-    BrowserPluginGuest* guest = GetGuestByInstanceID(instance_id);
-    if (guest && guest->OnMessageReceivedFromEmbedder(message))
-      return true;
-  }
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(BrowserPluginEmbedder, message)
     IPC_MESSAGE_HANDLER(BrowserPluginHostMsg_AllocateInstanceID,
                         OnAllocateInstanceID)
-    IPC_MESSAGE_HANDLER(BrowserPluginHostMsg_CreateGuest,
-                        OnCreateGuest)
+    IPC_MESSAGE_HANDLER(BrowserPluginHostMsg_Attach, OnAttach)
     IPC_MESSAGE_HANDLER(BrowserPluginHostMsg_PluginAtPositionResponse,
                         OnPluginAtPositionResponse)
-    IPC_MESSAGE_HANDLER(BrowserPluginHostMsg_BuffersSwappedACK,
-                        OnUnhandledSwapBuffersACK)
+    IPC_MESSAGE_HANDLER_GENERIC(DragHostMsg_UpdateDragCursor,
+                                OnUpdateDragCursor(&handled));
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
 }
 
-void BrowserPluginEmbedder::AddGuest(int instance_id,
-                                     WebContents* guest_web_contents) {
-  DCHECK(guest_web_contents_by_instance_id_.find(instance_id) ==
-         guest_web_contents_by_instance_id_.end());
-  guest_web_contents_by_instance_id_[instance_id] = guest_web_contents;
+void BrowserPluginEmbedder::DragSourceEndedAt(int client_x, int client_y,
+    int screen_x, int screen_y, WebKit::WebDragOperation operation) {
+  if (guest_started_drag_) {
+    gfx::Point guest_offset =
+        guest_started_drag_->GetScreenCoordinates(gfx::Point());
+    guest_started_drag_->DragSourceEndedAt(client_x - guest_offset.x(),
+        client_y - guest_offset.y(), screen_x, screen_y, operation);
+  }
 }
 
-void BrowserPluginEmbedder::RemoveGuest(int instance_id) {
-  DCHECK(guest_web_contents_by_instance_id_.find(instance_id) !=
-         guest_web_contents_by_instance_id_.end());
-  guest_web_contents_by_instance_id_.erase(instance_id);
+void BrowserPluginEmbedder::DragSourceMovedTo(int client_x, int client_y,
+                                              int screen_x, int screen_y) {
+  if (guest_started_drag_) {
+    gfx::Point guest_offset =
+        guest_started_drag_->GetScreenCoordinates(gfx::Point());
+    guest_started_drag_->DragSourceMovedTo(client_x - guest_offset.x(),
+        client_y - guest_offset.y(), screen_x, screen_y);
+  }
+}
+
+void BrowserPluginEmbedder::SystemDragEnded() {
+  if (guest_started_drag_ && (guest_started_drag_ != guest_dragging_over_))
+    guest_started_drag_->EndSystemDrag();
+  guest_started_drag_.reset();
+  guest_dragging_over_.reset();
+}
+
+void BrowserPluginEmbedder::OnUpdateDragCursor(bool* handled) {
+  *handled = (guest_dragging_over_ != NULL);
 }
 
 void BrowserPluginEmbedder::CleanUp() {
@@ -209,45 +132,44 @@ void BrowserPluginEmbedder::CleanUp() {
   pending_get_render_view_callbacks_.clear();
 }
 
-// static
-bool BrowserPluginEmbedder::ShouldForwardToBrowserPluginGuest(
-    const IPC::Message& message) {
-  switch (message.type()) {
-    case BrowserPluginHostMsg_BuffersSwappedACK::ID:
-    case BrowserPluginHostMsg_DragStatusUpdate::ID:
-    case BrowserPluginHostMsg_Go::ID:
-    case BrowserPluginHostMsg_HandleInputEvent::ID:
-    case BrowserPluginHostMsg_NavigateGuest::ID:
-    case BrowserPluginHostMsg_PluginDestroyed::ID:
-    case BrowserPluginHostMsg_Reload::ID:
-    case BrowserPluginHostMsg_ResizeGuest::ID:
-    case BrowserPluginHostMsg_RespondPermission::ID:
-    case BrowserPluginHostMsg_SetAutoSize::ID:
-    case BrowserPluginHostMsg_SetFocus::ID:
-    case BrowserPluginHostMsg_SetName::ID:
-    case BrowserPluginHostMsg_SetVisibility::ID:
-    case BrowserPluginHostMsg_Stop::ID:
-    case BrowserPluginHostMsg_TerminateGuest::ID:
-    case BrowserPluginHostMsg_UpdateRect_ACK::ID:
-    case BrowserPluginHostMsg_LockMouse_ACK::ID:
-    case BrowserPluginHostMsg_UnlockMouse_ACK::ID:
-      return true;
-    default:
-      break;
+BrowserPluginGuestManager*
+    BrowserPluginEmbedder::GetBrowserPluginGuestManager() {
+  BrowserPluginGuestManager* guest_manager = static_cast<WebContentsImpl*>(
+      web_contents())->GetBrowserPluginGuestManager();
+  if (!guest_manager) {
+    guest_manager = BrowserPluginGuestManager::Create();
+    web_contents()->GetBrowserContext()->SetUserData(
+        browser_plugin::kBrowserPluginGuestManagerKeyName, guest_manager);
   }
-  return false;
+  return guest_manager;
 }
 
 void BrowserPluginEmbedder::OnAllocateInstanceID(int request_id) {
-  int instance_id = ++next_instance_id_;
-  render_view_host_->Send(new BrowserPluginMsg_AllocateInstanceID_ACK(
-      render_view_host_->GetRoutingID(), request_id, instance_id));
+  int instance_id = GetBrowserPluginGuestManager()->get_next_instance_id();
+  Send(new BrowserPluginMsg_AllocateInstanceID_ACK(
+      routing_id(), request_id, instance_id));
 }
 
-void BrowserPluginEmbedder::OnCreateGuest(
+void BrowserPluginEmbedder::OnAttach(
     int instance_id,
-    const BrowserPluginHostMsg_CreateGuest_Params& params) {
-  CreateGuest(instance_id, MSG_ROUTING_NONE, NULL, params);
+    const BrowserPluginHostMsg_Attach_Params& params) {
+  if (!GetBrowserPluginGuestManager()->CanEmbedderAccessInstanceIDMaybeKill(
+          web_contents()->GetRenderProcessHost()->GetID(), instance_id))
+    return;
+
+  BrowserPluginGuest* guest =
+      GetBrowserPluginGuestManager()->GetGuestByInstanceID(
+          instance_id, web_contents()->GetRenderProcessHost()->GetID());
+
+  if (guest) {
+    guest->Attach(static_cast<WebContentsImpl*>(web_contents()), params);
+    return;
+  }
+
+  guest = GetBrowserPluginGuestManager()->CreateGuest(
+      web_contents()->GetSiteInstance(), instance_id, params);
+  if (guest)
+    guest->Initialize(static_cast<WebContentsImpl*>(web_contents()), params);
 }
 
 void BrowserPluginEmbedder::OnPluginAtPositionResponse(
@@ -258,28 +180,19 @@ void BrowserPluginEmbedder::OnPluginAtPositionResponse(
     return;
 
   RenderViewHost* render_view_host;
-  BrowserPluginGuest* guest = GetGuestByInstanceID(instance_id);
+  BrowserPluginGuest* guest = NULL;
+  if (instance_id != browser_plugin::kInstanceIDNone) {
+    guest = GetBrowserPluginGuestManager()->GetGuestByInstanceID(
+                instance_id, web_contents()->GetRenderProcessHost()->GetID());
+  }
+
   if (guest)
     render_view_host = guest->GetWebContents()->GetRenderViewHost();
   else  // No plugin, use embedder's RenderViewHost.
-    render_view_host = render_view_host_;
+    render_view_host = web_contents()->GetRenderViewHost();
 
   callback_iter->second.Run(render_view_host, position.x(), position.y());
   pending_get_render_view_callbacks_.erase(callback_iter);
-}
-
-// We only get here during teardown if we have one last buffer pending,
-// otherwise the ACK is handled by the guest.
-void BrowserPluginEmbedder::OnUnhandledSwapBuffersACK(
-    int instance_id,
-    int route_id,
-    int gpu_host_id,
-    const std::string& mailbox_name,
-    uint32 sync_point) {
-  BrowserPluginGuest::AcknowledgeBufferPresent(route_id,
-                                               gpu_host_id,
-                                               mailbox_name,
-                                               sync_point);
 }
 
 }  // namespace content

@@ -35,14 +35,18 @@ An example usage (using git hashes):
 
 """
 
+import errno
 import imp
+import math
 import optparse
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
+import time
 
 import bisect_utils
 
@@ -57,39 +61,95 @@ import bisect_utils
 # depends: A list of other repositories that are actually part of the same
 #   repository in svn.
 # svn: Needed for git workflow to resolve hashes to svn revisions.
-DEPOT_DEPS_NAME = { 'webkit' : {
-                      "src" : "src/third_party/WebKit",
-                      "recurse" : True,
-                      "depends" : None
-                    },
-                    'v8' : {
-                      "src" : "src/v8",
-                      "recurse" : True,
-                      "depends" : None
-                    },
-                    'skia/src' : {
-                      "src" : "src/third_party/skia/src",
-                      "recurse" : True,
-                      "svn" : "http://skia.googlecode.com/svn/trunk/src",
-                      "depends" : ['skia/include', 'skia/gyp']
-                    },
-                    'skia/include' : {
-                      "src" : "src/third_party/skia/include",
-                      "recurse" : False,
-                      "svn" : "http://skia.googlecode.com/svn/trunk/include",
-                      "depends" : None
-                    },
-                    'skia/gyp' : {
-                      "src" : "src/third_party/skia/gyp",
-                      "recurse" : False,
-                      "svn" : "http://skia.googlecode.com/svn/trunk/gyp",
-                      "depends" : None
-                    }
-                  }
+DEPOT_DEPS_NAME = {
+  'webkit' : {
+    "src" : "src/third_party/WebKit",
+    "recurse" : True,
+    "depends" : None
+  },
+  'v8' : {
+    "src" : "src/v8",
+    "recurse" : True,
+    "depends" : None,
+    "build_with": 'v8_bleeding_edge'
+  },
+  'v8_bleeding_edge' : {
+    "src" : "src/v8_bleeding_edge",
+    "recurse" : False,
+    "depends" : None,
+    "svn": "https://v8.googlecode.com/svn/branches/bleeding_edge"
+  },
+  'skia/src' : {
+    "src" : "src/third_party/skia/src",
+    "recurse" : True,
+    "svn" : "http://skia.googlecode.com/svn/trunk/src",
+    "depends" : ['skia/include', 'skia/gyp']
+  },
+  'skia/include' : {
+    "src" : "src/third_party/skia/include",
+    "recurse" : False,
+    "svn" : "http://skia.googlecode.com/svn/trunk/include",
+    "depends" : None
+  },
+  'skia/gyp' : {
+    "src" : "src/third_party/skia/gyp",
+    "recurse" : False,
+    "svn" : "http://skia.googlecode.com/svn/trunk/gyp",
+    "depends" : None
+  }
+}
 
 DEPOT_NAMES = DEPOT_DEPS_NAME.keys()
 
-FILE_DEPS_GIT = '.DEPS.git'
+
+
+def CalculateTruncatedMean(data_set, truncate_percent):
+  """Calculates the truncated mean of a set of values.
+
+  Args:
+    data_set: Set of values to use in calculation.
+    truncate_percent: The % from the upper/lower portions of the data set to
+        discard, expressed as a value in [0, 1].
+
+  Returns:
+    The truncated mean as a float.
+  """
+  if len(data_set) > 2:
+    data_set = sorted(data_set)
+
+    discard_num_float = len(data_set) * truncate_percent
+    discard_num_int = int(math.floor(discard_num_float))
+    kept_weight = len(data_set) - discard_num_float * 2
+
+    data_set = data_set[discard_num_int:len(data_set)-discard_num_int]
+
+    weight_left = 1.0 - (discard_num_float - discard_num_int)
+
+    if weight_left < 1:
+      # If the % to discard leaves a fractional portion, need to weight those
+      # values.
+      unweighted_vals = data_set[1:len(data_set)-1]
+      weighted_vals = [data_set[0], data_set[len(data_set)-1]]
+      weighted_vals = [w * weight_left for w in weighted_vals]
+      data_set = weighted_vals + unweighted_vals
+  else:
+    kept_weight = len(data_set)
+
+  truncated_mean = reduce(lambda x, y: float(x) + float(y),
+                          data_set) / kept_weight
+
+  return truncated_mean
+
+
+def CalculateStandardDeviation(v):
+  mean = CalculateTruncatedMean(v, 0.0)
+
+  variances = [float(x) - mean for x in v]
+  variances = [x * x for x in variances]
+  variance = reduce(lambda x, y: float(x) + float(y), variances) / (len(v) - 1)
+  std_dev = math.sqrt(variance)
+
+  return std_dev
 
 
 def IsStringFloat(string_to_check):
@@ -127,6 +187,15 @@ def IsStringInt(string_to_check):
     return False
 
 
+def IsWindows():
+  """Checks whether or not the script is running on Windows.
+
+  Returns:
+    True if running on Windows.
+  """
+  return os.name == 'nt'
+
+
 def RunProcess(command, print_output=False):
   """Run an arbitrary command, returning its output and return code.
 
@@ -138,8 +207,11 @@ def RunProcess(command, print_output=False):
   Returns:
     A tuple of the output and return code.
   """
+  if print_output:
+    print 'Running: [%s]' % ' '.join(command)
+
   # On Windows, use shell=True to get PATH interpretation.
-  shell = (os.name == 'nt')
+  shell = IsWindows()
   proc = subprocess.Popen(command,
                           shell=shell,
                           stdout=subprocess.PIPE,
@@ -179,6 +251,37 @@ def RunGit(command):
   return RunProcess(command)
 
 
+def BuildWithMake(threads, targets, print_output):
+  cmd = ['make', 'BUILDTYPE=Release', '-j%d' % threads] + targets
+
+  (output, return_code) = RunProcess(cmd, print_output)
+
+  return not return_code
+
+
+def BuildWithNinja(threads, targets, print_output):
+  cmd = ['ninja', '-C', os.path.join('out', 'Release'),
+      '-j%d' % threads] + targets
+
+  (output, return_code) = RunProcess(cmd, print_output)
+
+  return not return_code
+
+
+def BuildWithVisualStudio(targets, print_output):
+  path_to_devenv = os.path.abspath(
+      os.path.join(os.environ['VS100COMNTOOLS'], '..', 'IDE', 'devenv.com'))
+  path_to_sln = os.path.join(os.getcwd(), 'chrome', 'chrome.sln')
+  cmd = [path_to_devenv, '/build', 'Release', path_to_sln]
+
+  for t in targets:
+    cmd.extend(['/Project', t])
+
+  (output, return_code) = RunProcess(cmd, print_output)
+
+  return not return_code
+
+
 class SourceControl(object):
   """SourceControl is an abstraction over the underlying source control
   system used for chromium. For now only git is supported, but in the
@@ -195,11 +298,10 @@ class SourceControl(object):
       revision: The git SHA1 or svn CL (depending on workflow).
 
     Returns:
-      A tuple of the output and return code.
+      The return code of the call.
     """
-    args = ['gclient', 'sync', '--revision', revision]
-
-    return RunProcess(args)
+    return bisect_utils.RunGClient(['sync', '--revision',
+        revision, '--verbose'])
 
 
 class GitSourceControl(SourceControl):
@@ -249,11 +351,11 @@ class GitSourceControl(SourceControl):
     if use_gclient:
       results = self.SyncToRevisionWithGClient(revision)
     else:
-      results = RunGit(['checkout', revision])
+      results = RunGit(['checkout', revision])[1]
 
-    return not results[1]
+    return not results
 
-  def ResolveToRevision(self, revision_to_check, depot, search=1):
+  def ResolveToRevision(self, revision_to_check, depot, search):
     """If an SVN revision is supplied, try to resolve it to a git SHA1.
 
     Args:
@@ -261,7 +363,8 @@ class GitSourceControl(SourceControl):
         resolved to a git SHA1.
       depot: The depot the revision_to_check is from.
       search: The number of changelists to try if the first fails to resolve
-        to a git hash.
+        to a git hash. If the value is negative, the function will search
+        backwards chronologically, otherwise it will search forward.
 
     Returns:
       A string containing a git SHA1 hash, otherwise None.
@@ -277,9 +380,13 @@ class GitSourceControl(SourceControl):
     svn_revision = int(revision_to_check)
     git_revision = None
 
-    for i in xrange(svn_revision, svn_revision - search, -1):
-      svn_pattern = 'git-svn-id: %s@%d' %\
-                    (depot_svn, i)
+    if search > 0:
+      search_range = xrange(svn_revision, svn_revision + search, 1)
+    else:
+      search_range = xrange(svn_revision, svn_revision + search, -1)
+
+    for i in search_range:
+      svn_pattern = 'git-svn-id: %s@%d' % (depot_svn, i)
       cmd = ['log', '--format=%H', '-1', '--grep', svn_pattern, 'origin/master']
 
       (log_output, return_code) = RunGit(cmd)
@@ -368,6 +475,24 @@ class GitSourceControl(SourceControl):
 
     return commit_info
 
+  def CheckoutFileAtRevision(self, file_name, revision):
+    """Performs a checkout on a file at the given revision.
+
+    Returns:
+      True if successful.
+    """
+    return not RunGit(['checkout', revision, file_name])[1]
+
+  def RevertFileToHead(self, file_name):
+    """Unstages a file and returns it to HEAD.
+
+    Returns:
+      True if successful.
+    """
+    # Reset doesn't seem to return 0 on success.
+    RunGit(['reset', 'HEAD', bisect_utils.FILE_DEPS_GIT])
+
+    return not RunGit(['checkout', bisect_utils.FILE_DEPS_GIT])[1]
 
 class BisectPerformanceMetrics(object):
   """BisectPerformanceMetrics performs a bisection against a list of range
@@ -381,12 +506,25 @@ class BisectPerformanceMetrics(object):
     self.source_control = source_control
     self.src_cwd = os.getcwd()
     self.depot_cwd = {}
+    self.cleanup_commands = []
+
+    # This always starts true since the script grabs latest first.
+    self.was_blink = True
 
     for d in DEPOT_NAMES:
       # The working directory of each depot is just the path to the depot, but
       # since we're already in 'src', we can skip that part.
 
       self.depot_cwd[d] = self.src_cwd + DEPOT_DEPS_NAME[d]['src'][3:]
+
+  def PerformCleanup(self):
+    """Performs cleanup when script is finished."""
+    os.chdir(self.src_cwd)
+    for c in self.cleanup_commands:
+      if c[0] == 'mv':
+        shutil.move(c[1], c[2])
+      else:
+        assert False, 'Invalid cleanup command.'
 
   def GetRevisionList(self, bad_revision, good_revision):
     """Retrieves a list of all the commits between the bad revision and
@@ -409,7 +547,7 @@ class BisectPerformanceMetrics(object):
 
     locals = {'Var': lambda _: locals["vars"][_],
               'From': lambda *args: None}
-    execfile(FILE_DEPS_GIT, {}, locals)
+    execfile(bisect_utils.FILE_DEPS_GIT, {}, locals)
 
     os.chdir(cwd)
 
@@ -437,40 +575,35 @@ class BisectPerformanceMetrics(object):
     Returns:
       True if the build was successful.
     """
-
     if self.opts.debug_ignore_build:
       return True
 
-    gyp_var = os.getenv('GYP_GENERATORS')
-
-    num_threads = 16
-
+    targets = ['chrome', 'performance_ui_tests']
+    threads = 16
     if self.opts.use_goma:
-      num_threads = 100
-
-    if gyp_var != None and 'ninja' in gyp_var:
-      args = ['ninja',
-              '-C',
-              'out/Release',
-              '-j%d' % num_threads,
-              'chrome',
-              'performance_ui_tests']
-    else:
-      args = ['make',
-              'BUILDTYPE=Release',
-              '-j%d' % num_threads,
-              'chrome',
-              'performance_ui_tests']
+      threads = 300
 
     cwd = os.getcwd()
     os.chdir(self.src_cwd)
 
-    (output, return_code) = RunProcess(args,
-        self.opts.output_buildbot_annotations)
+    if self.opts.build_preference == 'make':
+      build_success = BuildWithMake(threads, targets,
+          self.opts.output_buildbot_annotations)
+    elif self.opts.build_preference == 'ninja':
+      if IsWindows():
+        targets = [t + '.exe' for t in targets]
+      build_success = BuildWithNinja(threads, targets,
+          self.opts.output_buildbot_annotations)
+    elif self.opts.build_preference == 'msvs':
+      assert IsWindows(), 'msvs is only supported on Windows.'
+      build_success = BuildWithVisualStudio(targets,
+          self.opts.output_buildbot_annotations)
+    else:
+      assert False, 'No build system defined.'
 
     os.chdir(cwd)
 
-    return not return_code
+    return build_success
 
   def RunGClientHooks(self):
     """Runs gclient with runhooks command.
@@ -482,9 +615,7 @@ class BisectPerformanceMetrics(object):
     if self.opts.debug_ignore_build:
       return True
 
-    results = RunProcess(['gclient', 'runhooks'])
-
-    return not results[1]
+    return not bisect_utils.RunGClient(['runhooks'])
 
   def ParseMetricValuesFromOutput(self, metric, text):
     """Parses output from performance_ui_tests and retrieves the results for
@@ -495,11 +626,7 @@ class BisectPerformanceMetrics(object):
       text: The text to parse the metric values from.
 
     Returns:
-      A dict of lists of floating point numbers found.
-
-      {
-        'list_name':[values]
-      }
+      A list of floating point numbers found.
     """
     # Format is: RESULT <graph>: <trace>= <value> <units>
     metric_formatted = 'RESULT %s: %s=' % (metric[0], metric[1])
@@ -529,41 +656,15 @@ class BisectPerformanceMetrics(object):
           values_list += metric_values.split(',')
 
     values_list = [float(v) for v in values_list if IsStringFloat(v)]
-    values_dict = {}
 
-    # If the metric is times/t, we need to group the timings by page or the
-    # results aren't very useful.
-    # Will make the assumption that if pages are supplied, and the metric
-    # is "times/t", that the results needs to be grouped.
-    metric_re = "Pages:(\s)*\[(\s)*(?P<values>[a-zA-Z0-9-_,.]+)\]"
-    metric_re = re.compile(metric_re)
+    # If the metric is times/t, we need to sum the timings in order to get
+    # similar regression results as the try-bots.
 
-    regex_results = metric_re.search(text)
-    page_names = []
+    if metric == ['times', 't']:
+      if values_list:
+        values_list = [reduce(lambda x, y: float(x) + float(y), values_list)]
 
-    if regex_results:
-      page_names = regex_results.group('values')
-      page_names = page_names.split(',')
-
-    if not metric == ['times', 't'] or not page_names:
-      values_dict['%s: %s' % (metric[0], metric[1])] = values_list
-    else:
-      if not (len(values_list) % len(page_names)):
-        values_dict = dict([(k, []) for k in page_names])
-
-        # In the case of times/t, values_list is an array of times in the
-        # order of page_names, repeated X number of times.
-        # ie.
-        # page_names = ['www.chromium.org', 'dev.chromium.org']
-        # values_list = [1, 2, 1, 2, 1, 2]
-        num_pages = len(page_names)
-
-        for i in xrange(len(values_list)):
-          page_index = i % num_pages
-
-          values_dict[page_names[page_index]].append(values_list[i])
-
-    return values_dict
+    return values_list
 
   def RunPerformanceTestAndParseResults(self, command_to_run, metric):
     """Runs a performance test on the current revision by executing the
@@ -579,30 +680,48 @@ class BisectPerformanceMetrics(object):
     """
 
     if self.opts.debug_ignore_perf_test:
-      return ({'debug' : 0.0}, 0)
+      return ({'mean': 0.0, 'std_dev': 0.0}, 0)
+
+    if IsWindows():
+      command_to_run = command_to_run.replace('/', r'\\')
 
     args = shlex.split(command_to_run)
 
     cwd = os.getcwd()
     os.chdir(self.src_cwd)
 
-    # Can ignore the return code since if the tests fail, it won't return 0.
-    (output, return_code) = RunProcess(args,
-        self.opts.output_buildbot_annotations)
+    start_time = time.time()
+
+    metric_values = []
+    for i in xrange(self.opts.repeat_test_count):
+      # Can ignore the return code since if the tests fail, it won't return 0.
+      (output, return_code) = RunProcess(args,
+          self.opts.output_buildbot_annotations)
+
+      metric_values += self.ParseMetricValuesFromOutput(metric, output)
+
+      elapsed_minutes = (time.time() - start_time) / 60.0
+
+      if elapsed_minutes >= self.opts.repeat_test_max_time:
+        break
 
     os.chdir(cwd)
 
-    metric_values = self.ParseMetricValuesFromOutput(metric, output)
-
     # Need to get the average value if there were multiple values.
     if metric_values:
-      for k, v in metric_values.iteritems():
-        average_metric_value = reduce(lambda x, y: float(x) + float(y),
-                                      v) / len(v)
+      truncated_mean = CalculateTruncatedMean(metric_values,
+          self.opts.truncate_percent)
+      standard_dev = CalculateStandardDeviation(metric_values)
 
-        metric_values[k] = average_metric_value
+      values = {
+        'mean': truncated_mean,
+        'std_dev': standard_dev,
+      }
 
-      return (metric_values, 0)
+      print 'Results of performance test: %12f %12f' % (
+          truncated_mean, standard_dev)
+      print
+      return (values, 0)
     else:
       return ('No values returned from performance test.', -1)
 
@@ -638,7 +757,7 @@ class BisectPerformanceMetrics(object):
       for d in DEPOT_DEPS_NAME[depot]['depends']:
         self.ChangeToDepotWorkingDirectory(d)
 
-        dependant_rev = self.source_control.ResolveToRevision(svn_rev, d, 1000)
+        dependant_rev = self.source_control.ResolveToRevision(svn_rev, d, -1000)
 
         if dependant_rev:
           revisions_to_sync.append([d, dependant_rev])
@@ -652,6 +771,57 @@ class BisectPerformanceMetrics(object):
         return None
 
     return revisions_to_sync
+
+  def PerformPreBuildCleanup(self):
+    """Performs necessary cleanup between runs."""
+    print 'Cleaning up between runs.'
+    print
+
+    # Having these pyc files around between runs can confuse the
+    # perf tests and cause them to crash.
+    for (path, dir, files) in os.walk(os.getcwd()):
+      for cur_file in files:
+        if cur_file.endswith('.pyc'):
+          path_to_file = os.path.join(path, cur_file)
+          os.remove(path_to_file)
+
+  def PerformWebkitDirectoryCleanup(self, revision):
+    """If the script is switching between Blink and WebKit during bisect,
+    its faster to just delete the directory rather than leave it up to git
+    to sync.
+
+    Returns:
+      True if successful.
+    """
+    if not self.source_control.CheckoutFileAtRevision(
+        bisect_utils.FILE_DEPS_GIT, revision):
+      return False
+
+    cwd = os.getcwd()
+    os.chdir(self.src_cwd)
+
+    is_blink = bisect_utils.IsDepsFileBlink()
+
+    os.chdir(cwd)
+
+    if not self.source_control.RevertFileToHead(
+        bisect_utils.FILE_DEPS_GIT):
+      return False
+
+    if self.was_blink != is_blink:
+      self.was_blink = is_blink
+      return bisect_utils.RemoveThirdPartyWebkitDirectory()
+    return True
+
+  def PerformPreSyncCleanup(self, revision, depot):
+    """Performs any necessary cleanup before syncing.
+
+    Returns:
+      True if successful.
+    """
+    if depot == 'chromium':
+      return self.PerformWebkitDirectoryCleanup(revision)
+    return True
 
   def SyncBuildAndRunRevision(self, revision, depot, command_to_run, metric):
     """Performs a full sync/build/run of the specified revision.
@@ -673,11 +843,17 @@ class BisectPerformanceMetrics(object):
     if not revisions_to_sync:
       return ('Failed to resolve dependant depots.', 1)
 
+    if not self.PerformPreSyncCleanup(revision, depot):
+      return ('Failed to perform pre-sync cleanup.', 1)
+
     success = True
 
     if not self.opts.debug_ignore_sync:
       for r in revisions_to_sync:
         self.ChangeToDepotWorkingDirectory(r[0])
+
+        if use_gclient:
+          self.PerformPreBuildCleanup()
 
         if not self.source_control.SyncToRevision(r[1], use_gclient):
           success = False
@@ -722,19 +898,10 @@ class BisectPerformanceMetrics(object):
       True if the current_value is closer to the known_good_value than the
       known_bad_value.
     """
-    passes = 0
-    fails = 0
+    dist_to_good_value = abs(current_value['mean'] - known_good_value['mean'])
+    dist_to_bad_value = abs(current_value['mean'] - known_bad_value['mean'])
 
-    for k in current_value.keys():
-      dist_to_good_value = abs(current_value[k] - known_good_value[k])
-      dist_to_bad_value = abs(current_value[k] - known_bad_value[k])
-
-      if dist_to_good_value < dist_to_bad_value:
-        passes += 1
-      else:
-        fails += 1
-
-    return passes > fails
+    return dist_to_good_value < dist_to_bad_value
 
   def ChangeToDepotWorkingDirectory(self, depot_name):
     """Given a depot, changes to the appropriate working directory.
@@ -771,6 +938,34 @@ class BisectPerformanceMetrics(object):
     # subsequent commands.
     old_cwd = os.getcwd()
     os.chdir(self.depot_cwd[current_depot])
+
+    # V8 (and possibly others) is merged in periodically. Bisecting
+    # this directory directly won't give much good info.
+    if DEPOT_DEPS_NAME[current_depot].has_key('build_with'):
+      new_depot = DEPOT_DEPS_NAME[current_depot]['build_with']
+
+      svn_start_revision = self.source_control.SVNFindRev(start_revision)
+      svn_end_revision = self.source_control.SVNFindRev(end_revision)
+      os.chdir(self.depot_cwd[new_depot])
+
+      start_revision = self.source_control.ResolveToRevision(
+          svn_start_revision, new_depot, -1000)
+      end_revision = self.source_control.ResolveToRevision(
+          svn_end_revision, new_depot, -1000)
+
+      old_name = DEPOT_DEPS_NAME[current_depot]['src'][4:]
+      new_name = DEPOT_DEPS_NAME[new_depot]['src'][4:]
+
+      os.chdir(self.src_cwd)
+
+      shutil.move(old_name, old_name + '.bak')
+      shutil.move(new_name, old_name)
+      os.chdir(self.depot_cwd[current_depot])
+
+      self.cleanup_commands.append(['mv', old_name, new_name])
+      self.cleanup_commands.append(['mv', old_name + '.bak', old_name])
+
+      os.chdir(self.depot_cwd[current_depot])
 
     depot_revision_list = self.GetRevisionList(end_revision, start_revision)
 
@@ -897,9 +1092,9 @@ class BisectPerformanceMetrics(object):
 
     # If they passed SVN CL's, etc... we can try match them to git SHA1's.
     bad_revision = self.source_control.ResolveToRevision(bad_revision_in,
-                                                         'src')
+                                                         'src', 100)
     good_revision = self.source_control.ResolveToRevision(good_revision_in,
-                                                          'src')
+                                                          'src', -100)
 
     if bad_revision is None:
       results['error'] = 'Could\'t resolve [%s] to SHA1.' % (bad_revision_in,)
@@ -1129,6 +1324,15 @@ class BisectPerformanceMetrics(object):
       print '  %8s  %s  %s' % (current_data['depot'], current_id, build_status)
     print
 
+    print
+    print 'Tested commits:'
+    for current_id, current_data in revision_data_sorted:
+      if current_data['value']:
+        print '  %8s  %s  %12f %12f' % (
+            current_data['depot'], current_id,
+            current_data['value']['mean'], current_data['value']['std_dev'])
+    print
+
     # Find range where it possibly broke.
     first_working_revision = None
     last_broken_revision = None
@@ -1164,6 +1368,84 @@ class BisectPerformanceMetrics(object):
       print
       os.chdir(cwd)
 
+      # Give a warning if the values were very close together
+      good_std_dev = revision_data[first_working_revision]['value']['std_dev']
+      good_mean = revision_data[first_working_revision]['value']['mean']
+      bad_mean = revision_data[last_broken_revision]['value']['mean']
+
+      # A standard deviation of 0 could indicate either insufficient runs
+      # or a test that consistently returns the same value.
+      if good_std_dev > 0:
+        deviations = math.fabs(bad_mean - good_mean) / good_std_dev
+
+        if deviations < 1.5:
+          print 'Warning: Regression was less than 1.5 standard deviations '\
+                'from "good" value. Results may not be accurate.'
+          print
+      elif self.opts.repeat_test_count == 1:
+        print 'Warning: Tests were only set to run once. This may be '\
+              'insufficient to get meaningful results.'
+        print
+
+      # Check for any other possible regression ranges
+      prev_revision_data = revision_data_sorted[0][1]
+      prev_revision_id = revision_data_sorted[0][0]
+      possible_regressions = []
+      for current_id, current_data in revision_data_sorted:
+        if current_data['value']:
+          prev_mean = prev_revision_data['value']['mean']
+          cur_mean = current_data['value']['mean']
+
+          if good_std_dev:
+            deviations = math.fabs(prev_mean - cur_mean) / good_std_dev
+          else:
+            deviations = None
+
+          if good_mean:
+            percent_change = (prev_mean - cur_mean) / good_mean
+
+            # If the "good" valuse are supposed to be higher than the "bad"
+            # values (ie. scores), flip the sign of the percent change so that
+            # a positive value always represents a regression.
+            if bad_mean < good_mean:
+              percent_change *= -1.0
+          else:
+            percent_change = None
+
+          if deviations >= 1.5 or percent_change > 0.01:
+            if current_id != first_working_revision:
+              possible_regressions.append(
+                  [current_id, prev_revision_id, percent_change, deviations])
+          prev_revision_data = current_data
+          prev_revision_id = current_id
+
+      if possible_regressions:
+        print
+        print 'Other regressions may have occurred:'
+        print
+        for p in possible_regressions:
+          current_id = p[0]
+          percent_change = p[2]
+          deviations = p[3]
+          current_data = revision_data[current_id]
+          previous_id = p[1]
+          previous_data = revision_data[previous_id]
+
+          if deviations is None:
+            deviations = 'N/A'
+          else:
+            deviations = '%.2f' % deviations
+
+          if percent_change is None:
+            percent_change = 0
+
+          print '  %8s  %s  [%.2f%%, %s x std.dev]' % (
+              previous_data['depot'], previous_id, 100 * percent_change,
+              deviations)
+          print '  %8s  %s' % (
+              current_data['depot'], current_id)
+          print
+
     if self.opts.output_buildbot_annotations:
       bisect_utils.OutputAnnotationStepClosed()
 
@@ -1183,6 +1465,111 @@ def DetermineAndCreateSourceControl():
     return GitSourceControl()
 
   return None
+
+
+def SetNinjaBuildSystemDefault():
+  """Makes ninja the default build system to be used by
+  the bisection script."""
+  gyp_var = os.getenv('GYP_GENERATORS')
+
+  if not gyp_var or not 'ninja' in gyp_var:
+    if gyp_var:
+      os.environ['GYP_GENERATORS'] = gyp_var + ',ninja'
+    else:
+      os.environ['GYP_GENERATORS'] = 'ninja'
+
+    if IsWindows():
+      os.environ['GYP_DEFINES'] = 'component=shared_library '\
+          'incremental_chrome_dll=1 disable_nacl=1 fastbuild=1 '\
+          'chromium_win_pch=0'
+
+
+def SetMakeBuildSystemDefault():
+  """Makes make the default build system to be used by
+  the bisection script."""
+  os.environ['GYP_GENERATORS'] = 'make'
+
+
+def CheckPlatformSupported(opts):
+  """Checks that this platform and build system are supported.
+
+  Args:
+    opts: The options parsed from the command line.
+
+  Returns:
+    True if the platform and build system are supported.
+  """
+  # Haven't tested the script out on any other platforms yet.
+  supported = ['posix', 'nt']
+  if not os.name in supported:
+    print "Sorry, this platform isn't supported yet."
+    print
+    return False
+
+  if IsWindows():
+    if not opts.build_preference:
+      opts.build_preference = 'msvs'
+
+    if opts.build_preference == 'msvs':
+      if not os.getenv('VS100COMNTOOLS'):
+        print 'Error: Path to visual studio could not be determined.'
+        print
+        return False
+    elif opts.build_preference == 'ninja':
+      SetNinjaBuildSystemDefault()
+    else:
+      assert False, 'Error: %s build not supported' % opts.build_preference
+  else:
+    if not opts.build_preference:
+      if 'ninja' in os.getenv('GYP_GENERATORS'):
+        opts.build_preference = 'ninja'
+      else:
+        opts.build_preference = 'make'
+
+    if opts.build_preference == 'ninja':
+      SetNinjaBuildSystemDefault()
+    elif opts.build_preference == 'make':
+      SetMakeBuildSystemDefault()
+    elif opts.build_preference != 'make':
+      assert False, 'Error: %s build not supported' % opts.build_preference
+
+  bisect_utils.RunGClient(['runhooks'])
+
+  return True
+
+
+def RmTreeAndMkDir(path_to_dir):
+  """Removes the directory tree specified, and then creates an empty
+  directory in the same location.
+
+  Args:
+    path_to_dir: Path to the directory tree.
+
+  Returns:
+    True if successful, False if an error occurred.
+  """
+  try:
+    if os.path.exists(path_to_dir):
+      shutil.rmtree(path_to_dir)
+  except OSError, e:
+    if e.errno != errno.ENOENT:
+      return False
+
+  try:
+    os.makedirs(path_to_dir)
+  except OSError, e:
+    if e.errno != errno.EEXIST:
+      return False
+
+  return True
+
+
+def RemoveBuildFiles():
+  """Removes build files from previous runs."""
+  if RmTreeAndMkDir(os.path.join('out', 'Release')):
+    if RmTreeAndMkDir(os.path.join('build', 'Release')):
+      return True
+  return False
 
 
 def main():
@@ -1219,6 +1606,34 @@ def main():
                     'working_directory and that will be used to perform the '
                     'bisection. This parameter is optional, if it is not '
                     'supplied, the script will work from the current depot.')
+  parser.add_option('-r', '--repeat_test_count',
+                    type='int',
+                    default=20,
+                    help='The number of times to repeat the performance test. '
+                    'Values will be clamped to range [1, 100]. '
+                    'Default value is 20.')
+  parser.add_option('--repeat_test_max_time',
+                    type='int',
+                    default=20,
+                    help='The maximum time (in minutes) to take running the '
+                    'performance tests. The script will run the performance '
+                    'tests according to --repeat_test_count, so long as it '
+                    'doesn\'t exceed --repeat_test_max_time. Values will be '
+                    'clamped to range [1, 60].'
+                    'Default value is 20.')
+  parser.add_option('-t', '--truncate_percent',
+                    type='int',
+                    default=25,
+                    help='The highest/lowest % are discarded to form a '
+                    'truncated mean. Values will be clamped to range [0, 25]. '
+                    'Default value is 25 (highest/lowest 25% will be '
+                    'discarded).')
+  parser.add_option('--build_preference',
+                    type='choice',
+                    choices=['msvs', 'ninja', 'make'],
+                    help='The preferred build system to use. On linux/mac '
+                    'the options are make/ninja. On Windows, the options '
+                    'are msvs/ninja.')
   parser.add_option('--use_goma',
                     action="store_true",
                     help='Add a bunch of extra threads for goma.')
@@ -1260,11 +1675,10 @@ def main():
     parser.print_help()
     return 1
 
-  # Haven't tested the script out on any other platforms yet.
-  if not os.name in ['posix']:
-    print "Sorry, this platform isn't supported yet."
-    print
-    return 1
+  opts.repeat_test_count = min(max(opts.repeat_test_count, 1), 100)
+  opts.repeat_test_max_time = min(max(opts.repeat_test_max_time, 1), 60)
+  opts.truncate_percent = min(max(opts.truncate_percent, 0), 25)
+  opts.truncate_percent = opts.truncate_percent / 100.0
 
   metric_values = opts.metric.split('/')
   if len(metric_values) != 2:
@@ -1277,6 +1691,14 @@ def main():
       return 1
 
     os.chdir(os.path.join(os.getcwd(), 'src'))
+
+    if not RemoveBuildFiles():
+      print "Something went wrong removing the build files."
+      print
+      return 1
+
+  if not CheckPlatformSupported(opts):
+    return 1
 
   # Check what source control method they're using. Only support git workflow
   # at the moment.
@@ -1294,13 +1716,17 @@ def main():
     return 1
 
   bisect_test = BisectPerformanceMetrics(source_control, opts)
-  bisect_results = bisect_test.Run(opts.command,
-                                   opts.bad_revision,
-                                   opts.good_revision,
-                                   metric_values)
+  try:
+    bisect_results = bisect_test.Run(opts.command,
+                                     opts.bad_revision,
+                                     opts.good_revision,
+                                     metric_values)
+    if not(bisect_results['error']):
+      bisect_test.FormatAndPrintResults(bisect_results)
+  finally:
+    bisect_test.PerformCleanup()
 
   if not(bisect_results['error']):
-    bisect_test.FormatAndPrintResults(bisect_results)
     return 0
   else:
     print 'Error: ' + bisect_results['error']

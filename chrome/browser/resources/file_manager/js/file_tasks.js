@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+'use strict';
+
 /**
  * This object encapsulates everything related to tasks execution.
  *
@@ -81,6 +83,42 @@ FileTasks.prototype.onTasks_ = function(tasks) {
 };
 
 /**
+ * The list of known extensions to record UMA.
+ * Note: Because the data is recorded by the index, so new item shouldn't be
+ * inserted.
+ *
+ * @const
+ * @type {Array.<string>}
+ * @private
+ */
+FileTasks.knownExtensions_ = [
+  'other', '.3ga', '.3gp', '.aac', '.alac', '.asf', '.avi', '.bmp', '.csv',
+  '.doc', '.docx', '.flac', '.gif', '.jpeg', '.jpg', '.log', '.m3u', '.m3u8',
+  '.m4a', '.m4v', '.mid', '.mkv', '.mov', '.mp3', '.mp4', '.mpg', '.odf',
+  '.odp', '.ods', '.odt', '.oga', '.ogg', '.ogv', '.pdf', '.png', '.ppt',
+  '.pptx', '.ra', '.ram', '.rar', '.rm', '.rtf', '.wav', '.webm', '.webp',
+  '.wma', '.wmv', '.xls', '.xlsx',
+];
+
+/**
+ * Records trial of opening file grouped by extensions.
+ *
+ * @param {Array.<string>} urls The path to be opened.
+ * @private
+ */
+FileTasks.recordViewingFileTypeUMA_ = function(urls) {
+  for (var i = 0; i < urls.length; i++) {
+    var url = urls[i];
+    var extension = FileType.getExtension(url).toLowerCase();
+    if (FileTasks.knownExtensions_.indexOf(extension) < 0) {
+      extension = 'other';
+    }
+    metrics.recordEnum(
+        'ViewingFileType', extension, FileTasks.knownExtensions_);
+  }
+};
+
+/**
  * Processes internal tasks.
  *
  * @param {Array.<Object>} tasks The tasks.
@@ -89,10 +127,10 @@ FileTasks.prototype.onTasks_ = function(tasks) {
 FileTasks.prototype.processTasks_ = function(tasks) {
   this.tasks_ = [];
   var id = util.platform.getAppId();
-  var is_on_drive = false;
+  var isOnDrive = false;
   for (var index = 0; index < this.urls_.length; ++index) {
     if (FileType.isOnDrive(this.urls_[index])) {
-      is_on_drive = true;
+      isOnDrive = true;
       break;
     }
   }
@@ -101,57 +139,63 @@ FileTasks.prototype.processTasks_ = function(tasks) {
     var task = tasks[i];
 
     // Skip Drive App if the file is not on Drive.
-    if (!is_on_drive && task.driveApp)
+    if (!isOnDrive && task.driveApp)
       continue;
 
     // Tweak images, titles of internal tasks.
-    var task_parts = task.taskId.split('|');
-    if (task_parts[0] == id && task_parts[1] == 'file') {
-      if (task_parts[2] == 'play') {
+    var taskParts = task.taskId.split('|');
+    if (taskParts[0] == id && taskParts[1] == 'file') {
+      if (taskParts[2] == 'play') {
         // TODO(serya): This hack needed until task.iconUrl is working
         //             (see GetFileTasksFileBrowserFunction::RunImpl).
         task.iconType = 'audio';
         task.title = loadTimeData.getString('ACTION_LISTEN');
-      } else if (task_parts[2] == 'mount-archive') {
+      } else if (taskParts[2] == 'mount-archive') {
         task.iconType = 'archive';
         task.title = loadTimeData.getString('MOUNT_ARCHIVE');
-      } else if (task_parts[2] == 'gallery') {
+      } else if (taskParts[2] == 'gallery') {
         task.iconType = 'image';
         task.title = loadTimeData.getString('ACTION_OPEN');
-      } else if (task_parts[2] == 'watch') {
+      } else if (taskParts[2] == 'watch') {
         task.iconType = 'video';
         task.title = loadTimeData.getString('ACTION_WATCH');
-      } else if (task_parts[2] == 'open-hosted-generic') {
+      } else if (taskParts[2] == 'open-hosted-generic') {
         if (this.urls_.length > 1)
           task.iconType = 'generic';
         else // Use specific icon.
           task.iconType = FileType.getIcon(this.urls_[0]);
         task.title = loadTimeData.getString('ACTION_OPEN');
-      } else if (task_parts[2] == 'open-hosted-gdoc') {
+      } else if (taskParts[2] == 'open-hosted-gdoc') {
         task.iconType = 'gdoc';
         task.title = loadTimeData.getString('ACTION_OPEN_GDOC');
-      } else if (task_parts[2] == 'open-hosted-gsheet') {
+      } else if (taskParts[2] == 'open-hosted-gsheet') {
         task.iconType = 'gsheet';
         task.title = loadTimeData.getString('ACTION_OPEN_GSHEET');
-      } else if (task_parts[2] == 'open-hosted-gslides') {
+      } else if (taskParts[2] == 'open-hosted-gslides') {
         task.iconType = 'gslides';
         task.title = loadTimeData.getString('ACTION_OPEN_GSLIDES');
-      } else if (task_parts[2] == 'view-pdf') {
+      } else if (taskParts[2] == 'view-swf') {
+        // Do not render this task if disabled.
+        if (!loadTimeData.getBoolean('SWF_VIEW_ENABLED'))
+          continue;
+        task.iconType = 'generic';
+        task.title = loadTimeData.getString('ACTION_VIEW');
+      } else if (taskParts[2] == 'view-pdf') {
         // Do not render this task if disabled.
         if (!loadTimeData.getBoolean('PDF_VIEW_ENABLED'))
           continue;
         task.iconType = 'pdf';
         task.title = loadTimeData.getString('ACTION_VIEW');
-      } else if (task_parts[2] == 'view-in-browser') {
+      } else if (taskParts[2] == 'view-in-browser') {
         task.iconType = 'generic';
         task.title = loadTimeData.getString('ACTION_VIEW');
-      } else if (task_parts[2] == 'install-crx') {
+      } else if (taskParts[2] == 'install-crx') {
         task.iconType = 'generic';
         task.title = loadTimeData.getString('INSTALL_CRX');
       }
     }
 
-    if (!task.iconType && task_parts[1] == 'web-intent') {
+    if (!task.iconType && taskParts[1] == 'web-intent') {
       task.iconType = 'generic';
     }
 
@@ -174,17 +218,29 @@ FileTasks.prototype.processTasks_ = function(tasks) {
  * @private
  */
 FileTasks.prototype.executeDefault_ = function() {
+  var urls = this.urls_;
+  FileTasks.recordViewingFileTypeUMA_(urls);
+  this.executeDefaultInternal_(urls);
+};
+
+/**
+ * Executes default task.
+ *
+ * @param {Array.<string>} urls Urls to execute.
+ * @private
+ */
+FileTasks.prototype.executeDefaultInternal_ = function(urls) {
   if (this.defaultTask_ != null) {
-    this.execute_(this.defaultTask_.taskId);
+    this.executeInternal_(this.defaultTask_.taskId, urls);
     return;
   }
 
   // We don't have tasks, so try to show a file in a browser tab.
   // We only do that for single selection to avoid confusion.
-  if (this.urls_.length == 1) {
+  if (urls.length == 1) {
     var callback = function(success) {
       if (!success) {
-        var filename = decodeURIComponent(this.urls_[0]);
+        var filename = decodeURIComponent(urls[0]);
         if (filename.indexOf('/') != -1)
           filename = filename.substr(filename.lastIndexOf('/') + 1);
 
@@ -196,7 +252,7 @@ FileTasks.prototype.executeDefault_ = function() {
     }.bind(this);
 
     this.checkAvailability_(function() {
-      chrome.fileBrowserPrivate.viewFiles(this.urls_, 'default', callback);
+      chrome.fileBrowserPrivate.viewFiles(urls, 'default', callback);
     }.bind(this));
   }
 
@@ -212,13 +268,25 @@ FileTasks.prototype.executeDefault_ = function() {
  */
 FileTasks.prototype.execute_ = function(taskId, opt_urls) {
   var urls = opt_urls || this.urls_;
+  FileTasks.recordViewingFileTypeUMA_(urls);
+  this.executeInternal_(taskId, urls);
+};
+
+/**
+ * The core implementation to execute a single task.
+ *
+ * @param {string} taskId Task identifier.
+ * @param {Array.<string>} urls Urls to execute.
+ * @private
+ */
+FileTasks.prototype.executeInternal_ = function(taskId, urls) {
   this.checkAvailability_(function() {
-    var task_parts = taskId.split('|');
-    if (task_parts[0] == util.platform.getAppId() && task_parts[1] == 'file') {
+    var taskParts = taskId.split('|');
+    if (taskParts[0] == util.platform.getAppId() && taskParts[1] == 'file') {
       // For internal tasks we do not listen to the event to avoid
       // handling the same task instance from multiple tabs.
       // So, we manually execute the task.
-      this.executeInternalTask_(task_parts[2], urls);
+      this.executeInternalTask_(taskParts[2], urls);
     } else {
       chrome.fileBrowserPrivate.executeTask(taskId, urls);
     }
@@ -334,7 +402,7 @@ FileTasks.prototype.executeInternalTask_ = function(id, urls) {
   }
 
   if (id == 'mount-archive') {
-    this.mountArchives_(urls);
+    this.mountArchivesInternal_(urls);
     return;
   }
 
@@ -346,11 +414,11 @@ FileTasks.prototype.executeInternalTask_ = function(id, urls) {
   }
 
   if (id == 'gallery') {
-    this.openGallery(urls);
+    this.openGalleryInternal_(urls);
     return;
   }
 
-  if (id == 'view-pdf' || id == 'view-in-browser' ||
+  if (id == 'view-pdf' || id == 'view-swf' || id == 'view-in-browser' ||
       id == 'install-crx' || id.match(/^open-hosted-/) || id == 'watch') {
     chrome.fileBrowserPrivate.viewFiles(urls, id, function(success) {
       if (!success)
@@ -364,9 +432,19 @@ FileTasks.prototype.executeInternalTask_ = function(id, urls) {
  * Mounts archives.
  *
  * @param {Array.<string>} urls Mount file urls list.
+ */
+FileTasks.prototype.mountArchives = function(urls) {
+  FileTasks.recordViewingFileTypeUMA_(urls);
+  this.mountArchivesInternal_(urls);
+};
+
+/**
+ * The core implementation of mounts archives.
+ *
+ * @param {Array.<string>} urls Mount file urls list.
  * @private
  */
-FileTasks.prototype.mountArchives_ = function(urls) {
+FileTasks.prototype.mountArchivesInternal_ = function(urls) {
   var fm = this.fileManager_;
 
   var tracker = fm.directoryModel_.createDirectoryChangeTracker();
@@ -375,7 +453,6 @@ FileTasks.prototype.mountArchives_ = function(urls) {
   fm.resolveSelectResults_(urls, function(urls) {
     for (var index = 0; index < urls.length; ++index) {
       fm.volumeManager_.mountArchive(urls[index], function(mountPath) {
-        console.log('Mounted at: ', mountPath);
         tracker.stop();
         if (!tracker.hasChanged)
           fm.directoryModel_.changeDirectory(mountPath);
@@ -396,6 +473,17 @@ FileTasks.prototype.mountArchives_ = function(urls) {
  * @param {Array.<string>} urls List of selected urls.
  */
 FileTasks.prototype.openGallery = function(urls) {
+  FileTasks.recordViewingFileTypeUMA_(urls);
+  this.openGalleryInternal_(urls);
+};
+
+/**
+ * The core implementation to open the Gallery.
+ *
+ * @param {Array.<string>} urls List of selected urls.
+ * @private
+ */
+FileTasks.prototype.openGalleryInternal_ = function(urls) {
   var fm = this.fileManager_;
 
   var allUrls =
@@ -498,9 +586,10 @@ FileTasks.prototype.display_ = function(combobutton) {
     }
 
     combobutton.addSeparator();
-    combobutton.addDropDownItem({
-          label: loadTimeData.getString('CHANGE_DEFAULT_MENU_ITEM')
-        });
+    var changeDefaultMenuItem = combobutton.addDropDownItem({
+        label: loadTimeData.getString('CHANGE_DEFAULT_MENU_ITEM')
+    });
+    changeDefaultMenuItem.classList.add('change-default');
   }
 };
 
@@ -601,7 +690,9 @@ FileTasks.prototype.showTaskPicker = function(actionDialog, title, message,
       title,
       message,
       items, defaultIdx,
-      onSuccess);
+      function(item) {
+        onSuccess(item.task);
+      });
 };
 
 FileTasks.decorate('display');

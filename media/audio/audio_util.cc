@@ -14,216 +14,28 @@
 
 #include "media/audio/audio_util.h"
 
-#include <algorithm>
-#include <limits>
-
-#include "base/basictypes.h"
 #include "base/command_line.h"
-#include "base/logging.h"
 #include "base/string_number_conversions.h"
 #include "base/time.h"
-#include "media/audio/audio_parameters.h"
-#include "media/base/audio_bus.h"
 #include "media/base/media_switches.h"
 
-#if defined(OS_MACOSX)
-#include "media/audio/mac/audio_low_latency_input_mac.h"
-#include "media/audio/mac/audio_low_latency_output_mac.h"
-#elif defined(OS_WIN)
+#if defined(OS_WIN)
 #include "base/win/windows_version.h"
-#include "media/audio/audio_manager_base.h"
-#include "media/audio/win/audio_low_latency_input_win.h"
-#include "media/audio/win/audio_low_latency_output_win.h"
-#include "media/audio/win/core_audio_util_win.h"
-#include "media/base/limits.h"
 #endif
 
 namespace media {
 
 // Returns user buffer size as specified on the command line or 0 if no buffer
 // size has been specified.
-static int GetUserBufferSize() {
+int GetUserBufferSize() {
   const CommandLine* cmd_line = CommandLine::ForCurrentProcess();
   int buffer_size = 0;
   std::string buffer_size_str(cmd_line->GetSwitchValueASCII(
       switches::kAudioBufferSize));
-  if (base::StringToInt(buffer_size_str, &buffer_size) && buffer_size > 0) {
+  if (base::StringToInt(buffer_size_str, &buffer_size) && buffer_size > 0)
     return buffer_size;
-  }
 
   return 0;
-}
-
-// TODO(fbarchard): Convert to intrinsics for better efficiency.
-template<class Fixed>
-static int ScaleChannel(int channel, int volume) {
-  return static_cast<int>((static_cast<Fixed>(channel) * volume) >> 16);
-}
-
-template<class Format, class Fixed, int bias>
-static void AdjustVolume(Format* buf_out,
-                         int sample_count,
-                         int fixed_volume) {
-  for (int i = 0; i < sample_count; ++i) {
-    buf_out[i] = static_cast<Format>(ScaleChannel<Fixed>(buf_out[i] - bias,
-                                                         fixed_volume) + bias);
-  }
-}
-
-// AdjustVolume() does an in place audio sample change.
-bool AdjustVolume(void* buf,
-                  size_t buflen,
-                  int channels,
-                  int bytes_per_sample,
-                  float volume) {
-  DCHECK(buf);
-  if (volume < 0.0f || volume > 1.0f)
-    return false;
-  if (volume == 1.0f) {
-    return true;
-  } else if (volume == 0.0f) {
-    memset(buf, 0, buflen);
-    return true;
-  }
-  if (channels > 0 && channels <= 8 && bytes_per_sample > 0) {
-    int sample_count = buflen / bytes_per_sample;
-    const int fixed_volume = static_cast<int>(volume * 65536);
-    if (bytes_per_sample == 1) {
-      AdjustVolume<uint8, int32, 128>(reinterpret_cast<uint8*>(buf),
-                                      sample_count,
-                                      fixed_volume);
-      return true;
-    } else if (bytes_per_sample == 2) {
-      AdjustVolume<int16, int32, 0>(reinterpret_cast<int16*>(buf),
-                                    sample_count,
-                                    fixed_volume);
-      return true;
-    } else if (bytes_per_sample == 4) {
-      AdjustVolume<int32, int64, 0>(reinterpret_cast<int32*>(buf),
-                                    sample_count,
-                                    fixed_volume);
-      return true;
-    }
-  }
-  return false;
-}
-
-int GetAudioHardwareSampleRate() {
-#if defined(OS_MACOSX)
-  // Hardware sample-rate on the Mac can be configured, so we must query.
-  return AUAudioOutputStream::HardwareSampleRate();
-#elif defined(OS_WIN)
-  if (!CoreAudioUtil::IsSupported()) {
-    // Fall back to Windows Wave implementation on Windows XP or lower
-    // and use 48kHz as default input sample rate.
-    return 48000;
-  }
-
-  // TODO(crogers): tune this rate for best possible WebAudio performance.
-  // WebRTC works well at 48kHz and a buffer size of 480 samples will be used
-  // for this case. Note that exclusive mode is experimental.
-  const CommandLine* cmd_line = CommandLine::ForCurrentProcess();
-  if (cmd_line->HasSwitch(switches::kEnableExclusiveAudio)) {
-    // This sample rate will be combined with a buffer size of 256 samples
-    // (see GetAudioHardwareBufferSize()), which corresponds to an output
-    // delay of ~5.33ms.
-    return 48000;
-  }
-
-  // Hardware sample-rate on Windows can be configured, so we must query.
-  // TODO(henrika): improve possibility to specify an audio endpoint.
-  // Use the default device (same as for Wave) for now to be compatible.
-  return WASAPIAudioOutputStream::HardwareSampleRate();
-#elif defined(OS_ANDROID)
-  // TODO(leozwang): return native sampling rate on Android.
-  return 16000;
-#else
-  return 48000;
-#endif
-}
-
-int GetAudioInputHardwareSampleRate(const std::string& device_id) {
-  // TODO(henrika): add support for device selection on all platforms.
-  // Only exists on Windows today.
-#if defined(OS_MACOSX)
-  return AUAudioInputStream::HardwareSampleRate();
-#elif defined(OS_WIN)
-  if (!CoreAudioUtil::IsSupported()) {
-    return 48000;
-  }
-  return WASAPIAudioInputStream::HardwareSampleRate(device_id);
-#elif defined(OS_ANDROID)
-  return 16000;
-#else
-  // Hardware for Linux is nearly always 48KHz.
-  // TODO(crogers) : return correct value in rare non-48KHz cases.
-  return 48000;
-#endif
-}
-
-size_t GetAudioHardwareBufferSize() {
-  int user_buffer_size = GetUserBufferSize();
-  if (user_buffer_size)
-    return user_buffer_size;
-
-  // The sizes here were determined by experimentation and are roughly
-  // the lowest value (for low latency) that still allowed glitch-free
-  // audio under high loads.
-  //
-  // For Mac OS X and Windows the chromium audio backend uses a low-latency
-  // Core Audio API, so a low buffer size is possible. For Linux, further
-  // tuning may be needed.
-#if defined(OS_MACOSX)
-  return 128;
-#elif defined(OS_WIN)
-  // TODO(henrika): resolve conflict with GetUserBufferSize().
-  // If the user tries to set a buffer size using GetUserBufferSize() it will
-  // most likely fail since only the native/perfect buffer size is allowed.
-
-  // Buffer size to use when a proper size can't be determined from the system.
-  static const int kFallbackBufferSize = 2048;
-
-  if (!CoreAudioUtil::IsSupported()) {
-    // Fall back to Windows Wave implementation on Windows XP or lower
-    // and assume 48kHz as default sample rate.
-    return kFallbackBufferSize;
-  }
-
-  // TODO(crogers): tune this size to best possible WebAudio performance.
-  // WebRTC always uses 10ms for Windows and does not call this method.
-  // Note that exclusive mode is experimental.
-  const CommandLine* cmd_line = CommandLine::ForCurrentProcess();
-  if (cmd_line->HasSwitch(switches::kEnableExclusiveAudio)) {
-    return 256;
-  }
-
-  AudioParameters params;
-  HRESULT hr = CoreAudioUtil::GetPreferredAudioParameters(eRender, eConsole,
-                                                          &params);
-  return FAILED(hr) ? kFallbackBufferSize : params.frames_per_buffer();
-#elif defined(OS_LINUX)
-  return 512;
-#else
-  return 2048;
-#endif
-}
-
-ChannelLayout GetAudioInputHardwareChannelLayout(const std::string& device_id) {
-  // TODO(henrika): add support for device selection on all platforms.
-  // Only exists on Windows today.
-#if defined(OS_MACOSX)
-  return CHANNEL_LAYOUT_MONO;
-#elif defined(OS_WIN)
-  if (!CoreAudioUtil::IsSupported()) {
-    // Fall back to Windows Wave implementation on Windows XP or lower and
-    // use stereo by default.
-    return CHANNEL_LAYOUT_STEREO;
-  }
-  return WASAPIAudioInputStream::HardwareChannelCount(device_id) == 1 ?
-      CHANNEL_LAYOUT_MONO : CHANNEL_LAYOUT_STEREO;
-#else
-  return CHANNEL_LAYOUT_STEREO;
-#endif
 }
 
 // Computes a buffer size based on the given |sample_rate|. Must be used in

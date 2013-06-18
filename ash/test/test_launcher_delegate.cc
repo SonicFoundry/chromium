@@ -34,7 +34,10 @@ void TestLauncherDelegate::AddLauncherItem(
     aura::Window* window,
     LauncherItemStatus status) {
   ash::LauncherItem item;
-  item.type = ash::TYPE_TABBED;
+  if (window->type() == aura::client::WINDOW_TYPE_PANEL)
+    item.type = ash::TYPE_APP_PANEL;
+  else
+    item.type = ash::TYPE_TABBED;
   DCHECK(window_to_id_.find(window) == window_to_id_.end());
   window_to_id_[window] = model_->next_id();
   item.status = status;
@@ -63,10 +66,11 @@ void TestLauncherDelegate::OnWillRemoveWindow(aura::Window* window) {
 void TestLauncherDelegate::OnBrowserShortcutClicked(int event_flags) {
 }
 
-void TestLauncherDelegate::ItemClicked(const ash::LauncherItem& item,
+void TestLauncherDelegate::ItemSelected(const ash::LauncherItem& item,
                                        const ui::Event& event) {
   aura::Window* window = GetWindowByID(item.id);
-  launcher::MoveToEventRootIfPanel(window, event);
+  if (window->type() == aura::client::WINDOW_TYPE_PANEL)
+    ash::wm::MoveWindowToEventRoot(window, event);
   window->Show();
   ash::wm::ActivateWindow(window);
 }
@@ -75,9 +79,9 @@ int TestLauncherDelegate::GetBrowserShortcutResourceId() {
   return IDR_AURA_LAUNCHER_BROWSER_SHORTCUT;
 }
 
-string16 TestLauncherDelegate::GetTitle(const ash::LauncherItem& item) {
+base::string16 TestLauncherDelegate::GetTitle(const ash::LauncherItem& item) {
   aura::Window* window = GetWindowByID(item.id);
-  return window ? window->title() : string16();
+  return window ? window->title() : base::string16();
 }
 
 ui::MenuModel* TestLauncherDelegate::CreateContextMenu(
@@ -87,7 +91,8 @@ ui::MenuModel* TestLauncherDelegate::CreateContextMenu(
 }
 
 ash::LauncherMenuModel* TestLauncherDelegate::CreateApplicationMenu(
-    const ash::LauncherItem& item) {
+    const ash::LauncherItem& item,
+    int event_flags) {
   return NULL;
 }
 
@@ -109,6 +114,20 @@ aura::Window* TestLauncherDelegate::GetWindowByID(ash::LauncherID id) {
 }
 
 bool TestLauncherDelegate::IsDraggable(const ash::LauncherItem& item) {
+  return true;
+}
+
+bool TestLauncherDelegate::ShouldShowTooltip(const ash::LauncherItem& item) {
+  return true;
+}
+
+void TestLauncherDelegate::OnLauncherCreated(Launcher* launcher) {
+}
+
+void TestLauncherDelegate::OnLauncherDestroyed(Launcher* launcher) {
+}
+
+bool TestLauncherDelegate::IsPerAppLauncher() {
   return true;
 }
 

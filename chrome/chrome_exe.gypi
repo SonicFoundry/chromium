@@ -24,8 +24,6 @@
         'app/chrome_exe_resource.h',
         'app/client_util.cc',
         'app/client_util.h',
-        'app/crash_analysis_win.cc',
-        'app/crash_analysis_win.h',
         'app/hard_error_handler_win.cc',
         'app/hard_error_handler_win.h',
         'app/metro_driver_win.cc',
@@ -449,9 +447,8 @@
               ],
             }],
             # For now, do not build nacl_helper when disable_nacl=1
-            # or when arm is enabled
             # http://code.google.com/p/gyp/issues/detail?id=239
-            ['disable_nacl==0 and target_arch!="arm" and coverage==0', {
+            ['disable_nacl==0 and coverage==0', {
               'dependencies': [
                 '../native_client/src/trusted/service_runtime/linux/nacl_bootstrap.gyp:nacl_helper_bootstrap',
                 'nacl_helper',
@@ -550,14 +547,12 @@
               'product_name': 'nacl64',
               'sources': [
                 'app/breakpad_win.cc',
-                'app/crash_analysis_win.cc',
                 'app/hard_error_handler_win.cc',
                 'common/crash_keys.cc',
                 'nacl/nacl_exe_win_64.cc',
                 '../content/app/startup_helper_win.cc',
-                '../content/common/debug_flags.cc',  # Needed for sandbox_policy.cc
                 '../content/common/sandbox_init_win.cc',
-                '../content/common/sandbox_policy.cc',
+                '../content/common/sandbox_win.cc',
                 '../content/public/common/content_switches.cc',
                 '<(SHARED_INTERMEDIATE_DIR)/chrome_version/nacl64_exe_version.rc',
               ],
@@ -606,6 +601,31 @@
             },
           ],
         }],
+      ],
+    }],
+    ['test_isolation_mode != "noop"', {
+      'targets': [
+        {
+          'target_name': 'chrome_run',
+          'type': 'none',
+          'dependencies': [
+            'chrome',
+          ],
+          'includes': [
+            '../build/isolate.gypi',
+            'chrome.isolate',
+          ],
+          'sources': [
+            'chrome.isolate',
+          ],
+          'conditions': [
+            ['OS=="win"', {
+              'dependencies': [
+                'chrome_nacl_win64',
+              ],
+            }],
+          ],
+        },
       ],
     }],
   ],

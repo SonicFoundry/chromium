@@ -16,6 +16,7 @@
 #include "ui/base/events/event.h"
 #include "ui/base/view_prop.h"
 #include "ui/gfx/display.h"
+#include "ui/gfx/insets.h"
 #include "ui/gfx/screen.h"
 
 using std::max;
@@ -146,6 +147,13 @@ void RootWindowHostWin::SetBounds(const gfx::Rect& bounds) {
     delegate_->OnHostResized(bounds.size());
 }
 
+gfx::Insets RootWindowHostWin::GetInsets() const {
+  return gfx::Insets();
+}
+
+void RootWindowHostWin::SetInsets(const gfx::Insets& insets) {
+}
+
 gfx::Point RootWindowHostWin::GetLocationOnNativeScreen() const {
   RECT r;
   GetClientRect(hwnd(), &r);
@@ -209,13 +217,6 @@ bool RootWindowHostWin::CopyAreaToSkCanvas(const gfx::Rect& source_bounds,
   return false;
 }
 
-bool RootWindowHostWin::GrabSnapshot(
-    const gfx::Rect& snapshot_bounds,
-    std::vector<unsigned char>* png_representation) {
-  NOTIMPLEMENTED();
-  return false;
-}
-
 void RootWindowHostWin::UnConfineCursor() {
   ClipCursor(NULL);
 }
@@ -248,7 +249,7 @@ void RootWindowHostWin::PrepareForShutdown() {
 
 void RootWindowHostWin::OnClose() {
   // TODO: this obviously shouldn't be here.
-  MessageLoopForUI::current()->Quit();
+  base::MessageLoopForUI::current()->Quit();
 }
 
 LRESULT RootWindowHostWin::OnKeyEvent(UINT message,
@@ -297,7 +298,11 @@ void RootWindowHostWin::OnMove(const CPoint& point) {
 }
 
 void RootWindowHostWin::OnPaint(HDC dc) {
-  delegate_->OnHostPaint();
+  gfx::Rect damage_rect;
+  RECT update_rect = {0};
+  if (GetUpdateRect(hwnd(), &update_rect, FALSE))
+    damage_rect = gfx::Rect(update_rect);
+  delegate_->OnHostPaint(damage_rect);
   ValidateRect(hwnd(), NULL);
 }
 

@@ -36,9 +36,9 @@ int64 GetOriginUsageOnDBThread(
 void GetOriginsOnDBThread(
     DatabaseTracker* db_tracker,
     std::set<GURL>* origins_ptr) {
-  std::vector<string16> origin_identifiers;
+  std::vector<base::string16> origin_identifiers;
   if (db_tracker->GetAllOriginIdentifiers(&origin_identifiers)) {
-    for (std::vector<string16>::const_iterator iter =
+    for (std::vector<base::string16>::const_iterator iter =
          origin_identifiers.begin();
          iter != origin_identifiers.end(); ++iter) {
       GURL origin = DatabaseUtil::GetOriginFromIdentifier(*iter);
@@ -51,9 +51,9 @@ void GetOriginsForHostOnDBThread(
     DatabaseTracker* db_tracker,
     std::set<GURL>* origins_ptr,
     const std::string& host) {
-  std::vector<string16> origin_identifiers;
+  std::vector<base::string16> origin_identifiers;
   if (db_tracker->GetAllOriginIdentifiers(&origin_identifiers)) {
-    for (std::vector<string16>::const_iterator iter =
+    for (std::vector<base::string16>::const_iterator iter =
          origin_identifiers.begin();
          iter != origin_identifiers.end(); ++iter) {
       GURL origin = DatabaseUtil::GetOriginFromIdentifier(*iter);
@@ -101,6 +101,15 @@ DatabaseQuotaClient::DatabaseQuotaClient(
 }
 
 DatabaseQuotaClient::~DatabaseQuotaClient() {
+  if (db_tracker_thread_ &&
+      !db_tracker_thread_->RunsTasksOnCurrentThread() &&
+      db_tracker_) {
+    DatabaseTracker* tracker = db_tracker_;
+    tracker->AddRef();
+    db_tracker_ = NULL;
+    if (!db_tracker_thread_->ReleaseSoon(FROM_HERE, tracker))
+      tracker->Release();
+  }
 }
 
 QuotaClient::ID DatabaseQuotaClient::id() const {

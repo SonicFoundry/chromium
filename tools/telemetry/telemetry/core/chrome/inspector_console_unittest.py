@@ -12,7 +12,7 @@ class TabConsoleTest(tab_test_case.TabTestCase):
   def testConsoleOutputStream(self):
     unittest_data_dir = os.path.join(os.path.dirname(__file__),
                                      '..', '..', '..', 'unittest_data')
-    self._browser.SetHTTPServerDirectory(unittest_data_dir)
+    self._browser.SetHTTPServerDirectories(unittest_data_dir)
 
     stream = StringIO.StringIO()
     self._tab.message_output_stream = stream
@@ -30,7 +30,8 @@ class TabConsoleTest(tab_test_case.TabTestCase):
     lines = [l for l in stream.getvalue().split('\n') if len(l)]
 
     self.assertTrue(len(lines) >= 1)
-    for l in lines:
-      u_l = 'http://localhost:(\d+)/page_that_logs_to_console.html:9'
-      self.assertTrue(re.match('At %s: Hello, world' % u_l, l))
+    for line in lines:
+      prefix = 'http://(.+)/page_that_logs_to_console.html:9'
+      expected_line = 'At %s: Hello, world' % prefix
+      self.assertTrue(re.match(expected_line, line))
 

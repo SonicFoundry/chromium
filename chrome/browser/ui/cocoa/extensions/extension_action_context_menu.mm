@@ -4,9 +4,9 @@
 
 #import "chrome/browser/ui/cocoa/extensions/extension_action_context_menu.h"
 
+#include "base/prefs/pref_change_registrar.h"
 #include "base/prefs/pref_service.h"
-#include "base/prefs/public/pref_change_registrar.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -206,8 +206,7 @@ enum {
     }
     case kExtensionContextOptions: {
       DCHECK(!extensions::ManifestURL::GetOptionsPage(extension_).is_empty());
-      extensions::ExtensionSystem::Get(browser_->profile())->process_manager()->
-          OpenOptionsPage(extension_, browser_);
+      ExtensionTabUtil::OpenOptionsPage(extension_, browser_);
       break;
     }
     case kExtensionContextUninstall: {

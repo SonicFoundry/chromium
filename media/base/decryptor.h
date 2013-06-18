@@ -139,9 +139,9 @@ class MEDIA_EXPORT Decryptor {
 
   // Initializes a decoder with the given |config|, executing the |init_cb|
   // upon completion.
-  virtual void InitializeAudioDecoder(scoped_ptr<AudioDecoderConfig> config,
+  virtual void InitializeAudioDecoder(const AudioDecoderConfig& config,
                                       const DecoderInitCB& init_cb) = 0;
-  virtual void InitializeVideoDecoder(scoped_ptr<VideoDecoderConfig> config,
+  virtual void InitializeVideoDecoder(const VideoDecoderConfig& config,
                                       const DecoderInitCB& init_cb) = 0;
 
   // Helper structure for managing multiple decoded audio buffers per input.
@@ -235,7 +235,7 @@ typedef base::Callback<void(const std::string& key_system,
 typedef base::Callback<void(const std::string& key_system,
                             const std::string& session_id,
                             const std::string& type,
-                            scoped_array<uint8> init_data,
+                            scoped_ptr<uint8[]> init_data,
                             int init_data_size)> NeedKeyCB;
 
 }  // namespace media

@@ -16,13 +16,13 @@
 #include "chrome/browser/content_settings/content_settings_rule.h"
 #include "chrome/browser/content_settings/content_settings_utils.h"
 #include "chrome/browser/content_settings/host_content_settings_map.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/content_settings.h"
 #include "chrome/common/content_settings_pattern.h"
 #include "chrome/common/pref_names.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
@@ -72,13 +72,15 @@ namespace content_settings {
 //
 
 // static
-void PrefProvider::RegisterUserPrefs(PrefRegistrySyncable* registry) {
+void PrefProvider::RegisterUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterIntegerPref(
       prefs::kContentSettingsVersion,
       ContentSettingsPattern::kContentSettingsPatternVersion,
-      PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterDictionaryPref(prefs::kContentSettingsPatternPairs,
-                                   PrefRegistrySyncable::SYNCABLE_PREF);
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterDictionaryPref(
+      prefs::kContentSettingsPatternPairs,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
 }
 
 PrefProvider::PrefProvider(PrefService* prefs,
@@ -188,22 +190,21 @@ void PrefProvider::ClearAllContentSettingsRules(
   {
     base::AutoLock auto_lock(lock_);
     scoped_ptr<RuleIterator> rule_iterator(
-        map_to_modify->GetRuleIterator(content_type, "", NULL));
+        map_to_modify->GetRuleIterator(content_type, std::string(), NULL));
     // Copy the rules; we cannot call |UpdatePref| while holding |lock_|.
     while (rule_iterator->HasNext())
       rules_to_delete.push_back(rule_iterator->Next());
 
-    map_to_modify->DeleteValues(content_type, "");
+    map_to_modify->DeleteValues(content_type, std::string());
   }
 
   for (std::vector<Rule>::const_iterator it = rules_to_delete.begin();
        it != rules_to_delete.end(); ++it) {
-    UpdatePref(
-        it->primary_pattern,
-        it->secondary_pattern,
-        content_type,
-        "",
-        NULL);
+    UpdatePref(it->primary_pattern,
+               it->secondary_pattern,
+               content_type,
+               std::string(),
+               NULL);
   }
   NotifyObservers(ContentSettingsPattern(),
                   ContentSettingsPattern(),
@@ -307,8 +308,8 @@ void PrefProvider::UpdatePref(
 void PrefProvider::MigrateObsoleteMediaContentSetting() {
   std::vector<Rule> rules_to_delete;
   {
-    scoped_ptr<RuleIterator> rule_iterator(
-        GetRuleIterator(CONTENT_SETTINGS_TYPE_MEDIASTREAM, "", false));
+    scoped_ptr<RuleIterator> rule_iterator(GetRuleIterator(
+        CONTENT_SETTINGS_TYPE_MEDIASTREAM, std::string(), false));
     while (rule_iterator->HasNext()) {
       // Skip default setting and rules without a value.
       const content_settings::Rule& rule = rule_iterator->Next();
@@ -333,7 +334,7 @@ void PrefProvider::MigrateObsoleteMediaContentSetting() {
       SetWebsiteSetting(it->primary_pattern,
                         it->secondary_pattern,
                         CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC,
-                        "",
+                        std::string(),
                         Value::CreateIntegerValue(CONTENT_SETTING_ALLOW));
     }
     // Add the exception to the new camera content setting.
@@ -341,7 +342,7 @@ void PrefProvider::MigrateObsoleteMediaContentSetting() {
       SetWebsiteSetting(it->primary_pattern,
                         it->secondary_pattern,
                         CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA,
-                        "",
+                        std::string(),
                         Value::CreateIntegerValue(CONTENT_SETTING_ALLOW));
     }
 
@@ -349,7 +350,7 @@ void PrefProvider::MigrateObsoleteMediaContentSetting() {
     SetWebsiteSetting(it->primary_pattern,
                       it->secondary_pattern,
                       CONTENT_SETTINGS_TYPE_MEDIASTREAM,
-                      "",
+                      std::string(),
                       NULL);
   }
 }
@@ -455,7 +456,7 @@ void PrefProvider::ReadContentSettingsFromPref(bool overwrite) {
         value_map_.SetValue(pattern_pair.first,
                             pattern_pair.second,
                             content_type,
-                            ResourceIdentifier(""),
+                            ResourceIdentifier(),
                             value);
         if (content_type == CONTENT_SETTINGS_TYPE_COOKIES) {
           ContentSetting s = ValueToContentSetting(value);

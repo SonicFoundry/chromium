@@ -7,37 +7,25 @@
 #include <vector>
 
 #include "content/public/common/common_param_traits.h"
+#include "content/shell/shell_test_configuration.h"
 #include "ipc/ipc_message_macros.h"
 #include "ipc/ipc_platform_file.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
 #define IPC_MESSAGE_START ShellMsgStart
 
-IPC_STRUCT_BEGIN(ShellViewMsg_SetTestConfiguration_Params)
-  // The current working directory.
-  IPC_STRUCT_MEMBER(base::FilePath, current_working_directory)
-
-  // The temporary directory of the system.
-  IPC_STRUCT_MEMBER(base::FilePath, temp_path)
-
-  // The URL of the current layout test.
-  IPC_STRUCT_MEMBER(GURL, test_url)
-
-  // True if pixel tests are enabled.
-  IPC_STRUCT_MEMBER(bool, enable_pixel_dumping)
-
-  // The layout test timeout in milliseconds.
-  IPC_STRUCT_MEMBER(int, layout_test_timeout)
-
-  // True if tests can open external URLs
-  IPC_STRUCT_MEMBER(bool, allow_external_pages)
-
-  // The expected MD5 hash of the pixel results.
-  IPC_STRUCT_MEMBER(std::string, expected_pixel_hash)
-IPC_STRUCT_END()
+IPC_STRUCT_TRAITS_BEGIN(content::ShellTestConfiguration)
+IPC_STRUCT_TRAITS_MEMBER(current_working_directory)
+IPC_STRUCT_TRAITS_MEMBER(temp_path)
+IPC_STRUCT_TRAITS_MEMBER(test_url)
+IPC_STRUCT_TRAITS_MEMBER(enable_pixel_dumping)
+IPC_STRUCT_TRAITS_MEMBER(layout_test_timeout)
+IPC_STRUCT_TRAITS_MEMBER(allow_external_pages)
+IPC_STRUCT_TRAITS_MEMBER(expected_pixel_hash)
+IPC_STRUCT_TRAITS_END()
 
 // Tells the renderer to reset all test runners.
-IPC_MESSAGE_CONTROL0(ShellViewMsg_ResetAll)
+IPC_MESSAGE_ROUTED0(ShellViewMsg_Reset)
 
 // Sets the path to the WebKit checkout.
 IPC_MESSAGE_CONTROL1(ShellViewMsg_SetWebKitSourceDir,
@@ -49,7 +37,11 @@ IPC_MESSAGE_CONTROL1(ShellViewMsg_LoadHyphenDictionary,
 
 // Sets the initial configuration to use for layout tests.
 IPC_MESSAGE_ROUTED1(ShellViewMsg_SetTestConfiguration,
-                    ShellViewMsg_SetTestConfiguration_Params)
+                    content::ShellTestConfiguration)
+
+// Tells the main window that a secondary window in a different process invoked
+// notifyDone().
+IPC_MESSAGE_ROUTED0(ShellViewMsg_NotifyDone)
 
 // Pushes a snapshot of the current session history from the browser process.
 // This includes only information about those RenderViews that are in the
@@ -77,9 +69,13 @@ IPC_MESSAGE_ROUTED1(ShellViewHostMsg_AudioDump,
 IPC_MESSAGE_ROUTED1(ShellViewHostMsg_TestFinished,
                     bool /* did_timeout */)
 
+IPC_MESSAGE_ROUTED0(ShellViewHostMsg_ResetDone)
+
+IPC_MESSAGE_ROUTED0(ShellViewHostMsg_TestFinishedInSecondaryWindow)
+
 // WebTestDelegate related.
 IPC_MESSAGE_ROUTED1(ShellViewHostMsg_OverridePreferences,
-                    webkit_glue::WebPreferences /* preferences */)
+                    WebPreferences /* preferences */)
 IPC_SYNC_MESSAGE_ROUTED1_1(ShellViewHostMsg_RegisterIsolatedFileSystem,
                            std::vector<base::FilePath> /* absolute_filenames */,
                            std::string /* filesystem_id */)
@@ -101,8 +97,6 @@ IPC_MESSAGE_ROUTED1(ShellViewHostMsg_SetDatabaseQuota,
                     int /* quota */)
 IPC_MESSAGE_ROUTED1(ShellViewHostMsg_AcceptAllCookies,
                     bool /* accept */)
-IPC_MESSAGE_ROUTED1(ShellViewHostMsg_SetClientWindowRect,
-                    gfx::Rect /* rect */)
 IPC_MESSAGE_ROUTED1(ShellViewHostMsg_SetDeviceScaleFactor,
                     float /* factor */)
 IPC_MESSAGE_ROUTED0(ShellViewHostMsg_CaptureSessionHistory)

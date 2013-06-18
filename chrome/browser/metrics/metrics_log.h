@@ -15,7 +15,6 @@
 #include "chrome/browser/metrics/metrics_network_observer.h"
 #include "chrome/common/metrics/metrics_log_base.h"
 #include "chrome/installer/util/google_update_settings.h"
-#include "content/public/common/process_type.h"
 #include "ui/gfx/size.h"
 
 #if defined(OS_CHROMEOS)
@@ -29,6 +28,10 @@ class PrefRegistrySimple;
 
 namespace base {
 class DictionaryValue;
+}
+
+namespace device {
+class BluetoothAdapter;
 }
 
 namespace tracked_objects {
@@ -113,7 +116,7 @@ class MetricsLog : public MetricsLogBase {
   // browser's profiled performance during startup for a single process.
   void RecordProfilerData(
       const tracked_objects::ProcessDataSnapshot& process_data,
-      content::ProcessType process_type);
+      int process_type);
 
   // Record recent delta for critical stability metrics.  We can't wait for a
   // restart to gather these, as that delay biases our observation away from
@@ -190,12 +193,23 @@ class MetricsLog : public MetricsLogBase {
   // This is a no-op if called on a non-Windows platform.
   void WriteGoogleUpdateProto(const GoogleUpdateMetrics& google_update_metrics);
 
+  // Sets the Bluetooth Adapter instance used for the WriteBluetoothProto()
+  // call.
+  void SetBluetoothAdapter(scoped_refptr<device::BluetoothAdapter> adapter);
+
+  // Writes info about paired Bluetooth devices on this system.
+  // This is a no-op if called on a non-Chrome OS platform.
+  void WriteBluetoothProto(metrics::SystemProfileProto::Hardware* hardware);
+
   // Observes network state to provide values for SystemProfile::Network.
   MetricsNetworkObserver network_observer_;
 
 #if defined(OS_CHROMEOS)
   metrics::PerfProvider perf_provider_;
 #endif
+
+  // Bluetooth Adapter instance for collecting information about paired devices.
+  scoped_refptr<device::BluetoothAdapter> adapter_;
 
   DISALLOW_COPY_AND_ASSIGN(MetricsLog);
 };

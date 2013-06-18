@@ -9,6 +9,9 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/command_line.h"
+#include "base/file_util.h"
+#include "base/json/json_reader.h"
 #include "base/message_loop.h"
 #include "base/prefs/pref_service.h"
 #include "base/utf_string_conversions.h"
@@ -21,18 +24,20 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/service/service_process_control.h"
 #include "chrome/common/chrome_notification_types.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/cloud_print/cloud_print_proxy_info.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/service_messages.h"
 #include "content/public/browser/browser_thread.h"
 #include "grit/generated_resources.h"
+#include "printing/backend/print_backend.h"
 #include "ui/base/l10n/l10n_util.h"
 
 using content::BrowserThread;
 
 CloudPrintProxyService::CloudPrintProxyService(Profile* profile)
     : profile_(profile),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)),
+      weak_factory_(this),
       enforcing_connector_policy_(false) {
 }
 
@@ -86,13 +91,12 @@ void CloudPrintProxyService::EnableForUserWithRobot(
     const std::string& robot_auth_code,
     const std::string& robot_email,
     const std::string& user_email,
-    bool connect_new_printers,
-    const std::vector<std::string>& printer_blacklist) {
+    const base::DictionaryValue& user_preferences) {
   if (profile_->GetPrefs()->GetBoolean(prefs::kCloudPrintProxyEnabled)) {
     InvokeServiceTask(
         base::Bind(&CloudPrintProxyService::EnableCloudPrintProxyWithRobot,
                    weak_factory_.GetWeakPtr(), robot_auth_code, robot_email,
-                   user_email, connect_new_printers, printer_blacklist));
+                   user_email, base::Owned(user_preferences.DeepCopy())));
   }
 }
 
@@ -128,6 +132,34 @@ void CloudPrintProxyService::OnCloudPrintSetupClosed() {
                                    base::Bind(&chrome::EndKeepAlive));
 }
 
+void CloudPrintProxyService::GetPrintersAvalibleForRegistration(
+      std::vector<std::string>* printers) {
+  base::FilePath list_path(
+      CommandLine::ForCurrentProcess()->GetSwitchValuePath(
+          switches::kCloudPrintSetupProxy));
+  if (!list_path.empty()) {
+    std::string printers_json;
+    file_util::ReadFileToString(list_path, &printers_json);
+    scoped_ptr<Value> value(base::JSONReader::Read(printers_json));
+    base::ListValue* list = NULL;
+    if (value && value->GetAsList(&list) && list) {
+      for (size_t i = 0; i < list->GetSize(); ++i) {
+        std::string printer;
+        if (list->GetString(i, &printer))
+          printers->push_back(printer);
+      }
+    }
+  } else {
+    printing::PrinterList printer_list;
+    scoped_refptr<printing::PrintBackend> backend(
+        printing::PrintBackend::CreateInstance(NULL));
+    if (backend)
+      backend->EnumeratePrinters(&printer_list);
+    for (size_t i = 0; i < printer_list.size(); ++i)
+      printers->push_back(printer_list[i].printer_name);
+  }
+}
+
 void CloudPrintProxyService::RefreshCloudPrintProxyStatus() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   ServiceProcessControl* process_control = GetServiceProcessControl();
@@ -152,14 +184,12 @@ void CloudPrintProxyService::EnableCloudPrintProxyWithRobot(
     const std::string& robot_auth_code,
     const std::string& robot_email,
     const std::string& user_email,
-    bool connect_new_printers,
-    const std::vector<std::string>& printer_blacklist) {
+    const base::DictionaryValue* user_preferences) {
   ServiceProcessControl* process_control = GetServiceProcessControl();
   DCHECK(process_control->IsConnected());
   process_control->Send(
       new ServiceMsg_EnableCloudPrintProxyWithRobot(
-          robot_auth_code, robot_email, user_email, connect_new_printers,
-          printer_blacklist));
+          robot_auth_code, robot_email, user_email, *user_preferences));
   // Assume the IPC worked.
   profile_->GetPrefs()->SetString(prefs::kCloudPrintEmail, user_email);
 }

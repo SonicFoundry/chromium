@@ -480,7 +480,7 @@ virtual void TexImageIOSurface2DCHROMIUM(
 
 virtual void CopyTextureCHROMIUM(
     GLenum target, GLenum source_id, GLenum dest_id, GLint level,
-    GLint internalformat) OVERRIDE;
+    GLint internalformat, GLenum dest_type) OVERRIDE;
 
 virtual void DrawArraysInstancedANGLE(
     GLenum mode, GLint first, GLsizei count, GLsizei primcount) OVERRIDE;
@@ -519,12 +519,18 @@ virtual void AsyncTexImage2DCHROMIUM(
     GLsizei height, GLint border, GLenum format, GLenum type,
     const void* pixels) OVERRIDE;
 
+virtual void WaitAsyncTexImage2DCHROMIUM(GLenum target) OVERRIDE;
+
 virtual void DiscardFramebufferEXT(
     GLenum target, GLsizei count, const GLenum* attachments) OVERRIDE;
 
 virtual void LoseContextCHROMIUM(GLenum current, GLenum other) OVERRIDE;
 
+virtual GLuint InsertSyncPointCHROMIUM() OVERRIDE;
+
 virtual void WaitSyncPointCHROMIUM(GLuint sync_point) OVERRIDE;
+
+virtual void DrawBuffersEXT(GLsizei count, const GLenum* bufs) OVERRIDE;
 
 #endif  // GPU_COMMAND_BUFFER_CLIENT_GLES2_IMPLEMENTATION_AUTOGEN_H_
 

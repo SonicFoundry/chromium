@@ -28,7 +28,7 @@ Canvas::Canvas(const gfx::Size& size,
                bool is_opaque)
       : scale_factor_(scale_factor),
         canvas_(NULL) {
-  gfx::Size pixel_size = gfx::ToFlooredSize(
+  gfx::Size pixel_size = gfx::ToCeiledSize(
       gfx::ScaleSize(size, ui::GetScaleFactorScale(scale_factor)));
   owned_canvas_ = skia::AdoptRef(skia::CreatePlatformCanvas(pixel_size.width(),
                                                             pixel_size.height(),
@@ -89,7 +89,7 @@ void Canvas::RecreateBackingCanvas(const gfx::Size& size,
 // static
 int Canvas::GetStringWidth(const string16& text, const gfx::Font& font) {
   int width = 0, height = 0;
-  Canvas::SizeStringInt(text, font, &width, &height, NO_ELLIPSIS);
+  Canvas::SizeStringInt(text, font, &width, &height, 0, NO_ELLIPSIS);
   return width;
 }
 
@@ -433,6 +433,7 @@ void Canvas::DrawStringInt(const string16& text,
                         font,
                         color,
                         gfx::Rect(x, y, w, h),
+                        0,
                         flags,
                         ShadowValues());
 }

@@ -12,22 +12,54 @@
 #include <vector>
 
 #include "base/files/file_path.h"
+#include "base/memory/ref_counted_memory.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "base/time.h"
-#include "chrome/browser/chromeos/cros/burn_library.h"
-#include "chrome/browser/chromeos/cros/network_library.h"
 #include "chrome/browser/chromeos/imageburner/burn_device_handler.h"
 #include "chromeos/disks/disk_mount_manager.h"
+#include "chromeos/network/network_state_handler_observer.h"
 #include "googleurl/src/gurl.h"
 #include "net/url_request/url_fetcher_delegate.h"
 
 namespace net {
 class URLFetcher;
+class URLRequestContextGetter;
 }  // namespace net
 
 namespace chromeos {
+
+enum BurnEvent {
+  UNZIP_STARTED,
+  UNZIP_COMPLETE,
+  UNZIP_FAIL,
+  BURN_UPDATE,
+  BURN_SUCCESS,
+  BURN_FAIL,
+  UNKNOWN
+};
+
+struct ImageBurnStatus {
+  ImageBurnStatus() : amount_burnt(0), total_size(0) {
+  }
+
+  ImageBurnStatus(int64 burnt, int64 total)
+      : amount_burnt(burnt), total_size(total) {
+  }
+
+  int64 amount_burnt;
+  int64 total_size;
+};
+
 namespace imageburner {
+
+// An enum used to describe what type of progress is being made.
+// TODO(hidehiko): This should be merged into the StateMachine's state.
+enum ProgressType {
+  DOWNLOADING,
+  UNZIPPING,
+  BURNING
+};
 
 // Config file properties.
 extern const char kName[];
@@ -175,14 +207,12 @@ class StateMachine {
 //   4-3) Copy the unzipped file to the device directly.
 // Currently, this only provides some methods to start/cancel background tasks,
 // and some accessors to obtain the current status. Other functions are
-// distributed among BurnController and BurnLibrary.
-// TODO(hidehiko): Simplify the relationship among this class, BurnLibrary,
+// in BurnController.
+// TODO(hidehiko): Simplify the relationship among this class,
 // BurnController and helper classes defined above.
 class BurnManager : public net::URLFetcherDelegate,
-                    public BurnLibrary::Observer,
-                    public NetworkLibrary::NetworkManagerObserver {
+                    public NetworkStateHandlerObserver {
  public:
-
   // Interface for classes that need to observe events for the burning image
   // tasks.
   class Observer {
@@ -196,34 +226,30 @@ class BurnManager : public net::URLFetcherDelegate,
     // Triggered when a network is detected.
     virtual void OnNetworkDetected() = 0;
 
-    // Triggered when the creating a ImageDir is done.
-    // The status of the creating the directory is passed to |success|.
-    virtual void OnImageDirCreated(bool success) = 0;
-
-    // Triggered when the fetching of the config file is done.
-    // The result status of the fetch is passed to |success|.
-    virtual void OnConfigFileFetched(bool success) = 0;
+    // Triggered when burning the image is successfully done.
+    virtual void OnSuccess() = 0;
 
     // Triggered during the image file downloading periodically.
     // |estimated_remaining_time| is the remaining duration to download the
     // remaining content estimated based on the elapsed time.
-    virtual void OnImageFileFetchDownloadProgressUpdated(
+    virtual void OnProgressWithRemainingTime(
+        ProgressType progress_type,
         int64 received_bytes,
         int64 total_bytes,
         const base::TimeDelta& estimated_remaining_time) = 0;
 
-    // Triggered when the fetching of the image file is done.
-    // The result status is passed to |success|.
-    virtual void OnImageFileFetched(bool success) = 0;
-
-    // Triggered during the burning the image to the device.
-    // See also BurnLibrary's comment for more details.
-    virtual void OnBurnProgressUpdated(BurnEvent event,
-                                       const ImageBurnStatus& status) = 0;
+    // Triggered when some progress is made, but estimated_remaining_time is
+    // not available.
+    // TODO(hidehiko): We should be able to merge this method with above one.
+    virtual void OnProgress(ProgressType progress_type,
+                            int64 received_bytes,
+                            int64 total_bytes) = 0;
   };
 
   // Creates the global BurnManager instance.
-  static void Initialize();
+  static void Initialize(
+      const base::FilePath& downloads_directory,
+      scoped_refptr<net::URLRequestContextGetter> context_getter);
 
   // Destroys the global BurnManager instance if it exists.
   static void Shutdown();
@@ -240,9 +266,6 @@ class BurnManager : public net::URLFetcherDelegate,
 
   // Returns devices on which we can burn recovery image.
   std::vector<disks::DiskMountManager::Disk> GetBurnableDevices();
-
-  // Returns true if some network is connected.
-  bool IsNetworkConnected() const;
 
   // Cancels a currently running task of burning recovery image.
   // Note: currently we only support Cancel method, which may look asymmetry
@@ -293,13 +316,8 @@ class BurnManager : public net::URLFetcherDelegate,
                                           int64 current,
                                           int64 total) OVERRIDE;
 
-  // BurnLibrary::Observer orverrides.
-  virtual void BurnProgressUpdated(BurnLibrary* object,
-                                   BurnEvent event,
-                                   const ImageBurnStatus& status) OVERRIDE;
-
-  // NetworkLibrary::NetworkManagerObserver interface.
-  virtual void OnNetworkManagerChanged(NetworkLibrary* obj) OVERRIDE;
+  // NetworkStateHandlerObserver override.
+  virtual void DefaultNetworkChanged(const NetworkState* network) OVERRIDE;
 
   // Creates directory image will be downloaded to.
   // Must be called from FILE thread.
@@ -327,19 +345,38 @@ class BurnManager : public net::URLFetcherDelegate,
   StateMachine* state_machine() const { return state_machine_.get(); }
 
  private:
-  BurnManager();
+  BurnManager(const base::FilePath& downloads_directory,
+              scoped_refptr<net::URLRequestContextGetter> context_getter);
   virtual ~BurnManager();
+
+  void UpdateBurnStatus(BurnEvent evt, const ImageBurnStatus& status);
 
   void OnImageDirCreated(bool success);
   void ConfigFileFetched(bool fetched, const std::string& content);
+
+  void OnImageUnzipped(scoped_refptr<base::RefCountedString> source_image_file);
+  void OnDevicesUnmounted(bool success);
+  void OnBurnImageFail();
+  void OnBurnFinished(const std::string& target_path,
+                      bool success,
+                      const std::string& error);
+  void OnBurnProgressUpdate(const std::string& target_path,
+                            int64 num_bytes_burnt,
+                            int64 total_size);
 
   void NotifyDeviceAdded(const disks::DiskMountManager::Disk& disk);
   void NotifyDeviceRemoved(const disks::DiskMountManager::Disk& disk);
 
   BurnDeviceHandler device_handler_;
 
+  bool unzipping_;
+  bool cancelled_;
+  bool burning_;
+  bool block_burn_signals_;
+
   base::FilePath image_dir_;
   base::FilePath zip_image_file_path_;
+  base::FilePath source_image_path_;
   base::FilePath target_device_path_;
   base::FilePath target_file_path_;
 
@@ -352,6 +389,8 @@ class BurnManager : public net::URLFetcherDelegate,
 
   scoped_ptr<net::URLFetcher> config_fetcher_;
   scoped_ptr<net::URLFetcher> image_fetcher_;
+
+  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
 
   base::TimeTicks tick_image_download_start_;
   int64 bytes_image_download_progress_last_reported_;

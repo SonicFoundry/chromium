@@ -8,8 +8,8 @@
 
 #include "base/logging.h"
 #include "build/build_config.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
 #include "chrome/browser/infobars/infobar_container.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "ui/base/animation/slide_animation.h"
 
 SkColor GetInfoBarTopColor(InfoBarDelegate::Type infobar_type) {
@@ -43,7 +43,7 @@ InfoBar::InfoBar(InfoBarService* owner, InfoBarDelegate* delegate)
     : owner_(owner),
       delegate_(delegate),
       container_(NULL),
-      ALLOW_THIS_IN_INITIALIZER_LIST(animation_(this)),
+      animation_(this),
       arrow_height_(0),
       arrow_target_height_(kDefaultArrowTargetHeight),
       arrow_half_width_(0),

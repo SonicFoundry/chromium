@@ -21,13 +21,14 @@
 #include "base/message_loop.h"
 #include "base/path_service.h"
 #include "base/process_util.h"
-#include "base/string_piece.h"
+#include "base/run_loop.h"
 #include "base/string_util.h"
 #include "base/stringprintf.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/string_piece.h"
+#include "base/strings/sys_string_conversions.h"
 #include "base/time.h"
 #include "base/utf_string_conversions.h"
-#include "cc/thread_impl.h"
+#include "cc/base/thread_impl.h"
 #include "googleurl/src/url_util.h"
 #include "grit/webkit_chromium_resources.h"
 #include "media/base/filter_collection.h"
@@ -36,12 +37,12 @@
 #include "net/base/net_errors.h"
 #include "net/base/net_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebStorageNamespace.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebURLError.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebCache.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebFileSystemCallbacks.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebKit.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebPluginParams.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebStorageNamespace.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebView.h"
 #if defined(TOOLKIT_GTK)
 #include "ui/base/keycodes/keyboard_code_conversion_gtk.h"
@@ -61,12 +62,6 @@
 #include "webkit/glue/weburlrequest_extradata_impl.h"
 #include "webkit/gpu/test_context_provider_factory.h"
 #include "webkit/gpu/webgraphicscontext3d_in_process_command_buffer_impl.h"
-#include "webkit/gpu/webgraphicscontext3d_in_process_impl.h"
-#if defined(OS_ANDROID)
-#include "webkit/media/android/media_player_bridge_manager_impl.h"
-#include "webkit/media/android/webmediaplayer_in_process_android.h"
-#include "webkit/media/android/webmediaplayer_manager_android.h"
-#endif
 #include "webkit/media/media_stream_client.h"
 #include "webkit/media/webmediaplayer_impl.h"
 #include "webkit/media/webmediaplayer_ms.h"
@@ -102,8 +97,6 @@ using WebKit::WebPlugin;
 using WebKit::WebPluginParams;
 using WebKit::WebString;
 using WebKit::WebURL;
-using webkit::gpu::WebGraphicsContext3DInProcessImpl;
-using webkit::gpu::WebGraphicsContext3DInProcessCommandBufferImpl;
 
 namespace {
 
@@ -122,6 +115,10 @@ void InitLogging() {
     // http://blogs.msdn.com/oldnewthing/archive/2004/07/27/198410.aspx
     UINT existing_flags = SetErrorMode(new_flags);
     SetErrorMode(existing_flags | new_flags);
+
+    // Don't pop up dialog on assertion failure, log to stdout instead.
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDOUT);
   }
 #endif
 
@@ -179,15 +176,6 @@ class TestEnvironment {
 
     idb_factory_.reset(new TestWebIDBFactory());
     WebKit::setIDBFactory(idb_factory_.get());
-
-#if defined(OS_ANDROID)
-    // Make sure we have enough decoding resources for layout tests.
-    // The current maximum number of media elements in a layout test is 8.
-    media_bridge_manager_.reset(
-        new webkit_media::MediaPlayerBridgeManagerImpl(8));
-    media_player_manager_.reset(
-        new webkit_media::WebMediaPlayerManagerAndroid());
-#endif
   }
 
   ~TestEnvironment() {
@@ -221,14 +209,6 @@ class TestEnvironment {
   base::FilePath mock_current_directory() const {
     return mock_current_directory_;
   }
-
-  webkit_media::WebMediaPlayerManagerAndroid* media_player_manager() {
-    return media_player_manager_.get();
-  }
-
-  webkit_media::MediaPlayerBridgeManagerImpl* media_bridge_manager() {
-    return media_bridge_manager_.get();
-  }
 #endif
 
  private:
@@ -241,8 +221,6 @@ class TestEnvironment {
 
 #if defined(OS_ANDROID)
   base::FilePath mock_current_directory_;
-  scoped_ptr<webkit_media::WebMediaPlayerManagerAndroid> media_player_manager_;
-  scoped_ptr<webkit_media::MediaPlayerBridgeManagerImpl> media_bridge_manager_;
 #endif
 };
 
@@ -277,7 +255,8 @@ base::FilePath GetWebKitRootDirFilePath() {
     // We're in a WebKit-only/xcodebuild checkout on Mac
     basePath = basePath.Append(FILE_PATH_LITERAL("../../.."));
   }
-  CHECK(file_util::AbsolutePath(&basePath));
+  basePath = base::MakeAbsoluteFilePath(basePath);
+  CHECK(!basePath.empty());
   // We're in a WebKit-only, make-build, so the DIR_SOURCE_ROOT is already the
   // WebKit root. That, or we have no idea where we are.
   return basePath;
@@ -300,10 +279,6 @@ class WebKitClientMessageLoopImpl
  private:
   MessageLoop* message_loop_;
 };
-
-webkit_support::GraphicsContext3DImplementation
-    g_graphics_context_3d_implementation =
-        webkit_support::IN_PROCESS_COMMAND_BUFFER;
 
 TestEnvironment* test_environment;
 
@@ -385,7 +360,7 @@ void SetUpTestEnvironmentForUnitTests(
 void TearDownTestEnvironment() {
   // Flush any remaining messages before we kill ourselves.
   // http://code.google.com/p/chromium/issues/detail?id=9500
-  MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   BeforeShutdown();
   if (RunningOnValgrind())
@@ -434,14 +409,7 @@ WebKit::WebMediaPlayer* CreateMediaPlayer(
   }
 
 #if defined(OS_ANDROID)
-  return new webkit_media::WebMediaPlayerInProcessAndroid(
-      frame,
-      client,
-      GetWebKitPlatformSupport()->cookieJar(),
-      test_environment->media_player_manager(),
-      test_environment->media_bridge_manager(),
-      new webkit_support::TestStreamTextureFactory(),
-      true);
+  return NULL;
 #else
   webkit_media::WebMediaPlayerParams params(
       NULL, NULL, new media::MediaLog());
@@ -459,12 +427,6 @@ WebKit::WebMediaPlayer* CreateMediaPlayer(
     WebMediaPlayerClient* client) {
   return CreateMediaPlayer(frame, url, client, NULL);
 }
-
-#if defined(OS_ANDROID)
-void ReleaseMediaResources() {
-  test_environment->media_player_manager()->ReleaseMediaResources();
-}
-#endif
 
 WebKit::WebApplicationCacheHost* CreateApplicationCacheHost(
     WebFrame*, WebKit::WebApplicationCacheHostClient* client) {
@@ -493,47 +455,6 @@ void SetUpGLBindings(GLBindingPreferences bindingPref) {
     default:
       NOTREACHED();
   }
-  webkit::gpu::TestContextProviderFactory::SetUpFactoryForTesting(
-      g_graphics_context_3d_implementation);
-}
-
-void SetGraphicsContext3DImplementation(GraphicsContext3DImplementation impl) {
-  g_graphics_context_3d_implementation = impl;
-}
-
-GraphicsContext3DImplementation GetGraphicsContext3DImplementation() {
-  return g_graphics_context_3d_implementation;
-}
-
-WebKit::WebGraphicsContext3D* CreateGraphicsContext3D(
-    const WebKit::WebGraphicsContext3D::Attributes& attributes,
-    WebKit::WebView* web_view) {
-  switch (webkit_support::GetGraphicsContext3DImplementation()) {
-    case webkit_support::IN_PROCESS:
-      return WebGraphicsContext3DInProcessImpl::CreateForWebView(
-          attributes, true /* direct */);
-    case webkit_support::IN_PROCESS_COMMAND_BUFFER: {
-      scoped_ptr<WebGraphicsContext3DInProcessCommandBufferImpl> context(
-          new WebGraphicsContext3DInProcessCommandBufferImpl());
-      if (!context->Initialize(attributes, NULL))
-        return NULL;
-      return context.release();
-    }
-  }
-  NOTREACHED();
-  return NULL;
-}
-
-static WebKit::WebLayerTreeView* CreateLayerTreeView(
-    LayerTreeViewType type,
-    DRTLayerTreeViewClient* client,
-    scoped_ptr<cc::Thread> compositor_thread) {
-  scoped_ptr<WebKit::WebLayerTreeViewImplForTesting> view(
-      new WebKit::WebLayerTreeViewImplForTesting(type, client));
-
-  if (!view->initialize(compositor_thread.Pass()))
-    return NULL;
-  return view.release();
 }
 
 WebKit::WebLayerTreeView* CreateLayerTreeView(
@@ -542,32 +463,16 @@ WebKit::WebLayerTreeView* CreateLayerTreeView(
     WebKit::WebThread* thread) {
   scoped_ptr<cc::Thread> compositor_thread;
   if (thread)
-    compositor_thread = cc::ThreadImpl::createForDifferentThread(
+    compositor_thread = cc::ThreadImpl::CreateForDifferentThread(
         static_cast<webkit_glue::WebThreadImpl*>(thread)->
         message_loop()->message_loop_proxy());
-  return CreateLayerTreeView(type, client, compositor_thread.Pass());
-}
 
-// DEPRECATED. TODO(jamesr): Remove these three after fixing WebKit callers.
-static WebKit::WebLayerTreeView* CreateLayerTreeView(
-    LayerTreeViewType type,
-    DRTLayerTreeViewClient* client) {
-  scoped_ptr<cc::Thread> compositor_thread;
+  scoped_ptr<webkit::WebLayerTreeViewImplForTesting> view(
+      new webkit::WebLayerTreeViewImplForTesting(type, client));
 
-  webkit::WebCompositorSupportImpl* compositor_support_impl =
-      test_environment->webkit_platform_support()->compositor_support_impl();
-  if (compositor_support_impl->compositor_thread_message_loop_proxy())
-    compositor_thread = cc::ThreadImpl::createForDifferentThread(
-        compositor_support_impl->compositor_thread_message_loop_proxy());
-  return CreateLayerTreeView(type, client, compositor_thread.Pass());
-}
-WebKit::WebLayerTreeView* CreateLayerTreeViewSoftware(
-    DRTLayerTreeViewClient* client) {
-  return CreateLayerTreeView(SOFTWARE_CONTEXT, client);
-}
-WebKit::WebLayerTreeView* CreateLayerTreeView3d(
-    DRTLayerTreeViewClient* client) {
-  return CreateLayerTreeView(MESA_CONTEXT, client);
+  if (!view->initialize(compositor_thread.Pass()))
+    return NULL;
+  return view.release();
 }
 
 void SetThreadedCompositorEnabled(bool enabled) {
@@ -629,7 +534,7 @@ void QuitMessageLoopNow() {
 }
 
 void RunAllPendingMessages() {
-  MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 bool MessageLoopNestableTasksAllowed() {
@@ -643,7 +548,7 @@ void MessageLoopSetNestableTasksAllowed(bool allowed) {
 void DispatchMessageLoop() {
   MessageLoop* current = MessageLoop::current();
   MessageLoop::ScopedNestableTaskAllower allow(current);
-  current->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 WebDevToolsAgentClient::WebKitClientMessageLoop* CreateDevToolsMessageLoop() {
@@ -669,8 +574,7 @@ void PostDelayedTask(TaskAdaptor* task, int64 delay_ms) {
 WebString GetAbsoluteWebStringFromUTF8Path(const std::string& utf8_path) {
 #if defined(OS_WIN)
   base::FilePath path(UTF8ToWide(utf8_path));
-  file_util::AbsolutePath(&path);
-  return WebString(path.value());
+  return WebString(base::MakeAbsoluteFilePath(path).value());
 #else
   base::FilePath path(base::SysWideToNativeMB(base::SysUTF8ToWide(utf8_path)));
 #if defined(OS_ANDROID)
@@ -685,10 +589,10 @@ WebString GetAbsoluteWebStringFromUTF8Path(const std::string& utf8_path) {
       net::FileURLToFilePath(base_url.Resolve(path.value()), &path);
     }
   } else {
-    file_util::AbsolutePath(&path);
+    path = base::MakeAbsoluteFilePath(path);
   }
 #else
-  file_util::AbsolutePath(&path);
+  path = base::MakeAbsoluteFilePath(path);
 #endif  // else defined(OS_ANDROID)
   return WideToUTF16(base::SysNativeMBToWide(path.value()));
 #endif  // else defined(OS_WIN)
@@ -708,8 +612,7 @@ WebURL CreateURLForPathOrURL(const std::string& path_or_url_in_nativemb) {
 #else
   base::FilePath path(path_or_url_in_nativemb);
 #endif
-  file_util::AbsolutePath(&path);
-  return net::FilePathToFileURL(path);
+  return net::FilePathToFileURL(base::MakeAbsoluteFilePath(path));
 }
 
 WebURL RewriteLayoutTestsURL(const std::string& utf8_url) {
@@ -898,14 +801,16 @@ WebURL GetDevToolsPathAsURL() {
 }
 
 // FileSystem
-void OpenFileSystem(WebFrame* frame, WebFileSystem::Type type,
+void OpenFileSystem(WebFrame* frame,
+    WebKit::WebFileSystemType type,
     long long size, bool create, WebFileSystemCallbacks* callbacks) {
   SimpleFileSystem* fileSystem = static_cast<SimpleFileSystem*>(
       test_environment->webkit_platform_support()->fileSystem());
   fileSystem->OpenFileSystem(frame, type, size, create, callbacks);
 }
 
-void DeleteFileSystem(WebFrame* frame, WebFileSystem::Type type,
+void DeleteFileSystem(WebFrame* frame,
+                      WebKit::WebFileSystemType type,
                       WebFileSystemCallbacks* callbacks) {
   SimpleFileSystem* fileSystem = static_cast<SimpleFileSystem*>(
       test_environment->webkit_platform_support()->fileSystem());

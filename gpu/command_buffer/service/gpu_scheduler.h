@@ -97,6 +97,9 @@ class GPU_EXPORT GpuScheduler
   // by them and returns whether all fences were complete.
   bool PollUnscheduleFences();
 
+  bool HasMoreIdleWork();
+  void PerformIdleWork();
+
   CommandParser* parser() const {
     return parser_.get();
   }
@@ -144,6 +147,7 @@ class GPU_EXPORT GpuScheduler
     ~UnscheduleFence();
 
     scoped_ptr<gfx::GLFence> fence;
+    base::Time issue_time;
     base::Closure task;
   };
   std::queue<linked_ptr<UnscheduleFence> > unschedule_fences_;

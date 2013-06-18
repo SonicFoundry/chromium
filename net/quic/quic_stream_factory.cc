@@ -11,14 +11,15 @@
 #include "base/rand_util.h"
 #include "base/stl_util.h"
 #include "base/values.h"
-#include "net/base/host_resolver.h"
 #include "net/base/net_errors.h"
-#include "net/base/single_request_host_resolver.h"
+#include "net/dns/host_resolver.h"
+#include "net/dns/single_request_host_resolver.h"
 #include "net/quic/crypto/quic_random.h"
 #include "net/quic/quic_client_session.h"
 #include "net/quic/quic_clock.h"
 #include "net/quic/quic_connection.h"
 #include "net/quic/quic_connection_helper.h"
+#include "net/quic/quic_crypto_client_stream_factory.h"
 #include "net/quic/quic_http_stream.h"
 #include "net/quic/quic_protocol.h"
 #include "net/socket/client_socket_factory.h"
@@ -197,8 +198,8 @@ scoped_ptr<QuicHttpStream> QuicStreamRequest::ReleaseStream() {
 int QuicStreamFactory::Job::DoConnect() {
   io_state_ = STATE_CONNECT_COMPLETE;
 
-  session_ = factory_->CreateSession(host_port_proxy_pair_.first.host(),
-                                     address_list_, net_log_);
+  session_ = factory_->CreateSession(host_port_proxy_pair_, address_list_,
+                                     net_log_);
   session_->StartReading();
   int rv = session_->CryptoConnect(
       base::Bind(&QuicStreamFactory::Job::OnIOComplete,
@@ -219,18 +220,21 @@ int QuicStreamFactory::Job::DoConnectComplete(int rv) {
 QuicStreamFactory::QuicStreamFactory(
     HostResolver* host_resolver,
     ClientSocketFactory* client_socket_factory,
+    QuicCryptoClientStreamFactory* quic_crypto_client_stream_factory,
     QuicRandom* random_generator,
     QuicClock* clock)
     : host_resolver_(host_resolver),
       client_socket_factory_(client_socket_factory),
+      quic_crypto_client_stream_factory_(quic_crypto_client_stream_factory),
       random_generator_(random_generator),
       clock_(clock),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+      weak_factory_(this) {
 }
 
 QuicStreamFactory::~QuicStreamFactory() {
   STLDeleteElements(&all_sessions_);
   STLDeleteValues(&active_jobs_);
+  STLDeleteValues(&all_crypto_configs_);
 }
 
 int QuicStreamFactory::Create(const HostPortProxyPair& host_port_proxy_pair,
@@ -351,13 +355,17 @@ base::Value* QuicStreamFactory::QuicStreamFactoryInfoToValue() const {
   return list;
 }
 
+void QuicStreamFactory::OnIPAddressChanged() {
+  CloseAllSessions(ERR_NETWORK_CHANGED);
+}
+
 bool QuicStreamFactory::HasActiveSession(
     const HostPortProxyPair& host_port_proxy_pair) {
   return ContainsKey(active_sessions_, host_port_proxy_pair);
 }
 
 QuicClientSession* QuicStreamFactory::CreateSession(
-    const std::string& host,
+    const HostPortProxyPair& host_port_proxy_pair,
     const AddressList& address_list,
     const BoundNetLog& net_log) {
   QuicGuid guid = random_generator_->RandUint64();
@@ -373,9 +381,17 @@ QuicClientSession* QuicStreamFactory::CreateSession(
       MessageLoop::current()->message_loop_proxy(),
       clock_.get(), random_generator_, socket);
 
-  QuicConnection* connection = new QuicConnection(guid, addr, helper);
-  QuicClientSession* session = new QuicClientSession(connection, helper, this,
-                                                     host, net_log.net_log());
+  QuicConnection* connection = new QuicConnection(guid, addr, helper, false);
+
+  QuicCryptoClientConfig* crypto_config =
+      GetOrCreateCryptoConfig(host_port_proxy_pair);
+  DCHECK(crypto_config);
+
+  QuicClientSession* session =
+      new QuicClientSession(connection, socket, this,
+                            quic_crypto_client_stream_factory_,
+                            host_port_proxy_pair.first.host(),
+                            crypto_config, net_log.net_log());
   all_sessions_.insert(session);  // owning pointer
   return session;
 }
@@ -393,5 +409,18 @@ void QuicStreamFactory::ActivateSession(
   session_aliases_[session].insert(host_port_proxy_pair);
 }
 
+QuicCryptoClientConfig* QuicStreamFactory::GetOrCreateCryptoConfig(
+    const HostPortProxyPair& host_port_proxy_pair) {
+  QuicCryptoClientConfig* crypto_config;
+  if (ContainsKey(all_crypto_configs_, host_port_proxy_pair)) {
+    crypto_config = all_crypto_configs_[host_port_proxy_pair];
+    DCHECK(crypto_config);
+  } else {
+    crypto_config = new QuicCryptoClientConfig();
+    crypto_config->SetDefaults();
+    all_crypto_configs_[host_port_proxy_pair] = crypto_config;
+  }
+  return crypto_config;
+}
 
 }  // namespace net

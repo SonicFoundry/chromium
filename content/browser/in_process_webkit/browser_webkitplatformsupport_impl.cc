@@ -6,6 +6,7 @@
 
 #include "base/file_util.h"
 #include "base/logging.h"
+#include "base/sys_info.h"
 #include "content/browser/gpu/browser_gpu_channel_host_factory.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebData.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
@@ -120,9 +121,10 @@ int BrowserWebKitPlatformSupportImpl::databaseDeleteFile(
   return file_util::Delete(path, false) ? 0 : 1;
 }
 
-GpuChannelHostFactory*
-BrowserWebKitPlatformSupportImpl::GetGpuChannelHostFactory() {
-  return BrowserGpuChannelHostFactory::instance();
+long long BrowserWebKitPlatformSupportImpl::availableDiskSpaceInBytes(
+    const WebKit::WebString& fileName) {
+  return base::SysInfo::AmountOfFreeDiskSpace(
+      webkit_base::WebStringToFilePath(fileName));
 }
 
 }  // namespace content

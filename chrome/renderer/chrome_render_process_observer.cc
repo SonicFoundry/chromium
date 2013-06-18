@@ -52,10 +52,6 @@
 #include "base/win/iat_patch_function.h"
 #endif
 
-#if defined(USE_TCMALLOC)
-#include "third_party/tcmalloc/chromium/src/gperftools/heap-profiler.h"
-#endif
-
 using WebKit::WebCache;
 using WebKit::WebCrossOriginPreflightResultCache;
 using WebKit::WebFontCache;
@@ -69,7 +65,7 @@ static const int kCacheStatsDelayMS = 2000;
 class RendererResourceDelegate : public content::ResourceDispatcherDelegate {
  public:
   RendererResourceDelegate()
-      : ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+      : weak_factory_(this) {
   }
 
   virtual webkit_glue::ResourceLoaderBridge::Peer* OnRequestComplete(
@@ -167,10 +163,6 @@ ChromeRenderProcessObserver::ChromeRenderProcessObserver(
     // TODO(JAR): Need to implement renderer IO msgloop watchdog.
   }
 
-  if (command_line.HasSwitch(switches::kDumpHistogramsOnExit)) {
-    base::StatisticsRecorder::set_dump_on_exit(true);
-  }
-
 #if defined(ENABLE_AUTOFILL_DIALOG)
   WebRuntimeFeatures::enableRequestAutocomplete(
       command_line.HasSwitch(switches::kEnableInteractiveAutocomplete) ||
@@ -232,8 +224,6 @@ bool ChromeRenderProcessObserver::OnControlMessageReceived(
     IPC_MESSAGE_HANDLER(ChromeViewMsg_PurgeMemory, OnPurgeMemory)
     IPC_MESSAGE_HANDLER(ChromeViewMsg_SetContentSettingRules,
                         OnSetContentSettingRules)
-    IPC_MESSAGE_HANDLER(ChromeViewMsg_ToggleWebKitSharedTimer,
-                        OnToggleWebKitSharedTimer)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
@@ -288,13 +278,11 @@ void ChromeRenderProcessObserver::OnSetFieldTrialGroup(
 
 void ChromeRenderProcessObserver::OnGetV8HeapStats() {
   v8::HeapStatistics heap_stats;
-  v8::V8::GetHeapStatistics(&heap_stats);
+  // TODO(svenpanne) The call below doesn't take web workers into account, this
+  // has to be done manually by iterating over all Isolates involved.
+  v8::Isolate::GetCurrent()->GetHeapStatistics(&heap_stats);
   RenderThread::Get()->Send(new ChromeViewHostMsg_V8HeapStats(
       heap_stats.total_heap_size(), heap_stats.used_heap_size()));
-}
-
-void ChromeRenderProcessObserver::OnToggleWebKitSharedTimer(bool suspend) {
-  RenderThread::Get()->ToggleWebKitSharedTimer(suspend);
 }
 
 void ChromeRenderProcessObserver::OnPurgeMemory() {

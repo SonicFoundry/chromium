@@ -4,9 +4,13 @@
 
 #include "ash/wm/workspace/workspace_manager.h"
 
+#include <map>
+
 #include "ash/ash_switches.h"
 #include "ash/root_window_controller.h"
 #include "ash/screen_ash.h"
+#include "ash/shelf/shelf_layout_manager.h"
+#include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
 #include "ash/shell_window_ids.h"
 #include "ash/system/status_area_widget.h"
@@ -14,28 +18,68 @@
 #include "ash/test/shell_test_api.h"
 #include "ash/wm/activation_controller.h"
 #include "ash/wm/property_util.h"
-#include "ash/wm/shelf_layout_manager.h"
 #include "ash/wm/window_properties.h"
 #include "ash/wm/window_util.h"
 #include "ash/wm/workspace/workspace.h"
 #include "ash/wm/workspace_controller_test_helper.h"
 #include "base/command_line.h"
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/root_window.h"
 #include "ui/aura/test/event_generator.h"
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/test/test_windows.h"
 #include "ui/aura/window.h"
+#include "ui/base/hit_test.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/compositor/layer.h"
+#include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/gfx/screen.h"
+#include "ui/views/corewm/window_animations.h"
 #include "ui/views/widget/widget.h"
 
 using aura::Window;
 
 namespace ash {
 namespace internal {
+
+// Returns a string containing the names of all the children of |window| (in
+// order). Each entry is separated by a space.
+std::string GetWindowNames(const aura::Window* window) {
+  std::string result;
+  for (size_t i = 0; i < window->children().size(); ++i) {
+    if (i != 0)
+      result += " ";
+    result += window->children()[i]->name();
+  }
+  return result;
+}
+
+// Returns a string containing the names of windows corresponding to each of the
+// child layers of |window|'s layer. Any layers that don't correspond to a child
+// Window of |window| are ignored. The result is ordered based on the layer
+// ordering.
+std::string GetLayerNames(const aura::Window* window) {
+  typedef std::map<const ui::Layer*, std::string> LayerToWindowNameMap;
+  LayerToWindowNameMap window_names;
+  for (size_t i = 0; i < window->children().size(); ++i) {
+    window_names[window->children()[i]->layer()] =
+        window->children()[i]->name();
+  }
+
+  std::string result;
+  const std::vector<ui::Layer*>& layers(window->layer()->children());
+  for (size_t i = 0; i < layers.size(); ++i) {
+    LayerToWindowNameMap::iterator layer_i =
+        window_names.find(layers[i]);
+    if (layer_i != window_names.end()) {
+      if (!result.empty())
+        result += " ";
+      result += layer_i->second;
+    }
+  }
+  return result;
+}
 
 class WorkspaceManagerTest : public test::AshTestBase {
  public:
@@ -59,6 +103,18 @@ class WorkspaceManagerTest : public test::AshTestBase {
     return window;
   }
 
+  aura::Window* CreateAppTestWindow(aura::Window* parent) {
+    aura::Window* window = new aura::Window(NULL);
+    window->SetProperty(aura::client::kShowStateKey, ui::SHOW_STATE_NORMAL);
+    window->SetType(aura::client::WINDOW_TYPE_POPUP);
+    window->Init(ui::LAYER_TEXTURED);
+    if (!parent)
+      SetDefaultParentByPrimaryRootWindow(window);
+    else
+      parent->AddChild(window);
+    return window;
+  }
+
   aura::Window* GetViewport() {
     return Shell::GetContainer(Shell::GetPrimaryRootWindow(),
                                kShellWindowId_DefaultContainer);
@@ -76,8 +132,12 @@ class WorkspaceManagerTest : public test::AshTestBase {
     return manager_->active_workspace_;
   }
 
-  ShelfLayoutManager* shelf_layout_manager() {
+  ShelfWidget* shelf_widget() {
     return Shell::GetPrimaryRootWindowController()->shelf();
+  }
+
+  ShelfLayoutManager* shelf_layout_manager() {
+    return Shell::GetPrimaryRootWindowController()->GetShelfLayoutManager();
   }
 
   bool GetWindowOverlapsShelf() {
@@ -100,6 +160,20 @@ class WorkspaceManagerTest : public test::AshTestBase {
         manager_->workspaces_.begin());
   }
 
+  // Returns a string description of the current state. The string has the
+  // following format:
+  // W* P=W* active=N
+  // Each W corresponds to a workspace. Each workspace is prefixed with an 'M'
+  // if the workspace is maximized and is followed by the number of windows in
+  // the workspace.
+  // 'P=' is used for the pending workspaces (see
+  // WorkspaceManager::pending_workspaces_ for details on pending workspaces).
+  // N is the index of the active workspace (index into
+  // WorkspaceManager::workspaces_).
+  // For example, '2 M1 P=M1 active=1' means the first workspace (the desktop)
+  // has 2 windows, the second workspace is a maximized workspace with 1 window,
+  // there is a pending maximized workspace with 1 window and the second
+  // workspace is active.
   std::string StateString() {
     std::string result;
     for (size_t i = 0; i < manager_->workspaces_.size(); ++i) {
@@ -305,6 +379,88 @@ TEST_F(WorkspaceManagerTest, TwoMaximized) {
   EXPECT_EQ(w2.get(), workspaces()[2]->window()->children()[0]);
 }
 
+// Get the index of the layer inside its parent. This index can be used to
+// determine the z-order / draw-order of objects in the render tree.
+size_t IndexOfLayerInParent(ui::Layer* layer) {
+  ui::Layer* parent = layer->parent();
+  for (size_t i = 0; i < parent->children().size(); i++) {
+    if (layer == parent->children()[i])
+      return i;
+  }
+  // This should never be reached.
+  NOTREACHED();
+  return 0;
+}
+
+// Make sure that the layer z-order is correct for the time of the animation
+// when in a workspace with a normal and a maximized window the normal window
+// gets maximized. See crbug.com/232399.
+TEST_F(WorkspaceManagerTest, MaximizeSecondInWorkspace) {
+  // Create a maximized window.
+  scoped_ptr<Window> w1(CreateTestWindow());
+  ASSERT_EQ(1U, w1->layer()->parent()->children().size());
+  w1->SetBounds(gfx::Rect(0, 0, 250, 251));
+  w1->Show();
+  wm::ActivateWindow(w1.get());
+  w1->SetProperty(aura::client::kShowStateKey, ui::SHOW_STATE_MAXIMIZED);
+  wm::ActivateWindow(w1.get());
+  // There are two workspaces: A normal and a maximized one.
+  ASSERT_EQ("0 M1 active=1", StateString());
+
+  // Create a second window and make it part of the maximized workspace.
+  scoped_ptr<Window> w2(CreateAppTestWindow(w1->parent()));
+  w2->SetBounds(gfx::Rect(0, 0, 50, 51));
+  w2->Show();
+  wm::ActivateWindow(w2.get());
+  // There are still two workspaces and two windows in the (maximized)
+  // workspace.
+  ASSERT_EQ("0 M2 active=1", StateString());
+  ASSERT_EQ(w1->layer()->parent()->children()[0], w1->layer());
+  ASSERT_EQ(w1->layer()->parent()->children()[1], w2->layer());
+
+  // Now we need to enable all animations since the incorrect layer ordering we
+  // want to test against happens only while the animation is going on.
+  scoped_ptr<ui::ScopedAnimationDurationScaleMode> animation_duration(
+      new ui::ScopedAnimationDurationScaleMode(
+          ui::ScopedAnimationDurationScaleMode::FAST_DURATION));
+
+  ui::Layer* old_w2_layer = w2->layer();
+
+  // Maximize the second window and make sure that the workspace changes.
+  w2->SetProperty(aura::client::kShowStateKey, ui::SHOW_STATE_MAXIMIZED);
+
+  // Check the correct window hierarchy - (|w2|) should be last since it was
+  // maximized last.
+  ASSERT_EQ("0 M1 M1 active=2", StateString());
+  EXPECT_EQ(3U, workspaces().size());
+  EXPECT_EQ(w1.get(), workspaces()[1]->window()->children()[0]);
+  EXPECT_EQ(w2.get(), workspaces()[2]->window()->children()[0]);
+
+  // Check the workspace layer visibility.
+  EXPECT_EQ(1, workspaces()[1]->window()->layer()->opacity());
+  EXPECT_EQ(1, workspaces()[2]->window()->layer()->opacity());
+
+  // Check that |w2| got a new layer and that the old layer is still visible,
+  // while the new one is not. Further and foremost the old layer should be a
+  // member of the workspace's window and it should be the second last of the
+  // list to be properly stacked while the animation is going on.
+  EXPECT_NE(w2->layer(), old_w2_layer);
+  EXPECT_EQ(0, w2->layer()->opacity());
+  EXPECT_EQ(1, old_w2_layer->opacity());
+
+  // For the animation to look right we need the following ordering:
+  // workspace_1_layer_index < old_layer_index < workspace_2_layer_index.
+  ASSERT_EQ(workspaces()[1]->window()->parent()->layer(),
+            old_w2_layer->parent());
+  const size_t workspace_1_layer_index = IndexOfLayerInParent(
+      workspaces()[1]->window()->layer());
+  const size_t workspace_2_layer_index = IndexOfLayerInParent(
+      workspaces()[2]->window()->layer());
+  const size_t old_layer_index = IndexOfLayerInParent(old_w2_layer);
+  EXPECT_LT(workspace_1_layer_index, old_layer_index);
+  EXPECT_LT(old_layer_index, workspace_2_layer_index);
+}
+
 // Makes sure requests to change the bounds of a normal window go through.
 TEST_F(WorkspaceManagerTest, ChangeBoundsOfNormalWindow) {
   scoped_ptr<Window> w1(CreateTestWindow());
@@ -389,6 +545,30 @@ TEST_F(WorkspaceManagerTest, DontShowTransientsOnSwitch) {
   EXPECT_TRUE(w1->layer()->IsDrawn());
   EXPECT_FALSE(w2->layer()->IsDrawn());
   EXPECT_FALSE(w3->layer()->IsDrawn());
+}
+
+// Persists-across-all-workspace flag should not cause a transient child
+// to be activated at desktop workspace.
+TEST_F(WorkspaceManagerTest, PersistsTransientChildStayInSameWorkspace) {
+  scoped_ptr<Window> w1(CreateTestWindow());
+  SetPersistsAcrossAllWorkspaces(
+      w1.get(),
+      WINDOW_PERSISTS_ACROSS_ALL_WORKSPACES_VALUE_YES);
+  w1->SetProperty(aura::client::kShowStateKey, ui::SHOW_STATE_MAXIMIZED);
+  w1->Show();
+  wm::ActivateWindow(w1.get());
+  ASSERT_EQ("0 M1 active=1", StateString());
+
+  scoped_ptr<Window> w2(CreateTestWindowUnparented());
+  w1->AddTransientChild(w2.get());
+  SetPersistsAcrossAllWorkspaces(
+      w2.get(),
+      WINDOW_PERSISTS_ACROSS_ALL_WORKSPACES_VALUE_YES);
+  SetDefaultParentByPrimaryRootWindow(w2.get());
+  w2->Show();
+  wm::ActivateWindow(w2.get());
+
+  ASSERT_EQ("0 M2 active=1", StateString());
 }
 
 // Assertions around minimizing a single window.
@@ -815,7 +995,7 @@ TEST_F(WorkspaceManagerTest, MinimizeResetsVisibility) {
   w1->SetProperty(aura::client::kShowStateKey, ui::SHOW_STATE_MINIMIZED);
   EXPECT_EQ(SHELF_VISIBLE,
             shelf_layout_manager()->visibility_state());
-  EXPECT_FALSE(Launcher::ForPrimaryDisplay()->paints_background());
+  EXPECT_FALSE(shelf_widget()->paints_background());
 }
 
 // Verifies transients are moved when maximizing.
@@ -960,9 +1140,10 @@ TEST_F(WorkspaceManagerTest, MoveOnSwitch) {
 
   // Increase the size of the shelf. This would make |w1| fall completely out of
   // the display work area.
-  gfx::Size size(shelf->status_area_widget()->GetWindowBoundsInScreen().size());
+  gfx::Size size(shelf_widget()->status_area_widget()->
+      GetWindowBoundsInScreen().size());
   size.Enlarge(0, 30);
-  shelf->status_area_widget()->SetSize(size);
+  shelf_widget()->status_area_widget()->SetSize(size);
 
   // Switch to w1. The window should have moved.
   wm::ActivateWindow(w1.get());
@@ -1405,7 +1586,8 @@ TEST_F(WorkspaceManagerTest, NormToMaxToNormRepositionsRemaining) {
 
 // Test that animations are triggered.
 TEST_F(WorkspaceManagerTest, AnimatedNormToMaxToNormRepositionsRemaining) {
-  ui::LayerAnimator::set_disable_animations_for_test(false);
+  ui::ScopedAnimationDurationScaleMode normal_duration_mode(
+      ui::ScopedAnimationDurationScaleMode::NORMAL_DURATION);
   scoped_ptr<aura::Window> window1(CreateTestWindowInShellWithId(0));
   window1->Hide();
   window1->SetBounds(gfx::Rect(16, 32, 640, 320));
@@ -1437,6 +1619,191 @@ TEST_F(WorkspaceManagerTest, AnimatedNormToMaxToNormRepositionsRemaining) {
                 desktop_area.width() - window1->bounds().width()) +
             ",32 640x320", window1->bounds().ToString());
   EXPECT_EQ("0,48 256x512", window2->bounds().ToString());
+}
+
+// This tests simulates a browser and an app and verifies the ordering of the
+// windows and layers doesn't get out of sync as various operations occur. Its
+// really testing code in FocusController, but easier to simulate here. Just as
+// with a real browser the browser here has a transient child window
+// (corresponds to the status bubble).
+TEST_F(WorkspaceManagerTest, VerifyLayerOrdering) {
+  scoped_ptr<Window> browser(
+      aura::test::CreateTestWindowWithDelegate(
+          NULL,
+          aura::client::WINDOW_TYPE_NORMAL,
+          gfx::Rect(5, 6, 7, 8),
+          NULL));
+  browser->SetName("browser");
+  SetDefaultParentByPrimaryRootWindow(browser.get());
+  browser->Show();
+  wm::ActivateWindow(browser.get());
+
+  // |status_bubble| is made a transient child of |browser| and as a result
+  // owned by |browser|.
+  aura::test::TestWindowDelegate* status_bubble_delegate =
+      aura::test::TestWindowDelegate::CreateSelfDestroyingDelegate();
+  status_bubble_delegate->set_can_focus(false);
+  Window* status_bubble =
+      aura::test::CreateTestWindowWithDelegate(
+          status_bubble_delegate,
+          aura::client::WINDOW_TYPE_POPUP,
+          gfx::Rect(5, 6, 7, 8),
+          NULL);
+  browser->AddTransientChild(status_bubble);
+  SetDefaultParentByPrimaryRootWindow(status_bubble);
+  status_bubble->SetName("status_bubble");
+
+  scoped_ptr<Window> app(
+      aura::test::CreateTestWindowWithDelegate(
+          NULL,
+          aura::client::WINDOW_TYPE_NORMAL,
+          gfx::Rect(5, 6, 7, 8),
+          NULL));
+  app->SetName("app");
+  SetDefaultParentByPrimaryRootWindow(app.get());
+
+  aura::Window* parent = browser->parent();
+
+  app->Show();
+  wm::ActivateWindow(app.get());
+  EXPECT_EQ(GetWindowNames(parent), GetLayerNames(parent));
+
+  // Minimize the app, focus should go the browser.
+  app->SetProperty(aura::client::kShowStateKey, ui::SHOW_STATE_MINIMIZED);
+  EXPECT_TRUE(wm::IsActiveWindow(browser.get()));
+  EXPECT_EQ(GetWindowNames(parent), GetLayerNames(parent));
+
+  // Minimize the browser (neither windows are focused).
+  browser->SetProperty(aura::client::kShowStateKey, ui::SHOW_STATE_MINIMIZED);
+  EXPECT_FALSE(wm::IsActiveWindow(browser.get()));
+  EXPECT_FALSE(wm::IsActiveWindow(app.get()));
+  EXPECT_EQ(GetWindowNames(parent), GetLayerNames(parent));
+
+  // Show the browser (which should restore it).
+  browser->Show();
+  EXPECT_EQ(GetWindowNames(parent), GetLayerNames(parent));
+
+  // Activate the browser.
+  ash::wm::ActivateWindow(browser.get());
+  EXPECT_TRUE(wm::IsActiveWindow(browser.get()));
+  EXPECT_EQ(GetWindowNames(parent), GetLayerNames(parent));
+
+  // Restore the app. This differs from above code for |browser| as internally
+  // the app code does this. Restoring this way or using Show() should not make
+  // a difference.
+  app->SetProperty(aura::client::kShowStateKey, ui::SHOW_STATE_NORMAL);
+  EXPECT_EQ(GetWindowNames(parent), GetLayerNames(parent));
+
+  // Activate the app.
+  ash::wm::ActivateWindow(app.get());
+  EXPECT_TRUE(wm::IsActiveWindow(app.get()));
+  EXPECT_EQ(GetWindowNames(parent), GetLayerNames(parent));
+}
+
+namespace {
+
+// Used by DragMaximizedNonTrackedWindow to track how many times the window
+// hierarchy changes.
+class DragMaximizedNonTrackedWindowObserver
+    : public aura::WindowObserver {
+ public:
+  DragMaximizedNonTrackedWindowObserver() : change_count_(0) {
+  }
+
+  // Number of times OnWindowHierarchyChanged() has been received.
+  void clear_change_count() { change_count_ = 0; }
+  int change_count() const {
+    return change_count_;
+  }
+
+  // aura::WindowObserver overrides:
+  virtual void OnWindowHierarchyChanged(
+      const HierarchyChangeParams& params) OVERRIDE {
+    change_count_++;
+  }
+
+ private:
+  int change_count_;
+
+  DISALLOW_COPY_AND_ASSIGN(DragMaximizedNonTrackedWindowObserver);
+};
+
+}  // namespace
+
+// Verifies setting tracked by workspace to false and then dragging a maximized
+// window doesn't result in changing the window hierarchy (which typically
+// indicates new workspaces have been created).
+TEST_F(WorkspaceManagerTest, DragMaximizedNonTrackedWindow) {
+  aura::test::EventGenerator generator(
+      Shell::GetPrimaryRootWindow(), gfx::Point());
+  generator.MoveMouseTo(5, 5);
+
+  aura::test::TestWindowDelegate delegate;
+  delegate.set_window_component(HTCAPTION);
+  scoped_ptr<Window> w1(
+      aura::test::CreateTestWindowWithDelegate(&delegate,
+                                               aura::client::WINDOW_TYPE_NORMAL,
+                                               gfx::Rect(5, 6, 7, 8),
+                                               NULL));
+  SetDefaultParentByPrimaryRootWindow(w1.get());
+  w1->SetProperty(aura::client::kShowStateKey, ui::SHOW_STATE_MAXIMIZED);
+  w1->Show();
+  wm::ActivateWindow(w1.get());
+  DragMaximizedNonTrackedWindowObserver observer;
+  w1->parent()->parent()->AddObserver(&observer);
+  const gfx::Rect max_bounds(w1->bounds());
+
+  // There should be two workspace, one for the desktop and one for the
+  // maximized window with the maximized active.
+  EXPECT_EQ("0 M1 active=1", StateString());
+
+  generator.PressLeftButton();
+  generator.MoveMouseTo(100, 100);
+  // The bounds shouldn't change (drag should result in nothing happening
+  // now.
+  EXPECT_EQ(max_bounds.ToString(), w1->bounds().ToString());
+  EXPECT_EQ("0 M1 active=1", StateString());
+
+  generator.ReleaseLeftButton();
+  EXPECT_EQ(0, observer.change_count());
+
+  // Set tracked to false and repeat, now the window should move.
+  SetTrackedByWorkspace(w1.get(), false);
+  generator.MoveMouseTo(5, 5);
+  generator.PressLeftButton();
+  generator.MoveMouseBy(100, 100);
+  EXPECT_EQ(gfx::Rect(max_bounds.x() + 100, max_bounds.y() + 100,
+                      max_bounds.width(), max_bounds.height()).ToString(),
+            w1->bounds().ToString());
+  EXPECT_EQ("0 M1 active=1", StateString());
+
+  generator.ReleaseLeftButton();
+  SetTrackedByWorkspace(w1.get(), true);
+  // Marking the window tracked again should snap back to origin.
+  EXPECT_EQ("0 M1 active=1", StateString());
+  EXPECT_EQ(max_bounds.ToString(), w1->bounds().ToString());
+  EXPECT_EQ(0, observer.change_count());
+
+  w1->parent()->parent()->RemoveObserver(&observer);
+}
+
+// Verifies that a new maximized window becomes visible after its activation
+// is requested, even though it does not become activated because a system
+// modal window is active.
+TEST_F(WorkspaceManagerTest, SwitchFromModal) {
+  scoped_ptr<Window> modal_window(CreateTestWindowUnparented());
+  modal_window->SetBounds(gfx::Rect(10, 11, 21, 22));
+  modal_window->SetProperty(aura::client::kModalKey, ui::MODAL_TYPE_SYSTEM);
+  SetDefaultParentByPrimaryRootWindow(modal_window.get());
+  modal_window->Show();
+  wm::ActivateWindow(modal_window.get());
+
+  scoped_ptr<Window> maximized_window(CreateTestWindow());
+  maximized_window->SetProperty(
+      aura::client::kShowStateKey, ui::SHOW_STATE_MAXIMIZED);
+  maximized_window->Show();
+  wm::ActivateWindow(maximized_window.get());
+  EXPECT_TRUE(maximized_window->IsVisible());
 }
 
 }  // namespace internal

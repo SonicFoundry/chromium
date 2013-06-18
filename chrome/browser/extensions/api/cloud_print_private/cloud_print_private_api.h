@@ -12,6 +12,15 @@
 
 namespace extensions {
 
+namespace api {
+namespace cloud_print_private {
+
+struct UserSettings;
+
+}  // namespace cloud_print_private
+}  // namespace api
+
+
 // For use only in tests.
 class CloudPrintTestsDelegate {
  public:
@@ -22,10 +31,11 @@ class CloudPrintTestsDelegate {
       const std::string& user_email,
       const std::string& robot_email,
       const std::string& credentials,
-      bool connect_new_printers,
-      const std::vector<std::string>& printer_blacklist) = 0;
+      const api::cloud_print_private::UserSettings& user_settings) = 0;
 
   virtual std::string GetHostName() = 0;
+
+  virtual std::string GetClientId() = 0;
 
   virtual std::vector<std::string> GetPrinters() = 0;
 
@@ -75,7 +85,20 @@ class CloudPrintPrivateGetPrintersFunction : public AsyncExtensionFunction {
   virtual ~CloudPrintPrivateGetPrintersFunction();
 
   void CollectPrinters();
-  void ReturnResult(const base::ListValue* printers);
+
+  // ExtensionFunction:
+  virtual bool RunImpl() OVERRIDE;
+};
+
+class CloudPrintPrivateGetClientIdFunction : public AsyncExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("cloudPrintPrivate.getClientId",
+                             CLOUDPRINTPRIVATE_GETCLIENTID);
+
+  CloudPrintPrivateGetClientIdFunction();
+
+ protected:
+  virtual ~CloudPrintPrivateGetClientIdFunction();
 
   // ExtensionFunction:
   virtual bool RunImpl() OVERRIDE;

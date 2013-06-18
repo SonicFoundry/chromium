@@ -17,6 +17,8 @@ class ShareableFileReference;
 
 namespace fileapi {
 
+class CopyOrMoveFileValidator;
+
 // A delegate class for recursive copy or move operations.
 class CrossOperationDelegate
     : public RecursiveOperationDelegate,
@@ -29,8 +31,8 @@ class CrossOperationDelegate
 
   CrossOperationDelegate(
       FileSystemContext* file_system_context,
-      LocalFileSystemOperation* src_root_operation,
-      scoped_ptr<LocalFileSystemOperation> dest_root_operation,
+      scoped_ptr<LocalFileSystemOperation> src_root_operation,
+      LocalFileSystemOperation* dest_root_operation,
       const FileSystemURL& src_root,
       const FileSystemURL& dest_root,
       OperationType operation_type,
@@ -48,19 +50,33 @@ class CrossOperationDelegate
   using base::SupportsWeakPtr<CrossOperationDelegate>::AsWeakPtr;
 
  private:
+  struct URLPair {
+    URLPair(const FileSystemURL& src, const FileSystemURL& dest)
+        : src(src),
+          dest(dest) {
+    }
+    FileSystemURL src;
+    FileSystemURL dest;
+  };
+
   void DidTryCopyOrMoveFile(base::PlatformFileError error);
   void DidTryRemoveDestRoot(base::PlatformFileError error);
   void CopyOrMoveFile(
-      const FileSystemURL& src,
-      const FileSystemURL& dest,
+      const URLPair& url_pair,
       const StatusCallback& callback);
   void DidCreateSnapshot(
-      const FileSystemURL& dest,
+      const URLPair& url_pair,
       const StatusCallback& callback,
       base::PlatformFileError error,
       const base::PlatformFileInfo& file_info,
       const base::FilePath& platform_path,
       const scoped_refptr<webkit_blob::ShareableFileReference>& file_ref);
+  void DidValidateFile(
+      const FileSystemURL& dest,
+      const StatusCallback& callback,
+      const base::PlatformFileInfo& file_info,
+      const base::FilePath& platform_path,
+      base::PlatformFileError error);
   void DidFinishCopy(
       const FileSystemURL& src,
       const StatusCallback& callback,
@@ -75,17 +91,17 @@ class CrossOperationDelegate
   // When the creation fails it fires callback_ with the
   // error code and returns NULL.
   //
-  // - NewSourceOperation is basically a thin wrapper of
+  // - NewDestOperation is basically a thin wrapper of
   //   RecursiveOperationDelegate::NewOperation().
-  // - NewDestOperation also redirects the request to
+  // - NewSourceOperation also redirects the request to
   //   RecursiveOperationDelegate::NewOperation() **iff** same_file_system_
   //   is true.
   //   Otherwise it's for cross-filesystem operation and it needs a
   //   separate FileSystemOperationContext, so it creates a new operation
-  //   which inherits context from dest_root_operation_.
+  //   which inherits context from src_root_operation_.
   //
-  LocalFileSystemOperation* NewSourceOperation();
   LocalFileSystemOperation* NewDestOperation();
+  LocalFileSystemOperation* NewSourceOperation();
 
   FileSystemURL src_root_;
   FileSystemURL dest_root_;
@@ -93,9 +109,11 @@ class CrossOperationDelegate
   OperationType operation_type_;
   StatusCallback callback_;
 
-  scoped_ptr<LocalFileSystemOperation> dest_root_operation_;
+  scoped_ptr<LocalFileSystemOperation> src_root_operation_;
 
   scoped_refptr<webkit_blob::ShareableFileReference> current_file_ref_;
+
+  scoped_ptr<CopyOrMoveFileValidator> validator_;
 
   DISALLOW_COPY_AND_ASSIGN(CrossOperationDelegate);
 };

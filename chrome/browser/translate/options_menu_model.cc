@@ -6,7 +6,7 @@
 
 #include "base/metrics/histogram.h"
 #include "chrome/app/chrome_command_ids.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/translate/translate_infobar_delegate.h"
 #include "chrome/common/url_constants.h"
@@ -24,7 +24,7 @@ using content::WebContents;
 
 OptionsMenuModel::OptionsMenuModel(
     TranslateInfoBarDelegate* translate_delegate)
-    : ALLOW_THIS_IN_INITIALIZER_LIST(ui::SimpleMenuModel(this)),
+    : ui::SimpleMenuModel(this),
       translate_infobar_delegate_(translate_delegate) {
   string16 original_language = translate_delegate->language_name_at(
       translate_delegate->original_language_index());
@@ -33,8 +33,8 @@ OptionsMenuModel::OptionsMenuModel(
 
   // Populate the menu.
   // Incognito mode does not get any preferences related items.
-  if (!translate_delegate->owner()->GetWebContents()->
-      GetBrowserContext()->IsOffTheRecord()) {
+  if (!translate_delegate->web_contents()->GetBrowserContext()->
+      IsOffTheRecord()) {
     AddCheckItem(IDC_TRANSLATE_OPTIONS_ALWAYS,
         l10n_util::GetStringFUTF16(IDS_TRANSLATE_INFOBAR_OPTIONS_ALWAYS,
             original_language, target_language));
@@ -96,7 +96,7 @@ bool OptionsMenuModel::GetAcceleratorForCommandId(
   return false;
 }
 
-void OptionsMenuModel::ExecuteCommand(int command_id) {
+void OptionsMenuModel::ExecuteCommand(int command_id, int event_flags) {
   switch (command_id) {
     case IDC_TRANSLATE_OPTIONS_NEVER_TRANSLATE_LANG:
       UMA_HISTOGRAM_COUNTS("Translate.NeverTranslateLang", 1);
@@ -118,8 +118,7 @@ void OptionsMenuModel::ExecuteCommand(int command_id) {
       break;
 
     case IDC_TRANSLATE_OPTIONS_ABOUT: {
-      WebContents* web_contents =
-          translate_infobar_delegate_->owner()->GetWebContents();
+      WebContents* web_contents = translate_infobar_delegate_->web_contents();
       if (web_contents) {
         OpenURLParams params(
             GURL(chrome::kAboutGoogleTranslateURL), Referrer(),

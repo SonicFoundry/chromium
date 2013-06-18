@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+'use strict';
+
 /**
  * MetadataCache is a map from url to an object containing properties.
  * Properties are divided by types, and all properties of one type are accessed
@@ -11,7 +13,7 @@
  *   filesystem: size, modificationTime
  *   internal: presence
  *   drive: pinned, present, hosted, editUrl, contentUrl, availableOffline
- *   streaming: url
+ *   streaming: (no property)
  *
  *   Following are not fetched for non-present drive files.
  *   media: artist, album, title, width, height, imageTransform, etc.
@@ -384,13 +386,14 @@ MetadataCache.prototype.clearRecursively = function(item, type) {
   var keys = Object.keys(this.cache_);
   var url = this.itemToUrl_(item);
 
-  for (var entryUrl in keys) {
+  for (var index = 0; index < keys.length; index++) {
+    var entryUrl = keys[index];
     if (entryUrl.substring(0, url.length) === url) {
       if (type === '*') {
         this.cache_[entryUrl].properties = {};
       } else {
-        for (var index = 0; index < types.length; index++) {
-          var type = types[index];
+        for (var j = 0; j < types.length; j++) {
+          var type = types[j];
           delete this.cache_[entryUrl].properties[type];
         }
       }
@@ -725,7 +728,7 @@ FilesystemProvider.prototype.fetch = function(url, type, callback, opt_entry) {
  * This provider returns the following objects:
  *     drive: { pinned, hosted, present, dirty, editUrl, contentUrl, driveApps }
  *     thumbnail: { url, transform }
- *     streaming: { url }
+ *     streaming: { }
  * @constructor
  */
 function DriveProvider() {
@@ -795,15 +798,19 @@ DriveProvider.prototype.callApi_ = function() {
   this.callbacks_ = [];
   var self = this;
 
-  chrome.fileBrowserPrivate.getDriveFileProperties(urls, function(props) {
-    for (var index = 0; index < urls.length; index++) {
-      callbacks[index](self.convert_(props[index], urls[index]));
-    }
-  });
+  var task = function(url, callback) {
+    chrome.fileBrowserPrivate.getDriveEntryProperties(url,
+        function(properties) {
+          callback(self.convert_(properties, url));
+        });
+  };
+
+  for (var i = 0; i < urls.length; i++)
+    task(urls[i], callbacks[i]);
 };
 
 /**
- * @param {DriveFileProperties} data Drive file properties.
+ * @param {DriveEntryProperties} data Drive entry properties.
  * @param {string} url File url.
  * @return {boolean} True if the file is available offline.
  */
@@ -814,12 +821,17 @@ DriveProvider.isAvailableOffline = function(data, url) {
   if (!data.isHosted)
     return false;
 
+  // What's available offline? See the 'Web' column at:
+  // http://support.google.com/drive/bin/answer.py?hl=en&answer=1628467
   var subtype = FileType.getType(url).subtype;
-  return subtype == 'doc' || subtype == 'sheet';
+  return (subtype == 'doc' ||
+          subtype == 'draw' ||
+          subtype == 'sheet' ||
+          subtype == 'slides');
 };
 
 /**
- * @param {DriveFileProperties} data Drive file properties.
+ * @param {DriveEntryProperties} data Drive entry properties.
  * @return {boolean} True if opening the file does not require downloading it
  *    via a metered connection.
  */
@@ -846,7 +858,8 @@ DriveProvider.prototype.convert_ = function(data, url) {
     contentUrl: (data.contentUrl || '').replace(/\?.*$/gi, ''),
     editUrl: data.editUrl || '',
     driveApps: data.driveApps || [],
-    contentMimeType: data.contentMimeType || ''
+    contentMimeType: data.contentMimeType || '',
+    sharedWithMe: data.sharedWithMe
   };
 
   if (!data.isPresent) {
@@ -861,10 +874,11 @@ DriveProvider.prototype.convert_ = function(data, url) {
       transform: null
     };
   }
-  if (!data.isPresent && ('contentUrl' in data)) {
-    result.streaming = {
-      url: data.contentUrl.replace(/\?.*$/gi, '')
-    };
+  if (!data.isPresent) {
+    // Indicate that the data is not available in local cache.
+    // It used to have a field 'url' for streaming play, but it is
+    // derprecated. See crbug.com/174560.
+    result.streaming = {};
   }
   return result;
 };

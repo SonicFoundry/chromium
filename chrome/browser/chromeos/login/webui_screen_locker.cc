@@ -11,6 +11,7 @@
 #include "base/metrics/histogram.h"
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
+#include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/chromeos/accessibility/accessibility_util.h"
 #include "chrome/browser/chromeos/login/helper.h"
 #include "chrome/browser/chromeos/login/screen_locker.h"
@@ -25,6 +26,7 @@
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_ui.h"
+#include "ui/aura/client/capture_client.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/x/x11_util.h"
 #include "ui/gfx/screen.h"
@@ -46,7 +48,7 @@ WebUIScreenLocker::WebUIScreenLocker(ScreenLocker* screen_locker)
     : ScreenLockerDelegate(screen_locker),
       lock_ready_(false),
       webui_ready_(false),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+      weak_factory_(this) {
   set_should_emit_login_prompt_visible(false);
   ash::Shell::GetInstance()->session_state_controller()->AddObserver(this);
   DBusThreadManager::Get()->GetPowerManagerClient()->AddObserver(this);
@@ -66,6 +68,9 @@ void WebUIScreenLocker::LockScreen(bool unlock_on_input) {
   OnWindowCreated();
   LoadURL(GURL(kLoginURL));
   lock_window->Grab();
+
+  // Subscribe to crash events.
+  content::WebContentsObserver::Observe(GetWebContents());
 
   // User list consisting of a single logged-in user.
   UserList users(1, chromeos::UserManager::Get()->GetLoggedInUser());
@@ -191,13 +196,7 @@ void WebUIScreenLocker::CreateAccount() {
   NOTREACHED();
 }
 
-void WebUIScreenLocker::CreateLocallyManagedUser(const string16& display_name,
-                                                 const std::string& password) {
-  NOTREACHED();
-}
-
-void WebUIScreenLocker::CompleteLogin(const std::string& username,
-                                      const std::string& password) {
+void WebUIScreenLocker::CompleteLogin(const UserContext& user_context) {
   NOTREACHED();
 }
 
@@ -205,10 +204,9 @@ string16 WebUIScreenLocker::GetConnectedNetworkName() {
   return GetCurrentNetworkName();
 }
 
-void WebUIScreenLocker::Login(const std::string& username,
-                              const std::string& password) {
+void WebUIScreenLocker::Login(const UserContext& user_context) {
   chromeos::ScreenLocker::default_screen_locker()->Authenticate(
-      ASCIIToUTF16(password));
+      ASCIIToUTF16(user_context.password));
 }
 
 void WebUIScreenLocker::LoginAsRetailModeUser() {
@@ -227,6 +225,9 @@ void WebUIScreenLocker::LoginAsPublicAccount(const std::string& username) {
   NOTREACHED();
 }
 
+void WebUIScreenLocker::OnSigninScreenReady() {
+}
+
 void WebUIScreenLocker::OnUserSelected(const std::string& username) {
 }
 
@@ -240,6 +241,9 @@ void WebUIScreenLocker::OnStartDeviceReset() {
 
 void WebUIScreenLocker::ShowWrongHWIDScreen() {
   NOTREACHED();
+}
+
+void WebUIScreenLocker::ResetPublicSessionAutoLoginTimer() {
 }
 
 void WebUIScreenLocker::ResyncUserData() {
@@ -269,8 +273,12 @@ void WebUIScreenLocker::OnLockWindowReady() {
 
 void WebUIScreenLocker::OnSessionStateEvent(
     ash::SessionStateObserver::EventType event) {
-  if (event == ash::SessionStateObserver::EVENT_LOCK_ANIMATION_FINISHED)
+  if (event == ash::SessionStateObserver::EVENT_LOCK_ANIMATION_FINISHED) {
+    // Release capture if any.
+    aura::client::GetCaptureClient(GetNativeWindow()->GetRootWindow())->
+        SetCapture(NULL);
     GetWebUI()->CallJavascriptFunction("cr.ui.Oobe.animateOnceFullyDisplayed");
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -297,6 +305,14 @@ void WebUIScreenLocker::SystemResumed(const base::TimeDelta& sleep_duration) {
       content::BrowserThread::UI,
       FROM_HERE,
       base::Bind(&WebUIScreenLocker::FocusUserPod, weak_factory_.GetWeakPtr()));
+}
+
+void WebUIScreenLocker::RenderViewGone(base::TerminationStatus status) {
+  if (browser_shutdown::GetShutdownType() == browser_shutdown::NOT_VALID &&
+      status != base::TERMINATION_STATUS_NORMAL_TERMINATION) {
+    LOG(ERROR) << "Renderer crash on lock screen";
+    Signout();
+  }
 }
 
 }  // namespace chromeos

@@ -65,7 +65,6 @@
           'dependencies': [
             'symbolize',
             '../build/linux/system.gyp:glib',
-            '../build/linux/system.gyp:x11',
             'xdg_mime',
           ],
           'defines': [
@@ -76,7 +75,6 @@
           ],
           'export_dependent_settings': [
             '../build/linux/system.gyp:glib',
-            '../build/linux/system.gyp:x11',
           ],
         }, {  # use_glib!=1
             'sources/': [
@@ -84,7 +82,23 @@
               ['exclude', '_nss\\.cc$'],
             ],
         }],
+        ['use_x11==1', {
+          'dependencies': [
+            '../build/linux/system.gyp:x11',
+          ],
+          'export_dependent_settings': [
+            '../build/linux/system.gyp:x11',
+          ],
+        }],
         ['OS == "android" and _toolset == "host"', {
+          # Always build base as a static_library for host toolset, even if
+          # we're doing a component build. Specifically, we only care about the
+          # target toolset using components since that's what developers are
+          # focusing on. In theory we should do this more generally for all
+          # targets when building for host, but getting the gyp magic
+          # per-toolset for the "component" variable is hard, and we really only
+          # need base on host.
+          'type': 'static_library',
           # Base for host support is the minimum required to run the
           # ssl false start blacklist tool. It requires further changes
           # to generically support host builds (and tests).
@@ -123,12 +137,16 @@
                 ['include', '^atomicops_internals_x86_gcc\\.cc$'],
               ],
             }],
+            ['target_arch == "mipsel"', {
+              'sources/': [
+                ['include', '^atomicops_internals_mips_gcc\\.cc$'],
+              ],
+            }],
           ],
           'dependencies': [
             'base_jni_headers',
             'symbolize',
             '../third_party/ashmem/ashmem.gyp:ashmem',
-            '../third_party/icu/icu.gyp:icuuc',
           ],
           'include_dirs': [
             '<(SHARED_INTERMEDIATE_DIR)/base',
@@ -148,7 +166,7 @@
             '../build/android/cpufeatures.gypi',
           ],
         }],
-        ['OS == "android" and _toolset == "target" and android_build_type == 0', {
+        ['OS == "android" and _toolset == "target" and android_webview_build == 0', {
           'dependencies': [
             'base_java',
           ],
@@ -313,6 +331,8 @@
         'i18n/number_formatting.h',
         'i18n/rtl.cc',
         'i18n/rtl.h',
+        'i18n/string_compare.cc',
+        'i18n/string_compare.h',
         'i18n/string_search.cc',
         'i18n/string_search.h',
         'i18n/time_formatting.cc',
@@ -344,6 +364,10 @@
         'prefs/overlay_user_pref_store.cc',
         'prefs/overlay_user_pref_store.h',
         'prefs/persistent_pref_store.h',
+        'prefs/pref_change_registrar.cc',
+        'prefs/pref_change_registrar.h',
+        'prefs/pref_member.cc',
+        'prefs/pref_member.h',
         'prefs/pref_notifier.h',
         'prefs/pref_notifier_impl.cc',
         'prefs/pref_notifier_impl.h',
@@ -362,10 +386,6 @@
         'prefs/pref_value_map.h',
         'prefs/pref_value_store.cc',
         'prefs/pref_value_store.h',
-        'prefs/public/pref_change_registrar.cc',
-        'prefs/public/pref_change_registrar.h',
-        'prefs/public/pref_member.cc',
-        'prefs/public/pref_member.h',
         'prefs/value_map_pref_store.cc',
         'prefs/value_map_pref_store.h',
       ],
@@ -426,6 +446,7 @@
       'type': '<(gtest_target_type)',
       'sources': [
         # Tests.
+        'android/activity_status_unittest.cc',
         'android/jni_android_unittest.cc',
         'android/jni_array_unittest.cc',
         'android/jni_string_unittest.cc',
@@ -454,6 +475,7 @@
         'debug/trace_event_unittest.cc',
         'debug/trace_event_unittest.h',
         'debug/trace_event_win_unittest.cc',
+        'deferred_sequenced_task_runner_unittest.cc',
         'environment_unittest.cc',
         'file_util_unittest.cc',
         'file_version_info_unittest.cc',
@@ -500,11 +522,12 @@
         'memory/scoped_ptr_unittest.cc',
         'memory/scoped_ptr_unittest.nc',
         'memory/scoped_vector_unittest.cc',
+        'memory/shared_memory_unittest.cc',
         'memory/singleton_unittest.cc',
         'memory/weak_ptr_unittest.cc',
         'memory/weak_ptr_unittest.nc',
-        'message_loop_proxy_impl_unittest.cc',
-        'message_loop_proxy_unittest.cc',
+        'message_loop/message_loop_proxy_impl_unittest.cc',
+        'message_loop/message_loop_proxy_unittest.cc',
         'message_loop_unittest.cc',
         'message_pump_glib_unittest.cc',
         'message_pump_io_ios_unittest.cc',
@@ -525,16 +548,18 @@
         'platform_file_unittest.cc',
         'posix/file_descriptor_shuffle_unittest.cc',
         'posix/unix_domain_socket_linux_unittest.cc',
+        'power_monitor/power_monitor_unittest.cc',
         'pr_time_unittest.cc',
+        'prefs/default_pref_store_unittest.cc',
         'prefs/json_pref_store_unittest.cc',
         'prefs/mock_pref_change_callback.h',
         'prefs/overlay_user_pref_store_unittest.cc',
+        'prefs/pref_change_registrar_unittest.cc',
+        'prefs/pref_member_unittest.cc',
         'prefs/pref_notifier_impl_unittest.cc',
         'prefs/pref_service_unittest.cc',
         'prefs/pref_value_map_unittest.cc',
         'prefs/pref_value_store_unittest.cc',
-        'prefs/public/pref_change_registrar_unittest.cc',
-        'prefs/public/pref_member_unittest.cc',
         'process_util_unittest.cc',
         'process_util_unittest_ios.cc',
         'process_util_unittest_mac.h',
@@ -543,25 +568,26 @@
         'rand_util_unittest.cc',
         'safe_numerics_unittest.cc',
         'safe_numerics_unittest.nc',
+        'scoped_clear_errno_unittest.cc',
         'scoped_native_library_unittest.cc',
         'scoped_observer.h',
         'security_unittest.cc',
         'sequence_checker_unittest.cc',
         'sequence_checker_impl_unittest.cc',
         'sha1_unittest.cc',
-        'shared_memory_unittest.cc',
         'stl_util_unittest.cc',
         'string16_unittest.cc',
-        'string_piece_unittest.cc',
         'string_util_unittest.cc',
         'stringprintf_unittest.cc',
         'strings/string_number_conversions_unittest.cc',
+        'strings/string_piece_unittest.cc',
         'strings/string_split_unittest.cc',
         'strings/string_tokenizer_unittest.cc',
         'strings/stringize_macros_unittest.cc',
         'strings/sys_string_conversions_mac_unittest.mm',
         'strings/sys_string_conversions_unittest.cc',
         'strings/utf_offset_string_conversions_unittest.cc',
+        'strings/utf_string_conversions_unittest.cc',
         'synchronization/cancellation_flag_unittest.cc',
         'synchronization/condition_variable_unittest.cc',
         'synchronization/lock_unittest.cc',
@@ -593,7 +619,6 @@
         'tools_sanity_unittest.cc',
         'tracked_objects_unittest.cc',
         'tuple_unittest.cc',
-        'utf_string_conversions_unittest.cc',
         'values_unittest.cc',
         'version_unittest.cc',
         'vlog_unittest.cc',
@@ -663,8 +688,6 @@
             ['exclude', '^metrics/stats_table_unittest\\.cc$'],
             # iOS does not use message_pump_libevent.
             ['exclude', '^message_pump_libevent_unittest\\.cc$'],
-            ['exclude', '^prefs/json_pref_store_unittest.\\cc$'],
-
           ],
           'conditions': [
             ['coverage != 0', {
@@ -672,7 +695,7 @@
                 # These sources can't be built with coverage due to a toolchain
                 # bug: http://openradar.appspot.com/radar?id=1499403
                 'json/json_reader_unittest.cc',
-                'string_piece_unittest.cc',
+                'strings/string_piece_unittest.cc',
 
                 # These tests crash when run with coverage turned on due to an
                 # issue with llvm_gcda_increment_indirect_counter:
@@ -691,8 +714,7 @@
               'action_name': 'copy_test_data',
               'variables': {
                 'test_data_files': [
-                  'data/json/bom_feff.json',
-                  'data/file_util_unittest',
+                  'test/data',
                 ],
                 'test_data_prefix': 'base',
               },
@@ -726,6 +748,11 @@
             '../tools/xdisplaycheck/xdisplaycheck.gyp:xdisplaycheck',
           ],
         }, {  # use_glib!=1
+          'sources!': [
+            'message_pump_glib_unittest.cc',
+          ]
+        }],
+        ['use_ozone == 1', {
           'sources!': [
             'message_pump_glib_unittest.cc',
           ]
@@ -815,9 +842,6 @@
         'test/expectations/expectation.h',
         'test/expectations/parser.cc',
         'test/expectations/parser.h',
-        'test/main_hook.cc',
-        'test/main_hook.h',
-        'test/main_hook_ios.mm',
         'test/mock_chrome_application_mac.h',
         'test/mock_chrome_application_mac.mm',
         'test/mock_devices_changed_observer.cc',
@@ -845,6 +869,7 @@
         'test/simple_test_tick_clock.h',
         'test/task_runner_test_template.cc',
         'test/task_runner_test_template.h',
+        'test/test_file_util.cc',
         'test/test_file_util.h',
         'test/test_file_util_linux.cc',
         'test/test_file_util_mac.cc',
@@ -1106,18 +1131,18 @@
           'target_name': 'base_jni_headers',
           'type': 'none',
           'sources': [
+            'android/java/src/org/chromium/base/ActivityStatus.java',
             'android/java/src/org/chromium/base/BuildInfo.java',
             'android/java/src/org/chromium/base/CpuFeatures.java',
             'android/java/src/org/chromium/base/ImportantFileWriterAndroid.java',
-            'android/java/src/org/chromium/base/LocaleUtils.java',
             'android/java/src/org/chromium/base/PathService.java',
             'android/java/src/org/chromium/base/PathUtils.java',
+            'android/java/src/org/chromium/base/PowerMonitor.java',
             'android/java/src/org/chromium/base/SystemMessageHandler.java',
-            'android/java/src/org/chromium/base/SystemMonitor.java',
             'android/java/src/org/chromium/base/ThreadUtils.java',
           ],
           'variables': {
-            'jni_gen_dir': 'base',
+            'jni_gen_package': 'base',
           },
           'includes': [ '../build/jni_generator.gypi' ],
         },
@@ -1127,14 +1152,33 @@
           'variables': {
             'java_in_dir': '../base/android/java',
           },
+          'dependencies': [
+            'base_java_activity_state',
+          ],
           'includes': [ '../build/java.gypi' ],
           'conditions': [
-            ['android_build_type==0', {
+            ['android_webview_build==0', {
               'dependencies': [
                 '../third_party/jsr-305/jsr-305.gyp:jsr_305_javalib',
               ],
             }]
           ],
+        },
+        {
+          'target_name': 'base_java_activity_state',
+          'type': 'none',
+          # This target is used to auto-generate ActivityState.java
+          # from a template file. The source file contains a list of
+          # Java constant declarations matching the ones in
+          # android/activity_state_list.h.
+          'sources': [
+            'android/java/src/org/chromium/base/ActivityState.template',
+          ],
+          'variables': {
+            'package_name': 'org/chromium/base',
+            'template_deps': ['android/activity_state_list.h'],
+          },
+          'includes': [ '../build/android/java_cpp_template.gypi' ],
         },
         {
           'target_name': 'base_java_test_support',

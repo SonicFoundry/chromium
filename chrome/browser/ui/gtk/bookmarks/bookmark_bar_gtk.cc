@@ -21,6 +21,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/bookmarks/bookmark_bar_constants.h"
+#include "chrome/browser/ui/bookmarks/bookmark_drag_drop.h"
 #include "chrome/browser/ui/bookmarks/bookmark_utils.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/chrome_pages.h"
@@ -126,11 +127,14 @@ void SetToolBarStyle() {
 
 void RecordAppLaunch(Profile* profile, const GURL& url) {
   DCHECK(profile->GetExtensionService());
-  if (!profile->GetExtensionService()->IsInstalledApp(url))
+  const extensions::Extension* extension =
+      profile->GetExtensionService()->GetInstalledApp(url);
+  if (!extension)
     return;
 
   AppLauncherHandler::RecordAppLaunchType(
-      extension_misc::APP_LAUNCH_BOOKMARK_BAR);
+      extension_misc::APP_LAUNCH_BOOKMARK_BAR,
+      extension->GetType());
 }
 
 }  // namespace
@@ -936,6 +940,11 @@ void BookmarkBarGtk::BookmarkNodeRemoved(BookmarkModel* model,
   SetChevronState();
 }
 
+void BookmarkBarGtk::BookmarkAllNodesRemoved(BookmarkModel* model) {
+  UpdateOtherBookmarksVisibility();
+  ResetButtons();
+}
+
 void BookmarkBarGtk::BookmarkNodeChanged(BookmarkModel* model,
                                          const BookmarkNode* node) {
   if (node->parent() != model_->bookmark_bar_node()) {
@@ -1247,6 +1256,7 @@ void BookmarkBarGtk::OnFolderClicked(GtkWidget* sender) {
     chrome::OpenAll(window_->GetNativeWindow(), page_navigator_, node,
                     NEW_BACKGROUND_TAB, browser_->profile());
   }
+  gdk_event_free(event);
 }
 
 gboolean BookmarkBarGtk::OnToolbarDragMotion(GtkWidget* toolbar,
@@ -1308,11 +1318,8 @@ void BookmarkBarGtk::OnDragReceived(GtkWidget* widget,
           gtk_selection_data_get_data(selection_data)), length);
       BookmarkNodeData drag_data;
       if (drag_data.ReadFromPickle(&pickle)) {
-        dnd_success = bookmark_utils::PerformBookmarkDrop(
-            browser_->profile(),
-            drag_data,
-            dest_node,
-            index) != ui::DragDropTypes::DRAG_NONE;
+        dnd_success = chrome::DropBookmarks(browser_->profile(),
+            drag_data, dest_node, index) != ui::DragDropTypes::DRAG_NONE;
       }
       break;
     }

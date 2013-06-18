@@ -6,6 +6,8 @@
 
 #include "base/utf_string_conversions.h"
 #include "chrome/browser/ui/views/message_center/web_notification_tray_win.h"
+#include "grit/ui_strings.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/size.h"
 #include "ui/message_center/views/message_bubble_base.h"
 #include "ui/message_center/views/message_center_bubble.h"
@@ -14,12 +16,7 @@
 #include "ui/views/bubble/tray_bubble_view.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
-
-namespace {
-
-const char kAccessibleNameForBubble[] = "Windows Notification Center";
-
-}
+#include "ui/views/win/hwnd_util.h"
 
 namespace message_center {
 
@@ -49,6 +46,14 @@ NotificationBubbleWrapperWin::NotificationBubbleWrapperWin(
       tray_->GetBubbleWindowContainer(), NULL, this, &init_params);
 
   bubble_widget_ = views::BubbleDelegateView::CreateBubble(bubble_view_);
+
+  // Remove the bubbles for Notifications and Notification Center from taskbar
+  // and alt-tab rotation.
+  HWND hwnd = views::HWNDForWidget(bubble_widget_);
+  LONG_PTR ex_styles = ::GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+  ex_styles |= WS_EX_TOOLWINDOW;
+  ::SetWindowLongPtr(hwnd, GWL_EXSTYLE, ex_styles);
+
   bubble_widget_->AddObserver(this);
   bubble_widget_->StackAtTop();
   bubble_widget_->SetAlwaysOnTop(true);
@@ -91,8 +96,7 @@ void NotificationBubbleWrapperWin::OnMouseExitedView() {
 }
 
 string16 NotificationBubbleWrapperWin::GetAccessibleNameForBubble() {
-  // TODO(dewittj): Get a string resource.
-  return ASCIIToUTF16(kAccessibleNameForBubble);
+  return l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_ACCESSIBLE_NAME);
 }
 
 gfx::Rect NotificationBubbleWrapperWin::GetAnchorRect(

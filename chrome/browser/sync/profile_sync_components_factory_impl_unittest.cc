@@ -34,7 +34,6 @@ class ProfileSyncComponentsFactoryImplTest : public testing::Test {
   static std::vector<syncer::ModelType> DefaultDatatypes() {
     std::vector<syncer::ModelType> datatypes;
     datatypes.push_back(syncer::APPS);
-    datatypes.push_back(syncer::APP_NOTIFICATIONS);
     datatypes.push_back(syncer::APP_SETTINGS);
     datatypes.push_back(syncer::AUTOFILL);
     datatypes.push_back(syncer::AUTOFILL_PROFILE);
@@ -44,8 +43,10 @@ class ProfileSyncComponentsFactoryImplTest : public testing::Test {
 #endif
     datatypes.push_back(syncer::EXTENSIONS);
     datatypes.push_back(syncer::EXTENSION_SETTINGS);
+    datatypes.push_back(syncer::HISTORY_DELETE_DIRECTIVES);
     datatypes.push_back(syncer::PASSWORDS);
     datatypes.push_back(syncer::PREFERENCES);
+    datatypes.push_back(syncer::PRIORITY_PREFERENCES);
     datatypes.push_back(syncer::SEARCH_ENGINES);
     datatypes.push_back(syncer::SESSIONS);
     datatypes.push_back(syncer::PROXY_TABS);

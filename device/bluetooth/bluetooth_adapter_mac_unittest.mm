@@ -4,6 +4,7 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/test/test_simple_task_runner.h"
+#include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_adapter_mac.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -15,13 +16,7 @@ class BluetoothAdapterMacTest : public testing::Test {
       : ui_task_runner_(new base::TestSimpleTaskRunner()),
         adapter_(new BluetoothAdapterMac()),
         adapter_mac_(static_cast<BluetoothAdapterMac*>(adapter_.get())) {
-    adapter_mac_->TrackTestAdapter(ui_task_runner_);
-  }
-
-  virtual void SetUp() OVERRIDE {
-  }
-
-  virtual void TearDown() OVERRIDE {
+    adapter_mac_->InitForTest(ui_task_runner_);
   }
 
  protected:

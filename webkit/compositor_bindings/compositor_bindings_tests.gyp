@@ -4,13 +4,11 @@
 
 {
   'variables': {
-    'chromium_code': 0,
+    'chromium_code': 1,
     'webkit_compositor_bindings_tests_sources': [
       'web_animation_unittest.cc',
       'web_float_animation_curve_unittest.cc',
       'web_layer_impl_fixed_bounds_unittest.cc',
-      'web_transform_animation_curve_unittest.cc',
-      'web_transformation_matrix_unittest.cc',
     ],
   },
   'targets': [

@@ -1,9 +1,7 @@
 {
     "description": "Bloat page_cycler benchmark",
+    "serving_dirs": ["../../../../data/page_cycler/bloat"],
     "pages": [
-        {
-            "url": "file:///../../../../data/page_cycler/bloat/start.html?iterations=10&auto=1",
-            "url_base_dir": "file:///../../../../data/page_cycler/"
-        }
+        { "url": "file:///../../../../data/page_cycler/bloat/gmail_load_cleardot/" }
     ]
 }

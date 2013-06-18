@@ -103,12 +103,12 @@ ACTION_P(RecordState, states) {
 
 ACTION_P(MockStatusCallback, status) {
   base::MessageLoopProxy::current()->PostTask(
-      FROM_HERE, base::Bind(arg3, status));
+      FROM_HERE, base::Bind(arg4, status));
 }
 
 ACTION_P2(MockSyncFileCallback, status, url) {
   base::MessageLoopProxy::current()->PostTask(
-      FROM_HERE, base::Bind(arg1, status, url));
+      FROM_HERE, base::Bind(arg0, status, url));
 }
 
 class SyncFileSystemServiceTest : public testing::Test {
@@ -132,6 +132,11 @@ class SyncFileSystemServiceTest : public testing::Test {
                 AddServiceObserver(sync_service_.get())).Times(1);
     EXPECT_CALL(*mock_remote_service(),
                 AddFileStatusObserver(sync_service_.get())).Times(1);
+    EXPECT_CALL(*mock_remote_service(),
+                GetLocalChangeProcessor())
+        .WillOnce(Return(&local_change_processor_));
+    EXPECT_CALL(*mock_remote_service(),
+                SetRemoteChangeProcessor(local_service_)).Times(1);
 
     sync_service_->Initialize(
         make_scoped_ptr(local_service_),
@@ -183,9 +188,8 @@ class SyncFileSystemServiceTest : public testing::Test {
   void InitializeAppForObserverTest(
       RemoteServiceState state_to_notify,
       SyncStatusCode status_to_return,
-      const std::vector<SyncEventObserver::SyncServiceState> expected_states,
-      SyncStatusCode expected_status,
-      int expected_current_state_calls) {
+      const std::vector<SyncServiceState> expected_states,
+      SyncStatusCode expected_status) {
     StrictMock<MockSyncEventObserver> event_observer;
     sync_service_->AddSyncEventObserver(&event_observer);
 
@@ -197,13 +201,7 @@ class SyncFileSystemServiceTest : public testing::Test {
                                          state_to_notify,
                                          status_to_return));
 
-    if (expected_current_state_calls > 0) {
-      EXPECT_CALL(*mock_remote_service(), GetCurrentState())
-          .Times(AtLeast(expected_current_state_calls))
-          .WillRepeatedly(Return(REMOTE_SERVICE_OK));
-    }
-
-    std::vector<SyncEventObserver::SyncServiceState> actual_states;
+    std::vector<SyncServiceState> actual_states;
     EXPECT_CALL(event_observer, OnSyncStateUpdated(GURL(), _, _))
         .WillRepeatedly(RecordState(&actual_states));
 
@@ -229,6 +227,10 @@ class SyncFileSystemServiceTest : public testing::Test {
     return remote_service_;
   }
 
+  StrictMock<MockLocalChangeProcessor>* mock_local_change_processor() {
+    return &local_change_processor_;
+  }
+
   void EnableSync() {
     EXPECT_CALL(*mock_remote_service(), SetSyncEnabled(true)).Times(1);
     sync_service_->SetSyncEnabledForTesting(true);
@@ -241,6 +243,7 @@ class SyncFileSystemServiceTest : public testing::Test {
   // Their ownerships are transferred to SyncFileSystemService.
   LocalFileSyncService* local_service_;
   StrictMock<MockRemoteFileSyncService>* remote_service_;
+  StrictMock<MockLocalChangeProcessor> local_change_processor_;
 
   scoped_ptr<SyncFileSystemService> sync_service_;
 };
@@ -250,21 +253,19 @@ TEST_F(SyncFileSystemServiceTest, InitializeForApp) {
 }
 
 TEST_F(SyncFileSystemServiceTest, InitializeForAppSuccess) {
-  std::vector<SyncEventObserver::SyncServiceState> expected_states;
-  expected_states.push_back(SyncEventObserver::SYNC_SERVICE_RUNNING);
+  std::vector<SyncServiceState> expected_states;
+  expected_states.push_back(SYNC_SERVICE_RUNNING);
 
   InitializeAppForObserverTest(
       REMOTE_SERVICE_OK,
       SYNC_STATUS_OK,
       expected_states,
-      SYNC_STATUS_OK,
-      2);
+      SYNC_STATUS_OK);
 }
 
 TEST_F(SyncFileSystemServiceTest, InitializeForAppWithNetworkFailure) {
-  std::vector<SyncEventObserver::SyncServiceState> expected_states;
-  expected_states.push_back(
-      SyncEventObserver::SYNC_SERVICE_TEMPORARY_UNAVAILABLE);
+  std::vector<SyncServiceState> expected_states;
+  expected_states.push_back(SYNC_SERVICE_TEMPORARY_UNAVAILABLE);
 
   // Notify REMOTE_SERVICE_TEMPORARY_UNAVAILABLE and callback with
   // SYNC_STATUS_NETWORK_ERROR.  This should let the
@@ -273,13 +274,12 @@ TEST_F(SyncFileSystemServiceTest, InitializeForAppWithNetworkFailure) {
       REMOTE_SERVICE_TEMPORARY_UNAVAILABLE,
       SYNC_STATUS_NETWORK_ERROR,
       expected_states,
-      SYNC_STATUS_NETWORK_ERROR,
-      0);
+      SYNC_STATUS_NETWORK_ERROR);
 }
 
 TEST_F(SyncFileSystemServiceTest, InitializeForAppWithError) {
-  std::vector<SyncEventObserver::SyncServiceState> expected_states;
-  expected_states.push_back(SyncEventObserver::SYNC_SERVICE_DISABLED);
+  std::vector<SyncServiceState> expected_states;
+  expected_states.push_back(SYNC_SERVICE_DISABLED);
 
   // Notify REMOTE_SERVICE_DISABLED and callback with
   // SYNC_STATUS_FAILED.  This should let the InitializeApp fail.
@@ -287,15 +287,14 @@ TEST_F(SyncFileSystemServiceTest, InitializeForAppWithError) {
       REMOTE_SERVICE_DISABLED,
       SYNC_STATUS_FAILED,
       expected_states,
-      SYNC_STATUS_FAILED,
-      0);
+      SYNC_STATUS_FAILED);
 }
 
-TEST_F(SyncFileSystemServiceTest, SimpleLocalSyncFlow) {
+// Flaky.  http://crbug.com/237710
+TEST_F(SyncFileSystemServiceTest, DISABLED_SimpleLocalSyncFlow) {
   InitializeApp();
 
   StrictMock<MockSyncStatusObserver> status_observer;
-  StrictMock<MockLocalChangeProcessor> local_change_processor;
 
   EnableSync();
   file_system_->file_system_context()->sync_context()->
@@ -318,14 +317,13 @@ TEST_F(SyncFileSystemServiceTest, SimpleLocalSyncFlow) {
   EXPECT_CALL(*mock_remote_service(), GetCurrentState())
       .Times(AtLeast(2))
       .WillRepeatedly(Return(REMOTE_SERVICE_OK));
-  EXPECT_CALL(*mock_remote_service(), GetLocalChangeProcessor())
-      .WillRepeatedly(Return(&local_change_processor));
 
   // The local_change_processor's ApplyLocalChange should be called once
   // with ADD_OR_UPDATE change for TYPE_FILE.
   const FileChange change(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
                           SYNC_FILE_TYPE_FILE);
-  EXPECT_CALL(local_change_processor, ApplyLocalChange(change, _, kFile, _))
+  EXPECT_CALL(*mock_local_change_processor(),
+              ApplyLocalChange(change, _, _, kFile, _))
       .WillOnce(MockStatusCallback(SYNC_STATUS_OK));
 
   EXPECT_EQ(base::PLATFORM_FILE_OK, file_system_->CreateFile(kFile));
@@ -342,9 +340,9 @@ TEST_F(SyncFileSystemServiceTest, SimpleRemoteSyncFlow) {
 
   // We expect a set of method calls for starting a remote sync.
   EXPECT_CALL(*mock_remote_service(), GetCurrentState())
-      .Times(AtLeast(2))
+      .Times(AtLeast(1))
       .WillRepeatedly(Return(REMOTE_SERVICE_OK));
-  EXPECT_CALL(*mock_remote_service(), ProcessRemoteChange(_, _))
+  EXPECT_CALL(*mock_remote_service(), ProcessRemoteChange(_))
       .WillOnce(InvokeWithoutArgs(&run_loop, &base::RunLoop::Quit));
 
   // This should trigger a remote sync.
@@ -355,8 +353,6 @@ TEST_F(SyncFileSystemServiceTest, SimpleRemoteSyncFlow) {
 
 TEST_F(SyncFileSystemServiceTest, SimpleSyncFlowWithFileBusy) {
   InitializeApp();
-
-  StrictMock<MockLocalChangeProcessor> local_change_processor;
 
   EnableSync();
   file_system_->file_system_context()->sync_context()->
@@ -370,26 +366,25 @@ TEST_F(SyncFileSystemServiceTest, SimpleSyncFlowWithFileBusy) {
   EXPECT_CALL(*mock_remote_service(), GetCurrentState())
       .Times(AtLeast(3))
       .WillRepeatedly(Return(REMOTE_SERVICE_OK));
-  EXPECT_CALL(*mock_remote_service(), GetLocalChangeProcessor())
-      .WillRepeatedly(Return(&local_change_processor));
 
   {
     InSequence sequence;
 
     // Return with SYNC_STATUS_FILE_BUSY once.
-    EXPECT_CALL(*mock_remote_service(), ProcessRemoteChange(_, _))
+    EXPECT_CALL(*mock_remote_service(), ProcessRemoteChange(_))
         .WillOnce(MockSyncFileCallback(SYNC_STATUS_FILE_BUSY,
                                        kFile));
 
     // ProcessRemoteChange should be called again when the becomes
     // not busy.
-    EXPECT_CALL(*mock_remote_service(), ProcessRemoteChange(_, _))
+    EXPECT_CALL(*mock_remote_service(), ProcessRemoteChange(_))
         .WillOnce(InvokeWithoutArgs(&run_loop, &base::RunLoop::Quit));
   }
 
   // We might also see an activity for local sync as we're going to make
   // a local write operation on kFile.
-  EXPECT_CALL(local_change_processor, ApplyLocalChange(_, _, kFile, _))
+  EXPECT_CALL(*mock_local_change_processor(),
+              ApplyLocalChange(_, _, _, kFile, _))
       .Times(AnyNumber());
 
   // This should trigger a remote sync.

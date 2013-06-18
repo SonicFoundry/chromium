@@ -8,11 +8,8 @@
 
 #include "chrome/browser/notifications/sync_notifier/chrome_notifier_service.h"
 
-#include "base/utf_string_conversions.h"
-#include "chrome/browser/browser_process.h"
 #include "chrome/browser/notifications/notification.h"
 #include "chrome/browser/notifications/notification_ui_manager.h"
-#include "chrome/browser/notifications/sync_notifier/chrome_notifier_delegate.h"
 #include "chrome/browser/profiles/profile.h"
 #include "googleurl/src/gurl.h"
 #include "sync/api/sync_change.h"
@@ -46,16 +43,9 @@ syncer::SyncMergeResult ChromeNotifierService::MergeDataAndStartSyncing(
   // that we are currently on the UI thread here.
   DCHECK_EQ(syncer::SYNCED_NOTIFICATIONS, type);
   syncer::SyncMergeResult merge_result(syncer::SYNCED_NOTIFICATIONS);
-
-  // Mark all data we have now as local.  New incoming data will clear
-  // the local flag, and merged data will clear the local flag.  We use
-  // this to know what has to go back up to the server.
-  for (std::vector<SyncedNotification*>::iterator it =
-           notification_data_.begin();
-      it != notification_data_.end();
-      ++it) {
-    (*it)->set_has_local_changes(true);
-  }
+  // A list of local changes to send up to the sync server.
+  syncer::SyncChangeList new_changes;
+  sync_processor_ = sync_processor.Pass();
 
   for (syncer::SyncDataList::const_iterator it = initial_sync_data.begin();
        it != initial_sync_data.end(); ++it) {
@@ -68,42 +58,51 @@ syncer::SyncMergeResult ChromeNotifierService::MergeDataAndStartSyncing(
     DCHECK(incoming.get());
 
     // Process each incoming remote notification.
-    const std::string& id = incoming->notification_id();
-    DCHECK_GT(id.length(), 0U);
-    SyncedNotification* found = FindNotificationById(id);
+    const std::string& key = incoming->GetKey();
+    DCHECK_GT(key.length(), 0U);
+    SyncedNotification* found = FindNotificationByKey(key);
 
     if (NULL == found) {
       // If there are no conflicts, copy in the data from remote.
       Add(incoming.Pass());
     } else {
-      // If the remote and local data conflict (the read or deleted flag),
-      // resolve the conflict.
-      // TODO(petewil): Implement.
-    }
-  }
+      // If the incoming (remote) and stored (local) notifications match
+      // in all fields, we don't need to do anything here.
+      if (incoming->EqualsIgnoringReadState(*found)) {
 
-  // TODO(petewil): Implement the code that does the actual merging.
-  // See chrome/browser/history/history.cc for an example to follow.
-
-  // Make a list of local changes to send up to the sync server.
-  syncer::SyncChangeList new_changes;
-  for (std::vector<SyncedNotification*>::iterator it =
-           notification_data_.begin();
-      it != notification_data_.end();
-      ++it) {
-    if ((*it)->has_local_changes()) {
-      syncer::SyncData sync_data = CreateSyncDataFromNotification(**it);
-      new_changes.push_back(
-          syncer::SyncChange(FROM_HERE,
-                             syncer::SyncChange::ACTION_ADD,
-                             sync_data));
+        if (incoming->GetReadState() == found->GetReadState()) {
+          // Notification matches on the client and the server, nothing to do.
+          continue;
+        } else  {
+          // If the read state is different, read wins for both places.
+          if (incoming->GetReadState() == SyncedNotification::kDismissed) {
+            // If it is marked as read on the server, but not the client.
+            found->NotificationHasBeenDismissed();
+            // TODO(petewil): Tell the Notification UI Manager to mark it read.
+          } else {
+            // If it is marked as read on the client, but not the server.
+            syncer::SyncData sync_data = CreateSyncDataFromNotification(*found);
+            new_changes.push_back(
+                syncer::SyncChange(FROM_HERE,
+                                   syncer::SyncChange::ACTION_UPDATE,
+                                   sync_data));
+          }
+          // If local state changed, notify Notification UI Manager.
+        }
+      // For any other conflict besides read state, treat it as an update.
+      } else {
+        // If different, just replace the local with the remote.
+        // TODO(petewil): Someday we may allow changes from the client to
+        // flow upwards, when we do, we will need better merge resolution.
+        found->Update(sync_data);
+      }
     }
   }
 
   // Send up the changes that were made locally.
   if (new_changes.size() > 0) {
-    merge_result.set_error(
-        sync_processor.get()->ProcessSyncChanges(FROM_HERE, new_changes));
+    merge_result.set_error(sync_processor_->ProcessSyncChanges(
+        FROM_HERE, new_changes));
   }
 
   return merge_result;
@@ -171,7 +170,10 @@ syncer::SyncError ChromeNotifierService::ProcessSyncChanges(
 // Static method.  Get to the sync data in our internal format.
 syncer::SyncData ChromeNotifierService::CreateSyncDataFromNotification(
     const SyncedNotification& notification) {
-  return *notification.sync_data();
+  // Construct the sync_data using the specifics from the notification.
+  return syncer::SyncData::CreateLocalData(
+      notification.GetKey(), notification.GetKey(),
+      notification.GetEntitySpecifics());
 }
 
 // Static Method.  Convert from SyncData to our internal format.
@@ -184,13 +186,25 @@ scoped_ptr<SyncedNotification>
 
   // Check for mandatory fields in the sync_data object.
   if (!specifics.has_coalesced_notification() ||
-      !specifics.coalesced_notification().has_id() ||
-      !specifics.coalesced_notification().id().has_app_id() ||
-      specifics.coalesced_notification().id().app_id().empty() ||
-      !specifics.coalesced_notification().has_render_info() ||
-      !specifics.coalesced_notification().has_creation_time_msec()) {
+      !specifics.coalesced_notification().has_key() ||
+      !specifics.coalesced_notification().has_read_state())
     return scoped_ptr<SyncedNotification>();
-  }
+
+  // TODO(petewil): Is this the right set?  Should I add more?
+  bool is_well_formed_unread_notification =
+      (static_cast<SyncedNotification::ReadState>(
+          specifics.coalesced_notification().read_state()) ==
+       SyncedNotification::kUnread &&
+       specifics.coalesced_notification().has_render_info());
+  bool is_well_formed_dismissed_notification =
+      (static_cast<SyncedNotification::ReadState>(
+          specifics.coalesced_notification().read_state()) ==
+       SyncedNotification::kDismissed);
+
+  // if the notification is poorly formed, return a null pointer
+  if (!is_well_formed_unread_notification &&
+      !is_well_formed_dismissed_notification)
+    return scoped_ptr<SyncedNotification>();
 
   // Create a new notification object based on the supplied sync_data.
   scoped_ptr<SyncedNotification> notification(
@@ -201,22 +215,39 @@ scoped_ptr<SyncedNotification>
 
 // This returns a pointer into a vector that we own.  Caller must not free it.
 // Returns NULL if no match is found.
-// This uses the <app_id/coalescing_key> pair as a key.
-SyncedNotification* ChromeNotifierService::FindNotificationById(
-    const std::string& id) {
+SyncedNotification* ChromeNotifierService::FindNotificationByKey(
+    const std::string& key) {
   // TODO(petewil): We can make a performance trade off here.
   // While the vector has good locality of reference, a map has faster lookup.
-  // Based on how bit we expect this to get, maybe change this to a map.
+  // Based on how big we expect this to get, maybe change this to a map.
   for (std::vector<SyncedNotification*>::const_iterator it =
           notification_data_.begin();
       it != notification_data_.end();
       ++it) {
     SyncedNotification* notification = *it;
-    if (id == notification->notification_id())
+    if (key == notification->GetKey())
       return *it;
   }
 
   return NULL;
+}
+
+void ChromeNotifierService::MarkNotificationAsDismissed(
+    const std::string& key) {
+  SyncedNotification* notification = FindNotificationByKey(key);
+  CHECK(notification != NULL);
+
+  notification->NotificationHasBeenDismissed();
+  syncer::SyncChangeList new_changes;
+
+  syncer::SyncData sync_data = CreateSyncDataFromNotification(*notification);
+  new_changes.push_back(
+      syncer::SyncChange(FROM_HERE,
+                         syncer::SyncChange::ACTION_UPDATE,
+                         sync_data));
+
+  // Send up the changes that were made locally.
+  sync_processor_->ProcessSyncChanges(FROM_HERE, new_changes);
 }
 
 // Add a new notification to our data structure.  This takes ownership
@@ -226,35 +257,8 @@ void ChromeNotifierService::Add(scoped_ptr<SyncedNotification> notification) {
   // Take ownership of the object and put it into our local storage.
   notification_data_.push_back(notification.release());
 
-  // Show it to the user.
-  Show(notification_copy);
-}
-
-// Send the notification to the NotificationUIManager to show to the user.
-void ChromeNotifierService::Show(SyncedNotification* notification) {
-  // Set up the fields we need to send and create a Notification object.
-  GURL origin_url(notification->origin_url());
-  GURL icon_url(notification->icon_url());
-  string16 title = UTF8ToUTF16(notification->title());
-  string16 body = UTF8ToUTF16(notification->body());
-  // TODO(petewil): What goes in the display source, is empty OK?
-  string16 display_source;
-  string16 replace_id = UTF8ToUTF16(notification->notification_id());
-  // The delegate will eventually catch calls that the notification
-  // was read or deleted, and send the changes back to the server.
-  scoped_refptr<NotificationDelegate> delegate =
-      new ChromeNotifierDelegate(notification->notification_id());
-
-  Notification ui_notification(origin_url, icon_url, title, body,
-                               WebKit::WebTextDirectionDefault,
-                               display_source, replace_id, delegate);
-
-  notification_manager_->Add(ui_notification, profile_);
-
-  DVLOG(1) << "Synced Notification arrived! " << title << " " << body
-           << " " << icon_url << " " << replace_id;
-
-  return;
+  // Get the contained bitmaps, and show the notification once we have them.
+  notification_copy->Show(notification_manager_, this, profile_);
 }
 
 }  // namespace notifier

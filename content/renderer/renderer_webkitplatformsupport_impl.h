@@ -11,8 +11,12 @@
 #include "content/common/content_export.h"
 #include "content/common/webkitplatformsupport_impl.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebGraphicsContext3D.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebIDBFactory.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebIDBFactory.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebSharedWorkerRepository.h"
+
+namespace cc {
+class ContextProvider;
+}
 
 namespace webkit_glue {
 class WebClipboardImpl;
@@ -21,6 +25,7 @@ class WebClipboardImpl;
 namespace content {
 class GamepadSharedMemoryReader;
 class RendererClipboardClient;
+class ThreadSafeSender;
 class WebFileSystemImpl;
 class WebSharedWorkerRepositoryImpl;
 
@@ -40,6 +45,9 @@ class CONTENT_EXPORT RendererWebKitPlatformSupportImpl
   virtual WebKit::WebSandboxSupport* sandboxSupport();
   virtual WebKit::WebCookieJar* cookieJar();
   virtual WebKit::WebHyphenator* hyphenator();
+  virtual WebKit::WebThemeEngine* themeEngine();
+  virtual WebKit::WebSpeechSynthesizer* createSpeechSynthesizer(
+      WebKit::WebSpeechSynthesizerClient* client);
   virtual bool sandboxEnabled();
   virtual unsigned long long visitedLinkHash(
       const char* canonicalURL, size_t length);
@@ -74,6 +82,7 @@ class CONTENT_EXPORT RendererWebKitPlatformSupportImpl
   virtual bool isThreadedCompositingEnabled();
   virtual double audioHardwareSampleRate();
   virtual size_t audioHardwareBufferSize();
+  virtual unsigned audioHardwareOutputChannels();
 
   // TODO(crogers): remove deprecated API as soon as WebKit calls new API.
   virtual WebKit::WebAudioDevice* createAudioDevice(
@@ -98,13 +107,12 @@ class CONTENT_EXPORT RendererWebKitPlatformSupportImpl
       WebKit::WebRTCPeerConnectionHandlerClient* client);
   virtual WebKit::WebMediaStreamCenter* createMediaStreamCenter(
       WebKit::WebMediaStreamCenterClient* client);
-  virtual bool canHyphenate(const WebKit::WebString& locale);
-  virtual size_t computeLastHyphenLocation(const char16* characters,
-      size_t length,
-      size_t before_index,
-      const WebKit::WebString& locale);
   virtual bool processMemorySizesInBytes(
       size_t* private_bytes, size_t* shared_bytes);
+  virtual WebKit::WebGraphicsContext3D* createOffscreenGraphicsContext3D(
+      const WebKit::WebGraphicsContext3D::Attributes& attributes);
+  virtual WebKit::WebGraphicsContext3D* sharedOffscreenGraphicsContext3D();
+  virtual GrContext* sharedOffscreenGrContext();
 
   // Disables the WebSandboxSupport implementation for testing.
   // Tests that do not set up a full sandbox environment should call
@@ -117,9 +125,6 @@ class CONTENT_EXPORT RendererWebKitPlatformSupportImpl
 
   // Set WebGamepads to return when sampleGamepads() is invoked.
   static void SetMockGamepadsForTesting(const WebKit::WebGamepads& pads);
-
- protected:
-  virtual GpuChannelHostFactory* GetGpuChannelHostFactory() OVERRIDE;
 
  private:
   bool CheckPreparsedJsCachingEnabled() const;
@@ -159,6 +164,10 @@ class CONTENT_EXPORT RendererWebKitPlatformSupportImpl
   scoped_ptr<WebKit::WebBlobRegistry> blob_registry_;
 
   scoped_ptr<GamepadSharedMemoryReader> gamepad_shared_memory_reader_;
+
+  scoped_refptr<ThreadSafeSender> thread_safe_sender_;
+
+  scoped_refptr<cc::ContextProvider> shared_offscreen_context_;
 };
 
 }  // namespace content

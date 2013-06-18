@@ -2,28 +2,28 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Custom bindings for the fileSystem API.
+// Custom binding for the fileSystem API.
 
-var chromeHidden = requireNative('chrome_hidden').GetChromeHidden();
+var binding = require('binding').Binding.create('fileSystem');
+
 var fileSystemNatives = requireNative('file_system_natives');
+var forEach = require('utils').forEach;
 var GetIsolatedFileSystem = fileSystemNatives.GetIsolatedFileSystem;
 var lastError = require('lastError');
-var entryIdManager = require('entryIdManager');
+var GetModuleSystem = requireNative('v8_context').GetModuleSystem;
+// TODO(sammc): Don't require extension. See http://crbug.com/235689.
+var GetExtensionViews = requireNative('extension').GetExtensionViews;
 
-chromeHidden.registerCustomHook('fileSystem', function(bindingsAPI) {
-  var apiFunctions = bindingsAPI.apiFunctions;
-  function bindFileEntryFunction(functionName) {
-    apiFunctions.setUpdateArgumentsPostValidate(
-        functionName, function(fileEntry, callback) {
-      var fileSystemName = fileEntry.filesystem.name;
-      var relativePath = fileEntry.fullPath.slice(1);
-      return [fileSystemName, relativePath, callback];
-    });
-  }
-  ['getDisplayPath', 'getWritableEntry', 'isWritableEntry']
-      .forEach(bindFileEntryFunction);
+var backgroundPage = GetExtensionViews(-1, 'BACKGROUND')[0];
+var backgroundPageModuleSystem = GetModuleSystem(backgroundPage);
+var entryIdManager = backgroundPageModuleSystem.require('entryIdManager');
 
-  function bindFileEntryCallback(functionName) {
+// All windows use the bindFileEntryCallback from the background page so their
+// FileEntry objects have the background page's context as their own. This
+// allows them to be used from other windows (including the background page)
+// after the original window is closed.
+if (window == backgroundPage) {
+  var bindFileEntryCallback = function(functionName, apiFunctions) {
     apiFunctions.setCustomCallback(functionName,
         function(name, request, response) {
       if (request.callback && response) {
@@ -32,8 +32,7 @@ chromeHidden.registerCustomHook('fileSystem', function(bindingsAPI) {
 
         var fileSystemId = response.fileSystemId;
         var baseName = response.baseName;
-        // TODO(koz): Generate a persistent id in the browser and use it here.
-        var id = fileSystemId + ":" + baseName;
+        var id = response.id;
         var fs = GetIsolatedFileSystem(fileSystemId);
 
         try {
@@ -44,17 +43,47 @@ chromeHidden.registerCustomHook('fileSystem', function(bindingsAPI) {
             entryIdManager.registerEntry(id, fileEntry);
             callback(fileEntry);
           }, function(fileError) {
-            lastError.set('Error getting fileEntry, code: ' + fileError.code);
-            callback();
+            lastError.run('fileSystem.' + functionName,
+                          'Error getting fileEntry, code: ' + fileError.code,
+                          request.stack,
+                          callback);
           });
         } catch (e) {
-          lastError.set('Error in event handler for onLaunched: ' + e.stack);
-          callback();
+          lastError.run('fileSystem.' + functionName,
+                        'Error in event handler for onLaunched: ' + e.stack,
+                        request.stack,
+                        callback);
         }
       }
     });
+  };
+} else {
+  // Force the fileSystem API to be loaded in the background page. Using
+  // backgroundPageModuleSystem.require('fileSystem') is insufficient as
+  // requireNative is only allowed while lazily loading an API.
+  backgroundPage.chrome.fileSystem;
+  var bindFileEntryCallback = backgroundPageModuleSystem.require(
+      'fileSystem').bindFileEntryCallback;
+}
+
+binding.registerCustomHook(function(bindingsAPI) {
+  var apiFunctions = bindingsAPI.apiFunctions;
+  var fileSystem = bindingsAPI.compiledApi;
+
+  function bindFileEntryFunction(i, functionName) {
+    apiFunctions.setUpdateArgumentsPostValidate(
+        functionName, function(fileEntry, callback) {
+      var fileSystemName = fileEntry.filesystem.name;
+      var relativePath = fileEntry.fullPath.slice(1);
+      return [fileSystemName, relativePath, callback];
+    });
   }
-  ['getWritableEntry', 'chooseEntry'].forEach(bindFileEntryCallback);
+  forEach(['getDisplayPath', 'getWritableEntry', 'isWritableEntry'],
+          bindFileEntryFunction);
+
+  forEach(['getWritableEntry', 'chooseEntry'], function(i, functionName) {
+    bindFileEntryCallback(functionName, apiFunctions);
+  });
 
   apiFunctions.setHandleRequest('getEntryId', function(fileEntry) {
     return entryIdManager.getEntryId(fileEntry);
@@ -65,21 +94,24 @@ chromeHidden.registerCustomHook('fileSystem', function(bindingsAPI) {
   });
 
   // TODO(benwells): Remove these deprecated versions of the functions.
-  chrome.fileSystem.getWritableFileEntry = function() {
+  fileSystem.getWritableFileEntry = function() {
     console.log("chrome.fileSystem.getWritableFileEntry is deprecated");
     console.log("Please use chrome.fileSystem.getWritableEntry instead");
-    chrome.fileSystem.getWritableEntry.apply(this, arguments);
+    fileSystem.getWritableEntry.apply(this, arguments);
   };
 
-  chrome.fileSystem.isWritableFileEntry = function() {
+  fileSystem.isWritableFileEntry = function() {
     console.log("chrome.fileSystem.isWritableFileEntry is deprecated");
     console.log("Please use chrome.fileSystem.isWritableEntry instead");
-    chrome.fileSystem.isWritableEntry.apply(this, arguments);
+    fileSystem.isWritableEntry.apply(this, arguments);
   };
 
-  chrome.fileSystem.chooseFile = function() {
+  fileSystem.chooseFile = function() {
     console.log("chrome.fileSystem.chooseFile is deprecated");
     console.log("Please use chrome.fileSystem.chooseEntry instead");
-    chrome.fileSystem.chooseEntry.apply(this, arguments);
+    fileSystem.chooseEntry.apply(this, arguments);
   };
 });
+
+exports.bindFileEntryCallback = bindFileEntryCallback;
+exports.binding = binding.generate();

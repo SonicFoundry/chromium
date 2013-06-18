@@ -105,10 +105,6 @@ class Panel : public BaseWindow,
   // b) it remains on top when an app exits full screen mode.
   void FullScreenModeChanged(bool is_full_screen);
 
-  // Ensures that the panel is fully visible, that is, not obscured by other
-  // top-most windows.
-  void EnsureFullyVisible();
-
   int TitleOnlyHeight() const;
 
   // Returns true if the panel can show minimize or restore button in its
@@ -202,7 +198,7 @@ class Panel : public BaseWindow,
   // Panel must be initialized to be "fully created" and ready for use.
   // Only called by PanelManager.
   bool initialized() const { return initialized_; }
-  void Initialize(Profile* profile, const GURL& url, const gfx::Rect& bounds);
+  void Initialize(const GURL& url, const gfx::Rect& bounds);
 
   // This is different from BaseWindow::SetBounds():
   // * SetPanelBounds() is only called by PanelManager to manage its position.
@@ -304,15 +300,20 @@ class Panel : public BaseWindow,
   // Applies |corner_style| to the panel window.
   void SetWindowCornerStyle(panel::CornerStyle corner_style);
 
-  // Performs the system minimize for the panel, i.e. hide the panel.
+  // Performs the system minimize for the panel, i.e. becoming iconic.
   void MinimizeBySystem();
+
+  bool IsMinimizedBySystem() const;
+
+  // Turns on/off the shadow effect around the window shape.
+  void ShowShadow(bool show);
 
  protected:
   // Panel can only be created using PanelManager::CreatePanel() or subclass.
   // |app_name| is the default title for Panels when the page content does not
   // provide a title. For extensions, this is usually the application name
   // generated from the extension id.
-  Panel(const std::string& app_name,
+  Panel(Profile* profile, const std::string& app_name,
         const gfx::Size& min_size, const gfx::Size& max_size);
 
  private:

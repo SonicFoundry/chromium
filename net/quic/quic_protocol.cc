@@ -15,8 +15,8 @@ namespace net {
 
 size_t GetPacketHeaderSize(bool include_version) {
   return kQuicGuidSize + kPublicFlagsSize +
-      (include_version ? kQuicVersionSize : 0) + kPrivateFlagsSize +
-      kSequenceNumberSize + kFecGroupSize;
+      (include_version ? kQuicVersionSize : 0) + kSequenceNumberSize +
+      kPrivateFlagsSize + kFecGroupSize;
 }
 
 size_t GetPublicResetPacketSize() {
@@ -29,8 +29,59 @@ size_t GetStartOfFecProtectedData(bool include_version) {
 }
 
 size_t GetStartOfEncryptedData(bool include_version) {
-  return  GetPacketHeaderSize(include_version) - kPrivateFlagsSize -
+  return GetPacketHeaderSize(include_version) - kPrivateFlagsSize -
       kFecGroupSize;
+}
+
+uint32 MakeQuicTag(char a, char b, char c, char d) {
+  return static_cast<uint32>(a) |
+         static_cast<uint32>(b) << 8 |
+         static_cast<uint32>(c) << 16 |
+         static_cast<uint32>(d) << 24;
+}
+
+QuicPacketPublicHeader::QuicPacketPublicHeader()
+    : guid(0),
+      reset_flag(false),
+      version_flag(false) {
+}
+
+QuicPacketPublicHeader::QuicPacketPublicHeader(
+    const QuicPacketPublicHeader& other)
+    : guid(other.guid),
+      reset_flag(other.reset_flag),
+      version_flag(other.version_flag),
+      versions(other.versions) {
+}
+
+QuicPacketPublicHeader::~QuicPacketPublicHeader() {}
+
+QuicPacketPublicHeader& QuicPacketPublicHeader::operator=(
+    const QuicPacketPublicHeader& other) {
+  guid = other.guid;
+  reset_flag = other.reset_flag;
+  version_flag = other.version_flag;
+  versions = other.versions;
+  return *this;
+}
+
+QuicPacketHeader::QuicPacketHeader()
+    : fec_flag(false),
+      fec_entropy_flag(false),
+      entropy_flag(false),
+      entropy_hash(0),
+      packet_sequence_number(0),
+      fec_group(0) {
+}
+
+QuicPacketHeader::QuicPacketHeader(const QuicPacketPublicHeader& header)
+    : public_header(header),
+      fec_flag(false),
+      fec_entropy_flag(false),
+      entropy_flag(false),
+      entropy_hash(0),
+      packet_sequence_number(0),
+      fec_group(0) {
 }
 
 QuicStreamFrame::QuicStreamFrame() {}
@@ -48,8 +99,14 @@ QuicStreamFrame::QuicStreamFrame(QuicStreamId stream_id,
 ostream& operator<<(ostream& os, const QuicPacketHeader& header) {
   os << "{ guid: " << header.public_header.guid
      << ", reset_flag: " << header.public_header.reset_flag
-     << ", version_flag: " << header.public_header.version_flag
-     << ", fec_flag: " << header.fec_flag
+     << ", version_flag: " << header.public_header.version_flag;
+  if (header.public_header.version_flag) {
+    os << " version: ";
+    for (size_t i = 0; i < header.public_header.versions.size(); ++i) {
+      os << header.public_header.versions[0] << " ";
+    }
+  }
+  os << ", fec_flag: " << header.fec_flag
      << ", entropy_flag: " << header.entropy_flag
      << ", entropy hash: " << static_cast<int>(header.entropy_hash)
      << ", sequence_number: " << header.packet_sequence_number
@@ -59,7 +116,8 @@ ostream& operator<<(ostream& os, const QuicPacketHeader& header) {
 
 // TODO(ianswett): Initializing largest_observed to 0 should not be necessary.
 ReceivedPacketInfo::ReceivedPacketInfo()
-    : largest_observed(0) {
+    : largest_observed(0),
+      delta_time_largest_observed(QuicTime::Delta::Infinite()) {
 }
 
 ReceivedPacketInfo::~ReceivedPacketInfo() {}
@@ -84,6 +142,7 @@ SentPacketInfo::~SentPacketInfo() {}
 
 // Testing convenience method.
 QuicAckFrame::QuicAckFrame(QuicPacketSequenceNumber largest_observed,
+                           QuicTime largest_observed_receive_time,
                            QuicPacketSequenceNumber least_unacked) {
   received_info.largest_observed = largest_observed;
   received_info.entropy_hash = 0;
@@ -129,7 +188,7 @@ ostream& operator<<(ostream& os,
       for (TimeMap::const_iterator it =
                inter_arrival.received_packet_times.begin();
            it != inter_arrival.received_packet_times.end(); ++it) {
-        os << it->first << "@" << it->second.ToMilliseconds() << " ";
+        os << it->first << "@" << it->second.ToDebuggingValue() << " ";
       }
       os << "]";
       break;
@@ -215,7 +274,9 @@ StringPiece QuicPacket::Plaintext() const {
                      length() - start_of_encrypted_data);
 }
 
-RetransmittableFrames::RetransmittableFrames() {}
+RetransmittableFrames::RetransmittableFrames()
+    : encryption_level_(NUM_ENCRYPTION_LEVELS) {
+}
 
 RetransmittableFrames::~RetransmittableFrames() {
   for (QuicFrames::iterator it = frames_.begin(); it != frames_.end(); ++it) {
@@ -265,6 +326,10 @@ const QuicFrame& RetransmittableFrames::AddNonStreamFrame(
   DCHECK_NE(frame.type, STREAM_FRAME);
   frames_.push_back(frame);
   return frames_.back();
+}
+
+void RetransmittableFrames::set_encryption_level(EncryptionLevel level) {
+  encryption_level_ = level;
 }
 
 ostream& operator<<(ostream& os, const QuicEncryptedPacket& s) {

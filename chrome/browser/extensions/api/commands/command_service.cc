@@ -12,12 +12,13 @@
 #include "chrome/browser/extensions/extension_keybinding_registry.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/accelerator_utils.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/extensions/api/commands/commands_handler.h"
 #include "chrome/common/pref_names.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 
@@ -39,15 +40,15 @@ std::string GetPlatformKeybindingKeyForAccelerator(
 namespace extensions {
 
 // static
-void CommandService::RegisterUserPrefs(PrefRegistrySyncable* registry) {
-  registry->RegisterDictionaryPref(prefs::kExtensionCommands,
-                                   PrefRegistrySyncable::SYNCABLE_PREF);
+void CommandService::RegisterUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterDictionaryPref(
+      prefs::kExtensionCommands,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
 }
 
 CommandService::CommandService(Profile* profile)
     : profile_(profile) {
-  (new CommandsHandler)->Register();
-
   ExtensionFunctionRegistry::GetInstance()->
       RegisterFunction<GetAllCommandsFunction>();
 
@@ -173,11 +174,11 @@ void CommandService::Observe(
   switch (type) {
     case chrome::NOTIFICATION_EXTENSION_INSTALLED:
       AssignInitialKeybindings(
-          content::Details<const Extension>(details).ptr());
+          content::Details<const InstalledExtensionInfo>(details)->extension);
       break;
     case chrome::NOTIFICATION_EXTENSION_UNINSTALLED:
       RemoveKeybindingPrefs(
-          content::Details<const Extension>(details).ptr()->id(),
+          content::Details<const Extension>(details)->id(),
           std::string());
       break;
     default:
@@ -201,10 +202,9 @@ ui::Accelerator CommandService::FindShortcutForCommand(
     const std::string& extension_id, const std::string& command) {
   const DictionaryValue* bindings =
       profile_->GetPrefs()->GetDictionary(prefs::kExtensionCommands);
-  for (DictionaryValue::key_iterator it = bindings->begin_keys();
-       it != bindings->end_keys(); ++it) {
+  for (DictionaryValue::Iterator it(*bindings); !it.IsAtEnd(); it.Advance()) {
     const DictionaryValue* item = NULL;
-    bindings->GetDictionary(*it, &item);
+    it.value().GetAsDictionary(&item);
 
     std::string extension;
     item->GetString(kExtension, &extension);
@@ -215,7 +215,7 @@ ui::Accelerator CommandService::FindShortcutForCommand(
     if (command != command_name)
       continue;
 
-    std::string shortcut = *it;
+    std::string shortcut = it.key();
     if (StartsWithASCII(shortcut, Command::CommandPlatform() + ":", true))
       shortcut = shortcut.substr(Command::CommandPlatform().length() + 1);
 
@@ -233,37 +233,49 @@ void CommandService::AssignInitialKeybindings(const Extension* extension) {
 
   extensions::CommandMap::const_iterator iter = commands->begin();
   for (; iter != commands->end(); ++iter) {
-    AddKeybindingPref(iter->second.accelerator(),
-                      extension->id(),
-                      iter->second.command_name(),
-                      false);  // Overwriting not allowed.
+    if (!chrome::IsChromeAccelerator(
+        iter->second.accelerator(), profile_)) {
+      AddKeybindingPref(iter->second.accelerator(),
+                        extension->id(),
+                        iter->second.command_name(),
+                        false);  // Overwriting not allowed.
+    }
   }
 
   const extensions::Command* browser_action_command =
       CommandsInfo::GetBrowserActionCommand(extension);
   if (browser_action_command) {
-    AddKeybindingPref(browser_action_command->accelerator(),
-                      extension->id(),
-                      browser_action_command->command_name(),
-                      false);  // Overwriting not allowed.
+    if (!chrome::IsChromeAccelerator(
+        browser_action_command->accelerator(), profile_)) {
+      AddKeybindingPref(browser_action_command->accelerator(),
+                        extension->id(),
+                        browser_action_command->command_name(),
+                        false);  // Overwriting not allowed.
+    }
   }
 
   const extensions::Command* page_action_command =
       CommandsInfo::GetPageActionCommand(extension);
   if (page_action_command) {
-    AddKeybindingPref(page_action_command->accelerator(),
-                      extension->id(),
-                      page_action_command->command_name(),
-                      false);  // Overwriting not allowed.
+    if (!chrome::IsChromeAccelerator(
+        page_action_command->accelerator(), profile_)) {
+      AddKeybindingPref(page_action_command->accelerator(),
+                        extension->id(),
+                        page_action_command->command_name(),
+                        false);  // Overwriting not allowed.
+    }
   }
 
   const extensions::Command* script_badge_command =
       CommandsInfo::GetScriptBadgeCommand(extension);
   if (script_badge_command) {
-    AddKeybindingPref(script_badge_command->accelerator(),
-                      extension->id(),
-                      script_badge_command->command_name(),
-                      false);  // Overwriting not allowed.
+    if (!chrome::IsChromeAccelerator(
+        script_badge_command->accelerator(), profile_)) {
+      AddKeybindingPref(script_badge_command->accelerator(),
+                        extension->id(),
+                        script_badge_command->command_name(),
+                        false);  // Overwriting not allowed.
+    }
   }
 }
 
@@ -275,11 +287,9 @@ void CommandService::RemoveKeybindingPrefs(const std::string& extension_id,
 
   typedef std::vector<std::string> KeysToRemove;
   KeysToRemove keys_to_remove;
-  for (DictionaryValue::key_iterator it = bindings->begin_keys();
-       it != bindings->end_keys(); ++it) {
-    std::string key = *it;
-    DictionaryValue* item = NULL;
-    bindings->GetDictionary(key, &item);
+  for (DictionaryValue::Iterator it(*bindings); !it.IsAtEnd(); it.Advance()) {
+    const DictionaryValue* item = NULL;
+    it.value().GetAsDictionary(&item);
 
     std::string extension;
     item->GetString(kExtension, &extension);
@@ -294,7 +304,7 @@ void CommandService::RemoveKeybindingPrefs(const std::string& extension_id,
           continue;
       }
 
-      keys_to_remove.push_back(key);
+      keys_to_remove.push_back(it.key());
     }
   }
 

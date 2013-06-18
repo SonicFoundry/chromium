@@ -28,7 +28,6 @@ class MockDelegate : public MessageCenterTrayDelegate {
     return show_popups_success_;
   }
   virtual void HideMessageCenter() OVERRIDE {}
-  virtual void UpdateMessageCenter() OVERRIDE {}
 
   bool show_popups_success_;
   bool show_message_center_success_;
@@ -43,22 +42,24 @@ class MessageCenterTrayTest : public testing::Test {
   virtual ~MessageCenterTrayTest() {}
 
   virtual void SetUp() {
+    MessageCenter::Initialize();
     delegate_.reset(new MockDelegate);
-    message_center_.reset(new MessageCenter());
+    message_center_ = MessageCenter::Get();
     message_center_tray_.reset(
-        new MessageCenterTray(delegate_.get(), message_center_.get()));
+        new MessageCenterTray(delegate_.get(), message_center_));
   }
 
   virtual void TearDown() {
     message_center_tray_.reset();
-    message_center_.reset();
     delegate_.reset();
+    message_center_ = NULL;
+    MessageCenter::Shutdown();
   }
 
  protected:
   scoped_ptr<MockDelegate> delegate_;
   scoped_ptr<MessageCenterTray> message_center_tray_;
-  scoped_ptr<MessageCenter> message_center_;
+  MessageCenter* message_center_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MessageCenterTrayTest);

@@ -148,7 +148,7 @@ void AutocompleteActionPredictor::StartPrerendering(
           prerender::PrerenderManagerFactory::GetForProfile(profile_)) {
     content::SessionStorageNamespace* session_storage_namespace = NULL;
     content::SessionStorageNamespaceMap::const_iterator it =
-        session_storage_namespace_map.find("");
+        session_storage_namespace_map.find(std::string());
     if (it != session_storage_namespace_map.end())
       session_storage_namespace = it->second;
     prerender_handle_.reset(
@@ -330,8 +330,8 @@ void AutocompleteActionPredictor::OnOmniboxOpenedUrl(
   const AutocompleteMatch& match = log.result.match_at(log.selected_index);
 
   UMA_HISTOGRAM_BOOLEAN(
-      StringPrintf("Prerender.OmniboxNavigationsCouldPrerender%s",
-                   prerender::PrerenderManager::GetModeString()).c_str(),
+      base::StringPrintf("Prerender.OmniboxNavigationsCouldPrerender%s",
+                         prerender::PrerenderManager::GetModeString()).c_str(),
       prerender::IsOmniboxEnabled(profile_));
 
   const GURL& opened_url = match.destination_url;

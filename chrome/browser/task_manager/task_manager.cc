@@ -30,7 +30,6 @@
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
-#include "chrome/common/view_type.h"
 #include "content/public/browser/browser_child_process_host.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/gpu_data_manager.h"
@@ -48,6 +47,10 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/text/bytes_formatting.h"
 #include "ui/gfx/image/image_skia.h"
+
+#if defined(OS_WIN)
+#include "chrome/browser/task_manager/task_manager_os_resources_win.h"
+#endif
 
 using content::BrowserThread;
 using content::OpenURLParams;
@@ -135,7 +138,7 @@ class TaskManagerModelGpuDataManagerObserver
   }
 
   static void NotifyVideoMemoryUsageStats(
-      content::GPUVideoMemoryUsageStats video_memory_usage_stats) {
+      const content::GPUVideoMemoryUsageStats& video_memory_usage_stats) {
     TaskManager::GetInstance()->model()->NotifyVideoMemoryUsageStats(
         video_memory_usage_stats);
   }
@@ -186,7 +189,13 @@ TaskManagerModel::PerProcessValues::PerProcessValues()
       physical_memory(0),
       is_video_memory_valid(false),
       video_memory(0),
-      video_memory_has_duplicates(false) {
+      video_memory_has_duplicates(false),
+      is_gdi_handles_valid(false),
+      gdi_handles(0),
+      gdi_handles_peak(0),
+      is_user_handles_valid(0),
+      user_handles(0),
+      user_handles_peak(0) {
 }
 
 TaskManagerModel::PerProcessValues::~PerProcessValues() {
@@ -305,6 +314,12 @@ string16 TaskManagerModel::GetResourceById(int index, int col_id) const {
     case IDS_TASK_MANAGER_PROCESS_ID_COLUMN:
       return GetResourceProcessId(index);
 
+    case IDS_TASK_MANAGER_GDI_HANDLES_COLUMN:
+      return GetResourceGDIHandles(index);
+
+    case IDS_TASK_MANAGER_USER_HANDLES_COLUMN:
+      return GetResourceUSERHandles(index);
+
     case IDS_TASK_MANAGER_GOATS_TELEPORTED_COLUMN:
       return GetResourceGoatsTeleported(index);
 
@@ -398,6 +413,20 @@ string16 TaskManagerModel::GetResourcePhysicalMemory(int index) const {
 
 string16 TaskManagerModel::GetResourceProcessId(int index) const {
   return base::IntToString16(GetProcessId(index));
+}
+
+string16 TaskManagerModel::GetResourceGDIHandles(int index) const {
+  size_t current, peak;
+  GetGDIHandles(index, &current, &peak);
+  return l10n_util::GetStringFUTF16(IDS_TASK_MANAGER_HANDLES_CELL_TEXT,
+      base::IntToString16(current), base::IntToString16(peak));
+}
+
+string16 TaskManagerModel::GetResourceUSERHandles(int index) const {
+  size_t current, peak;
+  GetUSERHandles(index, &current, &peak);
+  return l10n_util::GetStringFUTF16(IDS_TASK_MANAGER_HANDLES_CELL_TEXT,
+      base::IntToString16(current), base::IntToString16(peak));
 }
 
 string16 TaskManagerModel::GetResourceWebCoreImageCacheSize(
@@ -509,6 +538,46 @@ bool TaskManagerModel::GetPhysicalMemory(int index, size_t* result) const {
   }
   *result = values.physical_memory;
   return true;
+}
+
+void TaskManagerModel::GetGDIHandles(int index,
+                                     size_t* current,
+                                     size_t* peak) const {
+  *current = 0;
+  *peak = 0;
+#if defined(OS_WIN)
+  base::ProcessHandle handle = GetResource(index)->GetProcess();
+  PerProcessValues& values(per_process_cache_[handle]);
+
+  if (!values.is_gdi_handles_valid) {
+    GetWinGDIHandles(GetResource(index)->GetProcess(),
+                     &values.gdi_handles,
+                     &values.gdi_handles_peak);
+    values.is_gdi_handles_valid = true;
+  }
+  *current = values.gdi_handles;
+  *peak = values.gdi_handles_peak;
+#endif
+}
+
+void TaskManagerModel::GetUSERHandles(int index,
+                                      size_t* current,
+                                      size_t* peak) const {
+  *current = 0;
+  *peak = 0;
+#if defined(OS_WIN)
+  base::ProcessHandle handle = GetResource(index)->GetProcess();
+  PerProcessValues& values(per_process_cache_[handle]);
+
+  if (!values.is_user_handles_valid) {
+    GetWinUSERHandles(GetResource(index)->GetProcess(),
+                      &values.user_handles,
+                      &values.user_handles_peak);
+    values.is_user_handles_valid = true;
+  }
+  *current = values.user_handles;
+  *peak = values.user_handles_peak;
+#endif
 }
 
 bool TaskManagerModel::GetWebCoreCacheStats(
@@ -748,6 +817,22 @@ int TaskManagerModel::CompareValues(int row1, int row2, int col_id) const {
 
     case IDS_TASK_MANAGER_PROCESS_ID_COLUMN:
       return ValueCompare(GetProcessId(row1), GetProcessId(row2));
+
+    case IDS_TASK_MANAGER_GDI_HANDLES_COLUMN: {
+      size_t current1, peak1;
+      size_t current2, peak2;
+      GetGDIHandles(row1, &current1, &peak1);
+      GetGDIHandles(row2, &current2, &peak2);
+      return ValueCompare(current1, current2);
+    }
+
+    case IDS_TASK_MANAGER_USER_HANDLES_COLUMN: {
+      size_t current1, peak1;
+      size_t current2, peak2;
+      GetUSERHandles(row1, &current1, &peak1);
+      GetUSERHandles(row2, &current2, &peak2);
+      return ValueCompare(current1, current2);
+    }
 
     case IDS_TASK_MANAGER_WEBCORE_IMAGE_CACHE_COLUMN:
     case IDS_TASK_MANAGER_WEBCORE_SCRIPTS_CACHE_COLUMN:
@@ -1437,10 +1522,11 @@ TaskManager* TaskManager::GetInstance() {
 
 void TaskManager::OpenAboutMemory(chrome::HostDesktopType desktop_type) {
   Browser* browser = chrome::FindOrCreateTabbedBrowser(
-      ProfileManager::GetDefaultProfileOrOffTheRecord(), desktop_type);
+      ProfileManager::GetLastUsedProfile(), desktop_type);
   chrome::NavigateParams params(browser, GURL(chrome::kChromeUIMemoryURL),
                                 content::PAGE_TRANSITION_LINK);
   params.disposition = NEW_FOREGROUND_TAB;
+  params.window_action = chrome::NavigateParams::SHOW_WINDOW;
   chrome::Navigate(&params);
 }
 
@@ -1496,7 +1582,7 @@ int TaskManager::GetBackgroundPageCount() {
 }
 
 TaskManager::TaskManager()
-    : ALLOW_THIS_IN_INITIALIZER_LIST(model_(new TaskManagerModel(this))) {
+    : model_(new TaskManagerModel(this)) {
 }
 
 TaskManager::~TaskManager() {

@@ -6,7 +6,6 @@
 #define REMOTING_HOST_WIN_HOST_SERVICE_H_
 
 #include <windows.h>
-#include <winternl.h>
 
 #include <list>
 
@@ -14,12 +13,12 @@
 #include "base/memory/singleton.h"
 #include "base/synchronization/waitable_event.h"
 #include "net/base/ip_endpoint.h"
+#include "remoting/host/win/message_window.h"
 #include "remoting/host/win/wts_terminal_monitor.h"
 
 class CommandLine;
 
 namespace base {
-class ScopedNativeLibrary;
 class SingleThreadTaskRunner;
 }  // namespace base
 
@@ -29,7 +28,8 @@ class AutoThreadTaskRunner;
 class Stoppable;
 class WtsTerminalObserver;
 
-class HostService : public WtsTerminalMonitor {
+class HostService : public win::MessageWindow::Delegate,
+                    public WtsTerminalMonitor {
  public:
   static HostService* GetInstance();
 
@@ -48,21 +48,6 @@ class HostService : public WtsTerminalMonitor {
  private:
   HostService();
   ~HostService();
-
-  // Sets |*endpoint| to the endpoint of the client attached to |session_id|.
-  // If |session_id| is attached to the physical console net::IPEndPoint() is
-  // used. Returns false if the endpoint cannot be queried (if there is no
-  // client attached to |session_id| for instance).
-  bool GetEndpointForSessionId(uint32 session_id, net::IPEndPoint* endpoint);
-
-  // Returns id of the session that |client_endpoint| is attached.
-  // |kInvalidSessionId| is returned if none of the sessions is currently
-  // attahced to |client_endpoint|.
-  uint32 GetSessionIdForEndpoint(const net::IPEndPoint& client_endpoint);
-
-  // Gets the pointer to winsta!WinStationQueryInformationW(). Returns false if
-  // en error occurs.
-  bool LoadWinStationLibrary();
 
   // Notifies the service of changes in session state.
   void OnSessionChange(uint32 event, uint32 session_id);
@@ -85,6 +70,13 @@ class HostService : public WtsTerminalMonitor {
   // console application).
   int RunInConsole();
 
+  // win::MessageWindow::Delegate interface.
+  virtual bool HandleMessage(HWND hwnd,
+                             UINT message,
+                             WPARAM wparam,
+                             LPARAM lparam,
+                             LRESULT* result) OVERRIDE;
+
   static BOOL WINAPI ConsoleControlHandler(DWORD event);
 
   // The control handler of the service.
@@ -95,11 +87,6 @@ class HostService : public WtsTerminalMonitor {
 
   // The main service entry point.
   static VOID WINAPI ServiceMain(DWORD argc, WCHAR* argv[]);
-
-  static LRESULT CALLBACK SessionChangeNotificationProc(HWND hwnd,
-                                                        UINT message,
-                                                        WPARAM wparam,
-                                                        LPARAM lparam);
 
   struct RegisteredObserver {
     // Specifies the client address of an RDP connection or IPEndPoint() for
@@ -117,12 +104,6 @@ class HostService : public WtsTerminalMonitor {
 
   // The list of observers receiving session notifications.
   std::list<RegisteredObserver> observers_;
-
-  // Handle of dynamically loaded winsta.dll.
-  scoped_ptr<base::ScopedNativeLibrary> winsta_;
-
-  // Points to winsta!WinStationQueryInformationW().
-  PWINSTATIONQUERYINFORMATIONW win_station_query_information_;
 
   scoped_ptr<Stoppable> child_;
 

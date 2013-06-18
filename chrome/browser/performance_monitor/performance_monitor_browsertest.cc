@@ -42,6 +42,10 @@
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
 
+#if defined(OS_CHROMEOS)
+#include "chromeos/chromeos_switches.h"
+#endif
+
 #if defined(OS_MACOSX)
 #include "base/mac/scoped_nsautorelease_pool.h"
 #endif
@@ -285,9 +289,9 @@ class PerformanceMonitorUncleanExitBrowserTest
     // typically be logged in with 'user'.)
 #if defined(OS_CHROMEOS)
     const CommandLine command_line = *CommandLine::ForCurrentProcess();
-    if (command_line.HasSwitch(switches::kLoginProfile)) {
+    if (command_line.HasSwitch(chromeos::switches::kLoginProfile)) {
       first_profile_name_ =
-          command_line.GetSwitchValueASCII(switches::kLoginProfile);
+          command_line.GetSwitchValueASCII(chromeos::switches::kLoginProfile);
     } else {
       first_profile_name_ = chrome::kInitialProfile;
     }
@@ -369,7 +373,7 @@ class PerformanceMonitorSessionRestoreBrowserTest
     // Create a new window, which should trigger session restore.
     ui_test_utils::BrowserAddedObserver window_observer;
     content::TestNavigationObserver navigation_observer(
-        content::NotificationService::AllSources(), NULL, expected_tab_count);
+        content::NotificationService::AllSources(), expected_tab_count);
     chrome::NewEmptyWindow(profile, chrome::HOST_DESKTOP_TYPE_NATIVE);
     Browser* new_browser = window_observer.WaitForSingleNewBrowser();
     navigation_observer.Wait();

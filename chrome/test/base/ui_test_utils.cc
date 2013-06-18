@@ -25,6 +25,7 @@
 #include "base/values.h"
 #include "chrome/browser/autocomplete/autocomplete_controller.h"
 #include "chrome/browser/bookmarks/bookmark_model.h"
+#include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/history/history_service_factory.h"
@@ -73,7 +74,7 @@
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/size.h"
-#include "ui/snapshot/snapshot.h"
+#include "ui/snapshot/test/snapshot_desktop.h"
 
 #if defined(USE_AURA)
 #include "ash/shell.h"
@@ -158,7 +159,7 @@ base::FilePath GetSnapshotFileName(const base::FilePath& snapshot_directory) {
   base::Time::Exploded the_time;
 
   base::Time::Now().LocalExplode(&the_time);
-  std::string filename(StringPrintf("%s%04d%02d%02d%02d%02d%02d%s",
+  std::string filename(base::StringPrintf("%s%04d%02d%02d%02d%02d%02d%s",
       kSnapshotBaseName, the_time.year, the_time.month, the_time.day_of_month,
       the_time.hour, the_time.minute, the_time.second, kSnapshotExtension));
 
@@ -168,7 +169,7 @@ base::FilePath GetSnapshotFileName(const base::FilePath& snapshot_directory) {
     std::string suffix;
     base::FilePath trial_file;
     do {
-      suffix = StringPrintf(" (%d)", ++index);
+      suffix = base::StringPrintf(" (%d)", ++index);
       trial_file = snapshot_file.InsertBeforeExtensionASCII(suffix);
     } while (file_util::PathExists(trial_file));
     snapshot_file = trial_file;
@@ -186,14 +187,14 @@ bool GetCurrentTabTitle(const Browser* browser, string16* title) {
   NavigationEntry* last_entry = web_contents->GetController().GetActiveEntry();
   if (!last_entry)
     return false;
-  title->assign(last_entry->GetTitleForDisplay(""));
+  title->assign(last_entry->GetTitleForDisplay(std::string()));
   return true;
 }
 
 void WaitForNavigations(NavigationController* controller,
                         int number_of_navigations) {
   content::TestNavigationObserver observer(
-      content::Source<NavigationController>(controller), NULL,
+      content::Source<NavigationController>(controller),
       number_of_navigations);
   base::RunLoop run_loop;
   observer.WaitForObservation(
@@ -226,7 +227,7 @@ Browser* OpenURLOffTheRecord(Profile* profile, const GURL& url) {
 
 void NavigateToURL(chrome::NavigateParams* params) {
   content::TestNavigationObserver observer(
-      content::NotificationService::AllSources(), NULL, 1);
+      content::NotificationService::AllSources(), 1);
   chrome::Navigate(params);
   base::RunLoop run_loop;
   observer.WaitForObservation(
@@ -257,7 +258,6 @@ static void NavigateToURLWithDispositionBlockUntilNavigationsComplete(
       &tab_strip->GetActiveWebContents()->GetController() : NULL;
   content::TestNavigationObserver same_tab_observer(
       content::Source<NavigationController>(controller),
-      NULL,
       number_of_navigations);
 
   std::set<Browser*> initial_browsers;
@@ -357,9 +357,9 @@ bool GetRelativeBuildDirectory(base::FilePath* build_dir) {
   // We must first generate absolute paths to SRC and EXE and from there
   // generate a relative path.
   if (!exe_dir.IsAbsolute())
-    file_util::AbsolutePath(&exe_dir);
+    exe_dir = base::MakeAbsoluteFilePath(exe_dir);
   if (!src_dir.IsAbsolute())
-    file_util::AbsolutePath(&src_dir);
+    src_dir = base::MakeAbsoluteFilePath(src_dir);
   if (!exe_dir.IsAbsolute())
     return false;
   if (!src_dir.IsAbsolute())
@@ -425,6 +425,10 @@ void WaitForBookmarkModelToLoad(BookmarkModel* model) {
   content::RunThisRunLoop(&run_loop);
   model->RemoveObserver(&observer);
   ASSERT_TRUE(model->IsLoaded());
+}
+
+void WaitForBookmarkModelToLoad(Profile* profile) {
+  WaitForBookmarkModelToLoad(BookmarkModelFactory::GetForProfile(profile));
 }
 
 void WaitForTemplateURLServiceToLoad(TemplateURLService* service) {
@@ -627,7 +631,7 @@ bool SaveScreenSnapshotToDirectory(const base::FilePath& directory,
     std::vector<unsigned char> png_data;
     gfx::Rect bounds(
         gfx::Size(rect.right - rect.left, rect.bottom - rect.top));
-    if (ui::GrabWindowSnapshot(NULL, &png_data, bounds) &&
+    if (ui::GrabDesktopSnapshot(bounds, &png_data) &&
         png_data.size() <= INT_MAX) {
       int bytes = static_cast<int>(png_data.size());
       int written = file_util::WriteFile(

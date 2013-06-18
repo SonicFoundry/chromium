@@ -6,10 +6,11 @@
 #include "base/command_line.h"
 #include "base/hi_res_timer_manager.h"
 #include "base/message_loop.h"
+#include "base/power_monitor/power_monitor.h"
 #include "base/string_util.h"
-#include "base/system_monitor/system_monitor.h"
 #include "base/threading/platform_thread.h"
 #include "content/common/child_process.h"
+#include "content/common/sandbox_linux.h"
 #include "content/public/common/main_function_params.h"
 #include "content/public/common/sandbox_init.h"
 #include "content/worker/worker_thread.h"
@@ -18,15 +19,19 @@
 #include "sandbox/win/src/sandbox.h"
 #endif
 
+#if defined(OS_MACOSX)
+#include "content/common/sandbox_mac.h"
+#endif
+
 namespace content {
 
 // Mainline routine for running as the worker process.
 int WorkerMain(const MainFunctionParams& parameters) {
   // The main message loop of the worker process.
-  MessageLoop main_message_loop;
+  base::MessageLoop main_message_loop;
   base::PlatformThread::SetName("CrWorkerMain");
 
-  base::SystemMonitor system_monitor;
+  base::PowerMonitor power_monitor;
   HighResolutionTimerManager hi_res_timer_manager;
 
 #if defined(OS_WIN)
@@ -43,14 +48,13 @@ int WorkerMain(const MainFunctionParams& parameters) {
   ::GetUserDefaultLCID();
 
   target_services->LowerToken();
-#elif defined(OS_MAC)
-  // On OS X, if the sandbox fails to initialize, something has gone terribly
-  // wrong and we should die.
-  CHECK(InitializeSandbox());
+#elif defined(OS_MACOSX)
+  // Sandbox should already be activated at this point.
+  CHECK(Sandbox::SandboxIsCurrentlyActive());
 #elif defined(OS_LINUX)
   // On Linux, the sandbox must be initialized early, before any thread is
   // created.
-  InitializeSandbox();
+  LinuxSandbox::InitializeSandbox();
 #endif
 
   ChildProcess worker_process;
@@ -63,7 +67,7 @@ int WorkerMain(const MainFunctionParams& parameters) {
 
   // Load the accelerator table from the browser executable and tell the
   // message loop to use it when translating messages.
-  MessageLoop::current()->Run();
+  base::MessageLoop::current()->Run();
 
   return 0;
 }

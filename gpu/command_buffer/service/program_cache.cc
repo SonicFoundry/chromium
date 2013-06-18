@@ -39,7 +39,11 @@ void ProgramCache::ShaderCompilationSucceeded(
   char sha[kHashLength];
   ComputeShaderHash(shader_src, sha);
   const std::string sha_string(sha, kHashLength);
+  ShaderCompilationSucceededSha(sha_string);
+}
 
+void ProgramCache::ShaderCompilationSucceededSha(
+    const std::string& sha_string) {
   CompileStatusMap::iterator it = shader_status_.find(sha_string);
   if (it == shader_status_.end()) {
     shader_status_[sha_string] = CompiledShaderInfo(COMPILATION_SUCCEEDED);
@@ -148,7 +152,7 @@ void ProgramCache::ComputeProgramHash(
   const size_t map_size = CalculateMapSize(bind_attrib_location_map);
   const size_t total_size = shader0_size + shader1_size + map_size;
 
-  scoped_array<unsigned char> buffer(new unsigned char[total_size]);
+  scoped_ptr<unsigned char[]> buffer(new unsigned char[total_size]);
   memcpy(buffer.get(), hashed_shader_0, shader0_size);
   memcpy(&buffer[shader0_size], hashed_shader_1, shader1_size);
   if (map_size != 0) {

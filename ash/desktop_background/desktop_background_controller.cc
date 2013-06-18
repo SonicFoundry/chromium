@@ -121,7 +121,7 @@ DesktopBackgroundController::DesktopBackgroundController()
     : locked_(false),
       desktop_background_mode_(BACKGROUND_NONE),
       background_color_(kTransparentColor),
-      weak_ptr_factory_(ALLOW_THIS_IN_INITIALIZER_LIST(this)) {
+      weak_ptr_factory_(this) {
 }
 
 DesktopBackgroundController::~DesktopBackgroundController() {
@@ -129,7 +129,7 @@ DesktopBackgroundController::~DesktopBackgroundController() {
 }
 
 gfx::ImageSkia DesktopBackgroundController::GetWallpaper() const {
-  if (current_wallpaper_.get())
+  if (current_wallpaper_)
     return current_wallpaper_->wallpaper_image();
   return gfx::ImageSkia();
 }
@@ -145,7 +145,7 @@ void DesktopBackgroundController::RemoveObserver(
 }
 
 WallpaperLayout DesktopBackgroundController::GetWallpaperLayout() const {
-  if (current_wallpaper_.get())
+  if (current_wallpaper_)
     return current_wallpaper_->wallpaper_info().layout;
   return WALLPAPER_LAYOUT_CENTER_CROPPED;
 }
@@ -157,9 +157,9 @@ gfx::ImageSkia DesktopBackgroundController::GetCurrentWallpaperImage() {
 }
 
 int DesktopBackgroundController::GetWallpaperIDR() const {
-  if (wallpaper_loader_.get())
+  if (wallpaper_loader_)
     return wallpaper_loader_->idr();
-  else if (current_wallpaper_.get())
+  else if (current_wallpaper_)
     return current_wallpaper_->wallpaper_info().idr;
   else
     return -1;
@@ -224,7 +224,7 @@ void DesktopBackgroundController::SetCustomWallpaper(
 
 void DesktopBackgroundController::CancelPendingWallpaperOperation() {
   // Set canceled flag of previous request to skip unneeded loading.
-  if (wallpaper_loader_.get())
+  if (wallpaper_loader_)
     wallpaper_loader_->Cancel();
 
   // Cancel reply callback for previous request.
@@ -250,9 +250,13 @@ WallpaperResolution DesktopBackgroundController::GetAppropriateResolution() {
   Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
   for (Shell::RootWindowList::iterator iter = root_windows.begin();
        iter != root_windows.end(); ++iter) {
-    gfx::Size root_window_size = (*iter)->GetHostSize();
-    if (root_window_size.width() > kSmallWallpaperMaxWidth ||
-        root_window_size.height() > kSmallWallpaperMaxHeight) {
+    // Compare to host size as constants are defined in terms of
+    // physical pixel size.
+    // TODO(oshima): This may not be ideal for fractional scaling
+    // scenario. Revisit and fix if necessary.
+    gfx::Size host_window_size = (*iter)->GetHostSize();
+    if (host_window_size.width() > kSmallWallpaperMaxWidth ||
+        host_window_size.height() > kSmallWallpaperMaxHeight) {
       resolution = WALLPAPER_RESOLUTION_LARGE;
     }
   }
@@ -315,7 +319,8 @@ ui::Layer* DesktopBackgroundController::SetColorLayerForContainer(
   Shell::GetContainer(root_window,container_id)->
       layer()->Add(background_layer);
 
-  MessageLoop::current()->PostTask(FROM_HERE,
+  base::MessageLoop::current()->PostTask(
+      FROM_HERE,
       base::Bind(&DesktopBackgroundController::NotifyAnimationFinished,
                  weak_ptr_factory_.GetWeakPtr()));
 

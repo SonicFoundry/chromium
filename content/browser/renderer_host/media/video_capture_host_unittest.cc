@@ -53,8 +53,8 @@ class DumpVideo {
  public:
   DumpVideo() : expected_size_(0) {}
   void StartDump(int width, int height) {
-    base::FilePath file_name = base::FilePath(
-        StringPrintf(FILE_PATH_LITERAL("dump_w%d_h%d.yuv"), width, height));
+    base::FilePath file_name = base::FilePath(base::StringPrintf(
+        FILE_PATH_LITERAL("dump_w%d_h%d.yuv"), width, height));
     file_.reset(file_util::OpenFile(file_name, "wb"));
     expected_size_ = width * height * 3 / 2;
   }
@@ -191,7 +191,7 @@ class MockVideoCaptureHost : public VideoCaptureHost {
 };
 
 ACTION_P(ExitMessageLoop, message_loop) {
-  message_loop->PostTask(FROM_HERE, MessageLoop::QuitClosure());
+  message_loop->PostTask(FROM_HERE, base::MessageLoop::QuitClosure());
 }
 
 class VideoCaptureHostTest : public testing::Test {
@@ -201,7 +201,7 @@ class VideoCaptureHostTest : public testing::Test {
  protected:
   virtual void SetUp() OVERRIDE {
     // Create a message loop so VideoCaptureHostTest can use it.
-    message_loop_.reset(new MessageLoop(MessageLoop::TYPE_IO));
+    message_loop_.reset(new base::MessageLoop(base::MessageLoop::TYPE_IO));
 
     // MediaStreamManager must be created on the IO thread.
     io_thread_.reset(new BrowserThreadImpl(BrowserThread::IO,
@@ -338,7 +338,7 @@ class VideoCaptureHostTest : public testing::Test {
   scoped_refptr<MockVideoCaptureHost> host_;
 
  private:
-  scoped_ptr<MessageLoop> message_loop_;
+  scoped_ptr<base::MessageLoop> message_loop_;
   scoped_ptr<BrowserThreadImpl> io_thread_;
   scoped_ptr<media::AudioManager> audio_manager_;
   scoped_ptr<MediaStreamManager> media_stream_manager_;

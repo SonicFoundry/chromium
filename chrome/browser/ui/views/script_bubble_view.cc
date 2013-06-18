@@ -11,11 +11,12 @@
 #include "chrome/browser/extensions/script_bubble_controller.h"
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/extensions/api/icons/icons_handler.h"
 #include "chrome/common/extensions/extension.h"
+#include "chrome/common/extensions/manifest_handlers/icons_handler.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/common/extension_resource.h"
 #include "grit/generated_resources.h"
 #include "grit/locale_settings.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -56,7 +57,7 @@ ScriptBubbleView::ScriptBubbleView(views::View* anchor_view,
       height_(0),
       web_contents_(web_contents) {
   // Compensate for built-in vertical padding in the anchor view's image.
-  set_anchor_insets(gfx::Insets(5, 0, 5, 0));
+  set_anchor_view_insets(gfx::Insets(5, 0, 5, 0));
 
   extensions::ScriptBubbleController* script_bubble_controller =
       GetScriptBubbleController();
@@ -81,7 +82,7 @@ ScriptBubbleView::ScriptBubbleView(views::View* anchor_view,
     entries_.push_back(entry);
 
     int size = extension_misc::EXTENSION_ICON_BITTY;
-    ExtensionResource image =
+    extensions::ExtensionResource image =
         extensions::IconsInfo::GetIconResource(extension,
                                                size,
                                                ExtensionIconSet::MATCH_BIGGER);

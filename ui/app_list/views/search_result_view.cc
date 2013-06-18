@@ -33,15 +33,11 @@ const int kActionButtonWidth = 32;
 // Extra margin at the right of the rightmost action icon.
 const int kActionButtonRightMargin = 8;
 
-const SkColor kBorderColor = SkColorSetARGB(0x0F, 0, 0, 0);
+const SkColor kBorderColor = SkColorSetRGB(0xE5, 0xE5, 0xE5);
 
 const SkColor kDefaultTextColor = SkColorSetRGB(0x33, 0x33, 0x33);
 const SkColor kDimmedTextColor = SkColorSetRGB(0x96, 0x96, 0x96);
 const SkColor kURLTextColor = SkColorSetRGB(0x00, 0x99, 0x33);
-
-const SkColor kSelectedBorderColor = kBorderColor;
-const SkColor kSelectedBackgroundColor = SkColorSetARGB(0x0F, 0x4D, 0x90, 0xFE);
-const SkColor kHoverAndPushedColor = SkColorSetARGB(0x05, 0, 0, 0);
 
 // A non-interactive image view to display result icon.
 class IconView : public views::ImageView {
@@ -182,18 +178,17 @@ void SearchResultView::OnPaint(gfx::Canvas* canvas) {
   gfx::Rect content_rect(rect);
   content_rect.set_height(rect.height() - kBorderSize);
 
-  canvas->FillRect(content_rect, kContentsBackgroundColor);
-
-  bool selected = list_view_->IsResultViewSelected(this);
-  if (selected) {
-    canvas->FillRect(content_rect, kSelectedBackgroundColor);
-  } else if (state() == STATE_HOVERED || state() == STATE_PRESSED) {
+  const bool selected = list_view_->IsResultViewSelected(this);
+  const bool hover = state() == STATE_HOVERED || state() == STATE_PRESSED;
+  if (hover && selected)
     canvas->FillRect(content_rect, kHoverAndPushedColor);
-  }
+  else if (selected || hover)
+    canvas->FillRect(content_rect, kSelectedColor);
+  else
+    canvas->FillRect(content_rect, kContentsBackgroundColor);
 
   gfx::Rect border_bottom = gfx::SubtractRects(rect, content_rect);
-  canvas->FillRect(border_bottom,
-                   selected ? kSelectedBorderColor : kBorderColor);
+  canvas->FillRect(border_bottom, kBorderColor);
 
   gfx::Rect text_bounds(rect);
   text_bounds.set_x(kIconViewWidth);
@@ -204,7 +199,7 @@ void SearchResultView::OnPaint(gfx::Canvas* canvas) {
   text_bounds.set_x(GetMirroredXWithWidthInView(text_bounds.x(),
                                                 text_bounds.width()));
 
-  if (title_text_.get() && details_text_.get()) {
+  if (title_text_ && details_text_) {
     gfx::Size title_size(text_bounds.width(),
                          title_text_->GetStringSize().height());
     gfx::Size details_size(text_bounds.width(),
@@ -220,7 +215,7 @@ void SearchResultView::OnPaint(gfx::Canvas* canvas) {
     details_text_->SetDisplayRect(gfx::Rect(gfx::Point(text_bounds.x(), y),
                                             details_size));
     details_text_->Draw(canvas);
-  } else if (title_text_.get()) {
+  } else if (title_text_) {
     gfx::Size title_size(text_bounds.width(),
                          title_text_->GetStringSize().height());
     gfx::Rect centered_title_rect(text_bounds);

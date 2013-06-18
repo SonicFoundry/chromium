@@ -25,11 +25,11 @@
 #include "content/public/common/renderer_preferences.h"
 #include "content/public/common/three_d_api_types.h"
 #include "net/base/load_states.h"
+#include "third_party/WebKit/Source/WebKit/chromium/public/WebDragOperation.h"
 #include "ui/gfx/rect_f.h"
 #include "ui/gfx/size.h"
 #include "webkit/glue/resource_type.h"
 
-struct BrowserPluginHostMsg_CreateGuest_Params;
 struct BrowserPluginHostMsg_ResizeGuest_Params;
 struct ViewHostMsg_DateTimeDialogValue_Params;
 struct ViewMsg_PostMessage_Params;
@@ -37,6 +37,7 @@ struct ViewMsg_PostMessage_Params;
 namespace content {
 class BrowserPluginEmbedder;
 class BrowserPluginGuest;
+class BrowserPluginGuestManager;
 class ColorChooser;
 class DateTimeChooserAndroid;
 class DownloadItem;
@@ -85,17 +86,13 @@ class CONTENT_EXPORT WebContentsImpl
   WebContentsImpl* opener() const { return opener_; }
 
   // Creates a WebContents to be used as a browser plugin guest.
-  static void CreateGuest(
+  static BrowserPluginGuest* CreateGuest(
       BrowserContext* browser_context,
       content::SiteInstance* site_instance,
-      int routing_id,
-      WebContentsImpl* embedder_web_contents,
-      WebContentsImpl* opener_web_contents,
-      int guest_instance_id,
-      const BrowserPluginHostMsg_CreateGuest_Params& params);
+      int guest_instance_id);
 
   // Returns the content specific prefs for the given RVH.
-  static webkit_glue::WebPreferences GetWebkitPrefs(
+  static WebPreferences GetWebkitPrefs(
       RenderViewHost* rvh, const GURL& url);
 
   // Creates a swapped out RenderView. This is used by the browser plugin to
@@ -147,10 +144,6 @@ class CONTENT_EXPORT WebContentsImpl
   // Unsets the currently showing interstitial.
   void DetachInterstitialPage();
 
-  void set_opener_web_ui_type(WebUI::TypeID opener_web_ui_type) {
-    opener_web_ui_type_ = opener_web_ui_type;
-  }
-
 #if defined(ENABLE_JAVA_BRIDGE)
   JavaBridgeDispatcherHostManager* java_bridge_dispatcher_host_manager() const {
     return java_bridge_dispatcher_host_manager_.get();
@@ -166,6 +159,9 @@ class CONTENT_EXPORT WebContentsImpl
   // Returns embedder browser plugin object, or NULL if this WebContents is not
   // an embedder.
   BrowserPluginEmbedder* GetBrowserPluginEmbedder() const;
+  // Returns the BrowserPluginGuestManager object, or NULL if this web contents
+  // does not have a BrowserPluginGuestManager.
+  BrowserPluginGuestManager* GetBrowserPluginGuestManager() const;
 
   // Gets the current fullscreen render widget's routing ID. Returns
   // MSG_ROUTING_NONE when there is no fullscreen render widget.
@@ -176,6 +172,17 @@ class CONTENT_EXPORT WebContentsImpl
 
   // Invoked before a form repost warning is shown.
   void NotifyBeforeFormRepostWarningShow();
+
+
+  // Informs the render view host and the BrowserPluginEmbedder, if present, of
+  // a Drag Source End.
+  void DragSourceEndedAt(int client_x, int client_y, int screen_x,
+      int screen_y, WebKit::WebDragOperation operation);
+
+  // Informs the render view host and the BrowserPluginEmbedder, if present, of
+  // a Drag Source Move.
+  void DragSourceMovedTo(int client_x, int client_y,
+                         int screen_x, int screen_y);
 
   // WebContents ------------------------------------------------------
   virtual WebContentsDelegate* GetDelegate() OVERRIDE;
@@ -199,6 +206,10 @@ class CONTENT_EXPORT WebContentsImpl
   virtual WebUI* GetCommittedWebUI() const OVERRIDE;
   virtual void SetUserAgentOverride(const std::string& override) OVERRIDE;
   virtual const std::string& GetUserAgentOverride() const OVERRIDE;
+#if defined(OS_WIN) && defined(USE_AURA)
+  virtual void SetParentNativeViewAccessible(
+      gfx::NativeViewAccessible accessible_parent) OVERRIDE;
+#endif
   virtual const string16& GetTitle() const OVERRIDE;
   virtual int32 GetMaxPageID() OVERRIDE;
   virtual int32 GetMaxPageIDForSiteInstance(
@@ -250,7 +261,6 @@ class CONTENT_EXPORT WebContentsImpl
   virtual base::TimeTicks GetNewTabStartTime() const OVERRIDE;
   virtual void Close() OVERRIDE;
   virtual void OnCloseStarted() OVERRIDE;
-  virtual bool ShouldAcceptDragAndDrop() const OVERRIDE;
   virtual void SystemDragEnded() OVERRIDE;
   virtual void UserGestureDone() OVERRIDE;
   virtual void SetClosedByUserGesture(bool value) OVERRIDE;
@@ -265,16 +275,16 @@ class CONTENT_EXPORT WebContentsImpl
   virtual int GetMaximumZoomPercent() const OVERRIDE;
   virtual gfx::Size GetPreferredSize() const OVERRIDE;
   virtual int GetContentRestrictions() const OVERRIDE;
-  virtual WebUI::TypeID GetWebUITypeForCurrentState() OVERRIDE;
-  virtual WebUI* GetWebUIForCurrentState() OVERRIDE;
   virtual bool GotResponseToLockMouseRequest(bool allowed) OVERRIDE;
   virtual bool HasOpener() const OVERRIDE;
   virtual void DidChooseColorInColorChooser(int color_chooser_id,
                                             SkColor color) OVERRIDE;
   virtual void DidEndColorChooser(int color_chooser_id) OVERRIDE;
   virtual WebKit::WebWindowFeatures GetWindowFeatures() const OVERRIDE;
-  virtual int DownloadFavicon(const GURL& url, int image_size,
-                              const FaviconDownloadCallback& callback) OVERRIDE;
+  virtual int DownloadImage(const GURL& url,
+                            bool is_favicon,
+                            int image_size,
+                            const ImageDownloadCallback& callback) OVERRIDE;
 
   // Implementation of PageNavigator.
   virtual WebContents* OpenURL(const OpenURLParams& params) OVERRIDE;
@@ -294,9 +304,9 @@ class CONTENT_EXPORT WebContentsImpl
   virtual gfx::Rect GetRootWindowResizerRect() const OVERRIDE;
   virtual void RenderViewCreated(RenderViewHost* render_view_host) OVERRIDE;
   virtual void RenderViewReady(RenderViewHost* render_view_host) OVERRIDE;
-  virtual void RenderViewGone(RenderViewHost* render_view_host,
-                              base::TerminationStatus status,
-                              int error_code) OVERRIDE;
+  virtual void RenderViewTerminated(RenderViewHost* render_view_host,
+                                    base::TerminationStatus status,
+                                    int error_code) OVERRIDE;
   virtual void RenderViewDeleted(RenderViewHost* render_view_host) OVERRIDE;
   virtual void DidStartProvisionalLoadForFrame(
       RenderViewHost* render_view_host,
@@ -334,7 +344,6 @@ class CONTENT_EXPORT WebContentsImpl
   virtual void DidCancelLoading() OVERRIDE;
   virtual void DidChangeLoadProgress(double progress) OVERRIDE;
   virtual void DidDisownOpener(RenderViewHost* rvh) OVERRIDE;
-  virtual void DidUpdateFrameTree(RenderViewHost* rvh) OVERRIDE;
   virtual void DocumentAvailableInMainFrame(
       RenderViewHost* render_view_host) OVERRIDE;
   virtual void DocumentOnLoadCompletedInMainFrame(
@@ -374,7 +383,7 @@ class CONTENT_EXPORT WebContentsImpl
                                    const string16& source_id) OVERRIDE;
   virtual RendererPreferences GetRendererPrefs(
       BrowserContext* browser_context) const OVERRIDE;
-  virtual webkit_glue::WebPreferences GetWebkitPrefs() OVERRIDE;
+  virtual WebPreferences GetWebkitPrefs() OVERRIDE;
   virtual void OnUserGesture() OVERRIDE;
   virtual void OnIgnoredUIEvent() OVERRIDE;
   virtual void RendererUnresponsive(RenderViewHost* render_view_host,
@@ -435,6 +444,9 @@ class CONTENT_EXPORT WebContentsImpl
       const NativeWebKeyboardEvent& event) OVERRIDE;
   virtual bool PreHandleWheelEvent(
       const WebKit::WebMouseWheelEvent& event) OVERRIDE;
+#if defined(OS_WIN) && defined(USE_AURA)
+  virtual gfx::NativeViewAccessible GetParentNativeViewAccessible() OVERRIDE;
+#endif
 
   // RenderViewHostManager::Delegate -------------------------------------------
 
@@ -476,6 +488,7 @@ class CONTENT_EXPORT WebContentsImpl
   FRIEND_TEST_ALL_PREFIXES(WebContentsImplTest, FindOpenerRVHWhenPending);
   FRIEND_TEST_ALL_PREFIXES(WebContentsImplTest,
                            CrossSiteCantPreemptAfterUnload);
+  FRIEND_TEST_ALL_PREFIXES(WebContentsImplTest, PendingContents);
   FRIEND_TEST_ALL_PREFIXES(FormStructureBrowserTest, HTMLFiles);
   FRIEND_TEST_ALL_PREFIXES(NavigationControllerTest, HistoryNavigate);
   FRIEND_TEST_ALL_PREFIXES(RenderViewHostManagerTest, PageDoesBackAndReload);
@@ -569,12 +582,11 @@ class CONTENT_EXPORT WebContentsImpl
   void OnRequestPpapiBrokerPermission(int request_id,
                                       const GURL& url,
                                       const base::FilePath& plugin_path);
-  void OnBrowserPluginAllocateInstanceID(const IPC::Message& message,
-                                         int request_id);
-  void OnDidDownloadFavicon(int id,
-                            const GURL& image_url,
-                            int requested_size,
-                            const std::vector<SkBitmap>& bitmaps);
+  void OnBrowserPluginMessage(const IPC::Message& message);
+  void OnDidDownloadImage(int id,
+                          const GURL& image_url,
+                          int requested_size,
+                          const std::vector<SkBitmap>& bitmaps);
   void OnUpdateFaviconURL(int32 page_id,
                           const std::vector<FaviconURL>& candidates);
   void OnFrameDetached(int64 frame_id);
@@ -725,6 +737,10 @@ class CONTENT_EXPORT WebContentsImpl
   // is closed.
   WebContentsImpl* opener_;
 
+#if defined(OS_WIN) && defined(USE_AURA)
+  gfx::NativeViewAccessible accessible_parent_;
+#endif
+
   // Helper classes ------------------------------------------------------------
 
   // Manages creation and swapping of render views.
@@ -816,10 +832,6 @@ class CONTENT_EXPORT WebContentsImpl
   // Settings that get passed to the renderer process.
   RendererPreferences renderer_preferences_;
 
-  // If this tab was created from a renderer using window.open, this will be
-  // non-NULL and represent the WebUI of the opening renderer.
-  WebUI::TypeID opener_web_ui_type_;
-
   // The time that we started to create the new tab page.
   base::TimeTicks new_tab_start_time_;
 
@@ -881,9 +893,9 @@ class CONTENT_EXPORT WebContentsImpl
   // Routing id of the shown fullscreen widget or MSG_ROUTING_NONE otherwise.
   int fullscreen_widget_routing_id_;
 
-  // Maps the ids of pending favicon downloads to their callbacks
-  typedef std::map<int, FaviconDownloadCallback> FaviconDownloadMap;
-  FaviconDownloadMap favicon_download_map_;
+  // Maps the ids of pending image downloads to their callbacks
+  typedef std::map<int, ImageDownloadCallback> ImageDownloadMap;
+  ImageDownloadMap image_download_map_;
 
   // Saved window features
   WebKit::WebWindowFeatures window_features_;

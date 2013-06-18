@@ -579,7 +579,7 @@ void GLES2InterfaceStub::TexImageIOSurface2DCHROMIUM(
 }
 void GLES2InterfaceStub::CopyTextureCHROMIUM(
     GLenum /* target */, GLenum /* source_id */, GLenum /* dest_id */,
-    GLint /* level */, GLint /* internalformat */) {
+    GLint /* level */, GLint /* internalformat */, GLenum /* dest_type */) {
 }
 void GLES2InterfaceStub::DrawArraysInstancedANGLE(
     GLenum /* mode */, GLint /* first */, GLsizei /* count */,
@@ -623,6 +623,8 @@ void GLES2InterfaceStub::AsyncTexImage2DCHROMIUM(
     GLsizei /* width */, GLsizei /* height */, GLint /* border */,
     GLenum /* format */, GLenum /* type */, const void* /* pixels */) {
 }
+void GLES2InterfaceStub::WaitAsyncTexImage2DCHROMIUM(GLenum /* target */) {
+}
 void GLES2InterfaceStub::DiscardFramebufferEXT(
     GLenum /* target */, GLsizei /* count */,
     const GLenum* /* attachments */) {
@@ -630,7 +632,13 @@ void GLES2InterfaceStub::DiscardFramebufferEXT(
 void GLES2InterfaceStub::LoseContextCHROMIUM(
     GLenum /* current */, GLenum /* other */) {
 }
+GLuint GLES2InterfaceStub::InsertSyncPointCHROMIUM() {
+  return 0;
+}
 void GLES2InterfaceStub::WaitSyncPointCHROMIUM(GLuint /* sync_point */) {
+}
+void GLES2InterfaceStub::DrawBuffersEXT(
+    GLsizei /* count */, const GLenum* /* bufs */) {
 }
 #endif  // GPU_COMMAND_BUFFER_CLIENT_GLES2_INTERFACE_STUB_IMPL_AUTOGEN_H_
 

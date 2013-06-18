@@ -519,6 +519,16 @@ bool SyncerProtoUtil::Compare(const syncable::Entry& local_entry,
 }
 
 // static
+bool SyncerProtoUtil::ShouldMaintainPosition(
+    const sync_pb::SyncEntity& sync_entity) {
+  // Maintain positions for bookmarks that are not server-defined top-level
+  // folders.
+  return GetModelType(sync_entity) == BOOKMARKS
+      && !(sync_entity.folder() &&
+           !sync_entity.server_defined_unique_tag().empty());
+}
+
+// static
 void SyncerProtoUtil::CopyProtoBytesIntoBlob(const std::string& proto_bytes,
                                              syncable::Blob* blob) {
   syncable::Blob proto_blob(proto_bytes.begin(), proto_bytes.end());
@@ -574,7 +584,7 @@ std::string SyncerProtoUtil::SyncEntityDebugString(
       GetTimeDebugString(ProtoTimeToTime(entry.ctime()));
   return base::StringPrintf(
       "id: %s, parent_id: %s, "
-      "version: %"PRId64"d, "
+      "version: %" PRId64"d, "
       "mtime: %" PRId64"d (%s), "
       "ctime: %" PRId64"d (%s), "
       "name: %s, sync_timestamp: %" PRId64"d, "

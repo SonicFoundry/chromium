@@ -32,7 +32,7 @@ QuicHttpStream::QuicHttpStream(QuicReliableClientStream* stream)
       response_headers_received_(false),
       read_buf_(new GrowableIOBuffer()),
       user_buffer_len_(0),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {
+      weak_factory_(this) {
   DCHECK(stream_);
   stream_->SetDelegate(this);
 }
@@ -42,9 +42,11 @@ QuicHttpStream::~QuicHttpStream() {
 }
 
 int QuicHttpStream::InitializeStream(const HttpRequestInfo* request_info,
+                                     RequestPriority priority,
                                      const BoundNetLog& stream_net_log,
                                      const CompletionCallback& callback) {
   CHECK(stream_);
+  DCHECK_EQ("http", request_info->url.scheme());
 
   stream_net_log_ = stream_net_log;
   request_info_ = request_info;
@@ -179,7 +181,7 @@ void QuicHttpStream::Close(bool not_reusable) {
   // Note: the not_reusable flag has no meaning for SPDY streams.
   if (stream_) {
     stream_->SetDelegate(NULL);
-    stream_->Close(QUIC_NO_ERROR);
+    stream_->Close(QUIC_STREAM_NO_ERROR);
     stream_ = NULL;
   }
 }
@@ -194,10 +196,6 @@ bool QuicHttpStream::IsResponseBodyComplete() const {
 
 bool QuicHttpStream::CanFindEndOfResponse() const {
   return true;
-}
-
-bool QuicHttpStream::IsMoreDataBuffered() const {
-  return false;
 }
 
 bool QuicHttpStream::IsConnectionReused() const {
@@ -467,7 +465,11 @@ int QuicHttpStream::ParseResponseHeaders() {
   // Put the peer's IP address and port into the response.
   IPEndPoint address = stream_->GetPeerAddress();
   response_info_->socket_address = HostPortPair::FromIPEndPoint(address);
+  response_info_->connection_info =
+      HttpResponseInfo::CONNECTION_INFO_QUIC1_SPDY3;
   response_info_->vary_data.Init(*request_info_, *response_info_->headers);
+  response_info_->was_npn_negotiated = true;
+  response_info_->npn_negotiated_protocol = "quic/1+spdy/3";
   response_headers_received_ = true;
 
   return OK;

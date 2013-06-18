@@ -13,7 +13,6 @@
 #include "ash/wm/event_rewriter_event_filter.h"
 #include "ash/wm/property_util.h"
 #include "base/command_line.h"
-#include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/chromeos/accessibility/accessibility_util.h"
 #include "chrome/browser/chromeos/accessibility/magnification_manager.h"
@@ -28,10 +27,11 @@
 
 #if defined(OS_CHROMEOS)
 #include "base/chromeos/chromeos_version.h"
-#include "chrome/browser/chromeos/login/user_manager.h"
 #include "chrome/browser/ui/ash/brightness_controller_chromeos.h"
 #include "chrome/browser/ui/ash/ime_controller_chromeos.h"
 #include "chrome/browser/ui/ash/volume_controller_chromeos.h"
+#include "chromeos/chromeos_switches.h"
+#include "chromeos/login/login_state.h"
 #include "ui/base/x/x11_util.h"
 #endif
 
@@ -45,16 +45,6 @@ bool ShouldOpenAshOnStartup() {
   return CommandLine::ForCurrentProcess()->HasSwitch(switches::kOpenAsh);
 }
 
-#if defined(OS_CHROMEOS)
-// Returns true if the cursor should be initially hidden.
-bool ShouldInitiallyHideCursor() {
-  if (base::chromeos::IsRunningOnChromeOS())
-    return !chromeos::UserManager::Get()->IsUserLoggedIn();
-  else
-    return CommandLine::ForCurrentProcess()->HasSwitch(switches::kLoginManager);
-}
-#endif
-
 void OpenAsh() {
 #if defined(OS_CHROMEOS)
   if (base::chromeos::IsRunningOnChromeOS()) {
@@ -65,7 +55,7 @@ void OpenAsh() {
   }
 
   // Hide the mouse cursor completely at boot.
-  if (ShouldInitiallyHideCursor())
+  if (!chromeos::LoginState::Get()->IsUserLoggedIn())
     ash::Shell::set_initially_hide_cursor(true);
 #endif
 
@@ -99,8 +89,7 @@ void OpenAsh() {
       SetEnabled(magnifier_enabled && magnifier_type == ash::MAGNIFIER_PARTIAL);
 
   if (!CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kDisableZeroBrowsersOpenForTests) &&
-      !chrome::IsRunningInAppMode()) {
+      switches::kDisableZeroBrowsersOpenForTests)) {
     chrome::StartKeepAlive();
   }
 #endif

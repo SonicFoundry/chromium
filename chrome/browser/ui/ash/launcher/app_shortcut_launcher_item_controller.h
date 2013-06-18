@@ -34,6 +34,7 @@ class AppShortcutLauncherItemController : public LauncherItemController {
   virtual string16 GetTitle() OVERRIDE;
   virtual bool HasWindow(aura::Window* window) const OVERRIDE;
   virtual bool IsOpen() const OVERRIDE;
+  virtual bool IsVisible() const OVERRIDE;
   virtual void Launch(int event_flags) OVERRIDE;
   virtual void Activate() OVERRIDE;
   virtual void Close() OVERRIDE;
@@ -61,6 +62,13 @@ class AppShortcutLauncherItemController : public LauncherItemController {
   bool WebContentMatchesApp(const extensions::Extension* extension,
                             const URLPattern& refocus_pattern,
                             content::WebContents* web_contents);
+
+  // Activate the browser with the given |content| and show the associated tab.
+  void ActivateContent(content::WebContents* content);
+
+  // Advance to the next item if an owned item is already active. The function
+  // will return true if it has sucessfully advanced.
+  bool AdvanceToNextApp();
 
   GURL refocus_url_;
   ChromeLauncherControllerPerApp* app_controller_;

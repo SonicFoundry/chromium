@@ -13,9 +13,8 @@
 #include "media/audio/audio_device_name.h"
 #include "media/audio/audio_parameters.h"
 
-class MessageLoop;
-
 namespace base {
+class MessageLoop;
 class MessageLoopProxy;
 }
 
@@ -34,6 +33,11 @@ class MEDIA_EXPORT AudioManager {
   // Use to construct the audio manager.
   // NOTE: There should only be one instance.
   static AudioManager* Create();
+
+  // Returns the pointer to the last created instance, or NULL if not yet
+  // created. This is a utility method for the code outside of media directory,
+  // like src/chrome.
+  static AudioManager* Get();
 
   // Returns true if the OS reports existence of audio devices. This does not
   // guarantee that the existing devices support all formats and sample rates.
@@ -119,6 +123,18 @@ class MEDIA_EXPORT AudioManager {
   virtual void AddOutputDeviceChangeListener(AudioDeviceListener* listener) = 0;
   virtual void RemoveOutputDeviceChangeListener(
       AudioDeviceListener* listener) = 0;
+
+  // Returns the default output hardware audio parameters for opening output
+  // streams. It is a convenience interface to
+  // AudioManagerBase::GetPreferredOutputStreamParameters and each AudioManager
+  // does not need their own implementation to this interface.
+  virtual AudioParameters GetDefaultOutputStreamParameters() = 0;
+
+  // Returns the input hardware audio parameters of the specific device
+  // for opening input streams. Each AudioManager needs to implement their own
+  // version of this interface.
+  virtual AudioParameters GetInputStreamParameters(
+      const std::string& device_id) = 0;
 
  protected:
   AudioManager();

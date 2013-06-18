@@ -15,7 +15,6 @@
 #include "base/lazy_instance.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/platform_file.h"
 #include "base/timer.h"
 #include "googleurl/src/gurl.h"
 #include "net/base/host_port_pair.h"
@@ -33,6 +32,7 @@ class HttpResponseHeaders;
 class IOBuffer;
 class URLFetcherDelegate;
 class URLFetcherFileWriter;
+class URLFetcherResponseWriter;
 class URLRequestContextGetter;
 class URLRequestThrottlerEntryInterface;
 
@@ -65,6 +65,8 @@ class URLFetcherCore
                      const std::string& upload_content);
   void SetUploadFilePath(const std::string& upload_content_type,
                          const base::FilePath& file_path,
+                         uint64 range_offset,
+                         uint64 range_length,
                          scoped_refptr<base::TaskRunner> file_task_runner);
   void SetChunkedUpload(const std::string& upload_content_type);
   // Adds a block of data to be uploaded in a POST body. This can only be
@@ -106,7 +108,7 @@ class URLFetcherCore
   const URLRequestStatus& GetStatus() const;
   int GetResponseCode() const;
   const ResponseCookies& GetCookies() const;
-  bool FileErrorOccurred(base::PlatformFileError* out_error_code) const;
+  bool FileErrorOccurred(int* out_error_code) const;
   // Reports that the received content was malformed (i.e. failed parsing
   // or validation).  This makes the throttling logic that does exponential
   // back-off when servers are having problems treat the current request as
@@ -171,13 +173,13 @@ class URLFetcherCore
   // thread.
   void StartOnIOThread();
   void StartURLRequest();
-  void DidCreateFile(int result);
+  void DidInitializeWriter(int result);
   void StartURLRequestWhenAppropriate();
   void CancelURLRequest();
   void OnCompletedURLRequest(base::TimeDelta backoff_delay);
   void InformDelegateFetchIsComplete();
   void NotifyMalformedContent();
-  void DidCloseFile(int result);
+  void DidFinishWriting(int result);
   void RetryOrCompleteUrlFetch();
 
   // Deletes the request, removes it from the registry, and removes the
@@ -190,13 +192,6 @@ class URLFetcherCore
 
   void CompleteAddingUploadDataChunk(const std::string& data,
                                      bool is_last_chunk);
-
-  // Store the response bytes in |buffer_| in the container indicated by
-  // |response_destination_|. Return true if the write has been
-  // done, and another read can overwrite |buffer_|.  If this function
-  // returns false, it will post a task that will read more bytes once the
-  // write is complete.
-  bool WriteBuffer(int num_bytes);
 
   // Handles the result of WriteBuffer.
   void DidWriteBuffer(int result);
@@ -230,8 +225,6 @@ class URLFetcherCore
   scoped_refptr<base::TaskRunner> file_task_runner_;
                                      // Task runner for upload file access.
   scoped_refptr<base::TaskRunner> upload_file_task_runner_;
-                                     // Task runner for the thread
-                                     // on which file access happens.
   scoped_ptr<URLRequest> request_;   // The actual request this wraps
   int load_flags_;                   // Flags for the load operation
   int response_code_;                // HTTP status code for the request
@@ -254,6 +247,10 @@ class URLFetcherCore
   bool upload_content_set_;          // SetUploadData has been called
   std::string upload_content_;       // HTTP POST payload
   base::FilePath upload_file_path_;  // Path to file containing POST payload
+  uint64 upload_range_offset_;       // Offset from the beginning of the file
+                                     // to be uploaded.
+  uint64 upload_range_length_;       // The length of the part of file to be
+                                     // uploaded.
   std::string upload_content_type_;  // MIME type of POST payload
   std::string referrer_;             // HTTP Referer header value
   bool is_chunked_upload_;           // True if using chunked transfer encoding
@@ -280,9 +277,14 @@ class URLFetcherCore
   // True if the URLFetcher has been cancelled.
   bool was_cancelled_;
 
+  // Writer object to write response to the destination like file and string.
+  scoped_ptr<URLFetcherResponseWriter> response_writer_;
+
   // If writing results to a file, |file_writer_| will manage creation,
   // writing, and destruction of that file.
-  scoped_ptr<URLFetcherFileWriter> file_writer_;
+  // |file_writer_| points to the same object as |response_writer_| when writing
+  // response to a file, otherwise, |file_writer_| is NULL.
+  URLFetcherFileWriter* file_writer_;
 
   // Where should responses be saved?
   ResponseDestinationType response_destination_;

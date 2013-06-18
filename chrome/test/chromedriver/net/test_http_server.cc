@@ -12,8 +12,8 @@
 #include "base/time.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
-#include "net/base/tcp_listen_socket.h"
 #include "net/server/http_server_request_info.h"
+#include "net/socket/tcp_listen_socket.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 TestHttpServer::TestHttpServer()
@@ -43,12 +43,15 @@ bool TestHttpServer::Start() {
 }
 
 void TestHttpServer::Stop() {
+  if (!thread_.IsRunning())
+    return;
   base::WaitableEvent event(false, false);
   thread_.message_loop_proxy()->PostTask(
       FROM_HERE,
       base::Bind(&TestHttpServer::StopOnServerThread,
                  base::Unretained(this), &event));
   event.Wait();
+  thread_.Stop();
 }
 
 bool TestHttpServer::WaitForConnectionsToClose() {

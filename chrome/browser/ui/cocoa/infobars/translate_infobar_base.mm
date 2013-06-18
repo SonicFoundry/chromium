@@ -5,7 +5,7 @@
 #import "chrome/browser/ui/cocoa/infobars/translate_infobar_base.h"
 
 #include "base/logging.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/translate/translate_infobar_delegate.h"
 #import "chrome/browser/ui/cocoa/hover_close_button.h"
@@ -449,7 +449,7 @@ InfoBar* TranslateInfoBarDelegate::CreateInfoBar(InfoBarService* owner) {
     // Danger Will Robinson! : This call can release the infobar (e.g. invoking
     // "About Translate" can open a new tab).
     // Do not access member variables after this line!
-    optionsMenuModel_->ExecuteCommand(cmd);
+    optionsMenuModel_->ExecuteCommand(cmd, 0);
   } else {
     NOTREACHED();
   }

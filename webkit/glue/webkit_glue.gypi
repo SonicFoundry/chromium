@@ -40,13 +40,6 @@
           },
           'includes': [ '../../build/grit_action.gypi' ],
         },
-        {
-          'action_name': 'webkit_unscaled_resources',
-          'variables': {
-            'grit_grd_file': 'resources/webkit_unscaled_resources.grd',
-          },
-          'includes': [ '../../build/grit_action.gypi' ],
-        },
       ],
       'includes': [ '../../build/grit_target.gypi' ],
       'direct_dependent_settings': {
@@ -99,6 +92,7 @@
         '<(DEPTH)/ui/gl/gl.gyp:gl',
         '<(DEPTH)/ui/native_theme/native_theme.gyp:native_theme',
         '<(DEPTH)/ui/ui.gyp:ui',
+        '<(DEPTH)/ui/ui.gyp:ui_resources',
         '<(DEPTH)/v8/tools/gyp/v8.gyp:v8',
         '<(DEPTH)/webkit/compositor_bindings/compositor_bindings.gyp:webkit_compositor_support',
         '<(webkit_src_dir)/Source/WebKit/chromium/WebKit.gyp:webkit',
@@ -112,6 +106,7 @@
       'include_dirs': [
         '<(INTERMEDIATE_DIR)',
         '<(SHARED_INTERMEDIATE_DIR)/webkit',
+        '<(SHARED_INTERMEDIATE_DIR)/ui',
       ],
       'sources': [
         # This list contains all .h, .cc, and .mm files in glue except for
@@ -211,8 +206,6 @@
         '../plugins/ppapi/ppb_buffer_impl.h',
         '../plugins/ppapi/ppb_file_ref_impl.cc',
         '../plugins/ppapi/ppb_file_ref_impl.h',
-        '../plugins/ppapi/ppb_file_system_impl.cc',
-        '../plugins/ppapi/ppb_file_system_impl.h',
         '../plugins/ppapi/ppb_flash_message_loop_impl.cc',
         '../plugins/ppapi/ppb_flash_message_loop_impl.h',
         '../plugins/ppapi/ppb_gpu_blacklist_private_impl.cc',
@@ -269,8 +262,6 @@
         '../plugins/webview_plugin.h',
         'alt_error_page_resource_fetcher.cc',
         'alt_error_page_resource_fetcher.h',
-        'cpp_binding_example.cc',
-        'cpp_binding_example.h',
         'cpp_bound_class.cc',
         'cpp_bound_class.h',
         'cpp_variant.cc',
@@ -322,6 +313,7 @@
         'webcursor_aura.cc',
         'webcursor_aurawin.cc',
         'webcursor_aurax11.cc',
+        'webcursor_null.cc',
         'webcursor_gtk.cc',
         'webcursor_gtk_data.h',
         'webcursor_mac.mm',
@@ -415,6 +407,11 @@
             'libraries': [ '-lXcursor', ],
           },
         }],
+        ['use_ozone==0', {
+          'sources!': [
+            'webcursor_null.cc',
+          ],
+        }],
         ['use_aura==1 and OS=="win"', {
           'sources/': [
             ['exclude', '^\\.\\./plugins/npapi/webplugin_delegate_impl_aura'],
@@ -472,6 +469,12 @@
             '<(DEPTH)/webkit/support/setup_third_party.gyp:third_party_headers',
           ],
         }],
+        ['OS=="android"', {
+          'dependencies': [
+            'overscroller_jni_headers',
+          ],
+        }],
+
       ],
     },
   ],
@@ -494,6 +497,19 @@
             },
           ],
           'includes': [ '../../build/grit_target.gypi' ],
+        },
+      ],
+    }],
+    ['OS=="android"', {
+      'targets': [
+        {
+          'target_name': 'overscroller_jni_headers',
+          'type': 'none',
+          'variables': {
+            'jni_gen_package': 'webkit',
+            'input_java_class': 'android/widget/OverScroller.class',
+          },
+          'includes': [ '../../build/jar_file_jni_generator.gypi' ],
         },
       ],
     }],

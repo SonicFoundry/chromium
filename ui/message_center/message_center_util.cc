@@ -9,12 +9,20 @@
 
 namespace message_center {
 
+// TODO(dimich): remove this function and the kEnableRichNotifications flag
+// when a time period in Canary indicates the new notifications are acceptable
+// for default behavior.
 bool IsRichNotificationEnabled() {
-#if defined(OS_WIN) && defined(USE_AURA)
+  if (CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kDisableRichNotifications))
+    return false;
+  if (CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kEnableRichNotifications))
+    return true;
+#if defined(OS_MACOSX)
   return false;
 #else
-  return CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kEnableRichNotifications);
+  return true;
 #endif
 }
 

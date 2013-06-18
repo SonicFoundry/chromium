@@ -34,11 +34,6 @@
 #include "jni/ThreadUtils_jni.h"
 #endif
 
-// TODO(bbudge) Use time.h when NaCl toolchain supports _POSIX_TIMERS
-#if defined(OS_NACL)
-#include <sys/nacl_syscalls.h>
-#endif
-
 namespace base {
 
 #if defined(OS_MACOSX)
@@ -161,7 +156,12 @@ bool CreateThread(size_t stack_size, bool joinable,
   params->joinable = joinable;
   params->priority = priority;
 
-  success = !pthread_create(thread_handle, &attributes, ThreadFunc, params);
+  int err = pthread_create(thread_handle, &attributes, ThreadFunc, params);
+  success = !err;
+  if (!success) {
+    errno = err;
+    PLOG(ERROR) << "pthread_create";
+  }
 
   pthread_attr_destroy(&attributes);
   if (!success)

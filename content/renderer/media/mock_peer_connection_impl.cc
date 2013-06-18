@@ -9,6 +9,7 @@
 
 #include "base/logging.h"
 
+using testing::_;
 using webrtc::AudioTrackInterface;
 using webrtc::CreateSessionDescriptionObserver;
 using webrtc::DtmfSenderInterface;
@@ -183,7 +184,12 @@ MockPeerConnectionImpl::MockPeerConnectionImpl(
       remote_streams_(new talk_base::RefCountedObject<MockStreamCollection>),
       hint_audio_(false),
       hint_video_(false),
+      getstats_result_(true),
       sdp_mline_index_(-1) {
+  ON_CALL(*this, SetLocalDescription(_, _)).WillByDefault(testing::Invoke(
+      this, &MockPeerConnectionImpl::SetLocalDescriptionWorker));
+  ON_CALL(*this, SetRemoteDescription(_, _)).WillByDefault(testing::Invoke(
+      this, &MockPeerConnectionImpl::SetRemoteDescriptionWorker));
 }
 
 MockPeerConnectionImpl::~MockPeerConnectionImpl() {}
@@ -231,25 +237,28 @@ MockPeerConnectionImpl::CreateDataChannel(const std::string& label,
 bool MockPeerConnectionImpl::GetStats(
     webrtc::StatsObserver* observer,
     webrtc::MediaStreamTrackInterface* track) {
+  if (!getstats_result_)
+    return false;
+
   std::vector<webrtc::StatsReport> reports;
   webrtc::StatsReport report;
   report.id = "1234";
   report.type = "ssrc";
-  report.local.timestamp = 42;
-  webrtc::StatsElement::Value value;
+  report.timestamp = 42;
+  webrtc::StatsReport::Value value;
   value.name = "trackname";
   value.value = "trackvalue";
-  report.local.values.push_back(value);
+  report.values.push_back(value);
   reports.push_back(report);
   // If selector is given, we pass back one report.
   // If selector is not given, we pass back two.
   if (!track) {
     report.id = "nontrack";
     report.type = "generic";
-    report.local.timestamp = 44;
+    report.timestamp = 44;
     value.name = "somename";
     value.value = "somevalue";
-    report.local.values.push_back(value);
+    report.values.push_back(value);
     reports.push_back(report);
   }
   // Note that the callback is synchronous, not asynchronous; it will
@@ -297,7 +306,7 @@ void MockPeerConnectionImpl::SetLocalDescriptionWorker(
   local_desc_.reset(desc);
 }
 
-void MockPeerConnectionImpl::SetRemoteDescription(
+void MockPeerConnectionImpl::SetRemoteDescriptionWorker(
     SetSessionDescriptionObserver* observer,
     SessionDescriptionInterface* desc) {
   desc->ToString(&description_sdp_);

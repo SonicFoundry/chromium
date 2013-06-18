@@ -21,8 +21,6 @@
 #include "base/rand_util.h"
 #include "base/stringprintf.h"
 #include "base/strings/string_split.h"
-#include "chrome/browser/chromeos/input_method/input_method_config.h"
-#include "chrome/browser/chromeos/input_method/input_method_property.h"
 #include "chrome/browser/chromeos/input_method/input_method_util.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/ibus/ibus_client.h"
@@ -31,7 +29,10 @@
 #include "chromeos/dbus/ibus/ibus_input_context_client.h"
 #include "chromeos/dbus/ibus/ibus_panel_service.h"
 #include "chromeos/dbus/ibus/ibus_property.h"
-#include "content/public/browser/browser_thread.h"
+#include "chromeos/ime/component_extension_ime_manager.h"
+#include "chromeos/ime/extension_ime_util.h"
+#include "chromeos/ime/input_method_config.h"
+#include "chromeos/ime/input_method_property.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/root_window.h"
 #include "ui/base/ime/input_method_ibus.h"
@@ -85,7 +86,7 @@ bool PropertyKeyIsBlacklisted(const std::string& key) {
 bool ConvertProperty(const IBusProperty& ibus_prop,
                      InputMethodPropertyList* out_prop_list) {
   DCHECK(out_prop_list);
-  DCHECK(ibus_prop.key().empty());
+  DCHECK(!ibus_prop.key().empty());
   IBusProperty::IBusPropertyType type = ibus_prop.type();
 
   // Sanity checks.
@@ -189,7 +190,7 @@ bool FlattenPropertyList(const IBusPropertyList& ibus_prop_list,
 }  // namespace
 
 IBusControllerImpl::IBusControllerImpl()
-    : ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_(this)) {
+    : weak_ptr_factory_(this) {
   IBusDaemonController::GetInstance()->AddObserver(this);
 }
 
@@ -201,7 +202,8 @@ bool IBusControllerImpl::ChangeInputMethod(const std::string& id) {
   // Sanity checks.
   DCHECK(!InputMethodUtil::IsKeyboardLayout(id));
   if (!whitelist_.InputMethodIdIsWhitelisted(id) &&
-      !InputMethodUtil::IsExtensionInputMethod(id))
+      !extension_ime_util::IsExtensionIME(id) &&
+      !ComponentExtensionIMEManager::IsComponentExtensionIMEId(id))
     return false;
 
   // Clear input method properties unconditionally if |id| is not equal to

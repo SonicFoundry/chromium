@@ -14,9 +14,9 @@
 #include "base/prefs/pref_service.h"
 #include "base/rand_util.h"
 #include "base/stl_util.h"
-#include "base/string_piece.h"
 #include "base/stringprintf.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_piece.h"
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
@@ -48,6 +48,7 @@ const char kBackgroundAppsKey[] = "background_apps";
 const char kHasMigratedToGAIAInfoKey[] = "has_migrated_to_gaia_info";
 const char kGAIAPictureFileNameKey[] = "gaia_picture_file_name";
 const char kIsManagedKey[] = "is_managed";
+const char kSigninRequiredKey[] = "signin_required";
 
 const char kDefaultUrlPrefix[] = "chrome://theme/IDR_PROFILE_AVATAR_";
 const char kGAIAPictureFileName[] = "Google Profile Picture.png";
@@ -176,14 +177,12 @@ ProfileInfoCache::ProfileInfoCache(PrefService* prefs,
   // Populate the cache
   const DictionaryValue* cache =
       prefs_->GetDictionary(prefs::kProfileInfoCache);
-  for (DictionaryValue::key_iterator it = cache->begin_keys();
-       it != cache->end_keys(); ++it) {
-    std::string key = *it;
+  for (DictionaryValue::Iterator it(*cache); !it.IsAtEnd(); it.Advance()) {
     const DictionaryValue* info = NULL;
-    cache->GetDictionary(key, &info);
+    it.value().GetAsDictionary(&info);
     string16 name;
     info->GetString(kNameKey, &name);
-    sorted_keys_.insert(FindPositionForProfile(key, name), key);
+    sorted_keys_.insert(FindPositionForProfile(it.key(), name), it.key());
   }
 }
 
@@ -372,6 +371,12 @@ const gfx::Image* ProfileInfoCache::GetGAIAPictureOfProfileAtIndex(
 bool ProfileInfoCache::ProfileIsManagedAtIndex(size_t index) const {
   bool value = false;
   GetInfoForProfileAtIndex(index)->GetBoolean(kIsManagedKey, &value);
+  return value;
+}
+
+bool ProfileInfoCache::ProfileIsSigninRequiredAtIndex(size_t index) const {
+  bool value = false;
+  GetInfoForProfileAtIndex(index)->GetBoolean(kSigninRequiredKey, &value);
   return value;
 }
 
@@ -608,6 +613,17 @@ void ProfileInfoCache::SetIsUsingGAIAPictureOfProfileAtIndex(size_t index,
                     OnProfileAvatarChanged(profile_path));
 }
 
+void ProfileInfoCache::SetProfileSigninRequiredAtIndex(size_t index,
+                                                       bool value) {
+  if (value == ProfileIsSigninRequiredAtIndex(index))
+    return;
+
+  scoped_ptr<DictionaryValue> info(GetInfoForProfileAtIndex(index)->DeepCopy());
+  info->SetBoolean(kSigninRequiredKey, value);
+  // This takes ownership of |info|.
+  SetInfoForProfileAtIndex(index, info.release());
+}
+
 string16 ProfileInfoCache::ChooseNameForNewProfile(size_t icon_index) const {
   string16 name;
   for (int name_index = 1; ; ++name_index) {
@@ -712,7 +728,7 @@ int ProfileInfoCache::GetDefaultAvatarIconResourceIDAtIndex(size_t index) {
 // static
 std::string ProfileInfoCache::GetDefaultAvatarIconUrl(size_t index) {
   DCHECK(IsDefaultAvatarIconIndex(index));
-  return StringPrintf("%s%" PRIuS, kDefaultUrlPrefix, index);
+  return base::StringPrintf("%s%" PRIuS, kDefaultUrlPrefix, index);
 }
 
 // static
@@ -813,11 +829,10 @@ std::vector<string16> ProfileInfoCache::GetProfileNames() {
   const DictionaryValue* cache = local_state->GetDictionary(
       prefs::kProfileInfoCache);
   string16 name;
-  for (base::DictionaryValue::key_iterator it = cache->begin_keys();
-       it != cache->end_keys();
-       ++it) {
+  for (base::DictionaryValue::Iterator it(*cache); !it.IsAtEnd();
+       it.Advance()) {
     const base::DictionaryValue* info = NULL;
-    cache->GetDictionary(*it, &info);
+    it.value().GetAsDictionary(&info);
     info->GetString(kNameKey, &name);
     names.push_back(name);
   }

@@ -8,10 +8,10 @@
 #include "base/files/file_path.h"
 #include "base/prefs/pref_service.h"
 #include "base/values.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "printing/page_size_margins.h"
 
 namespace printing {
@@ -59,9 +59,11 @@ void StickySettings::RestoreFromPrefs(PrefService* prefs) {
   }
 }
 
-void StickySettings::RegisterUserPrefs(PrefRegistrySyncable* registry) {
-  registry->RegisterDictionaryPref(prefs::kPrintPreviewStickySettings,
-                                   PrefRegistrySyncable::UNSYNCABLE_PREF);
+void StickySettings::RegisterUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterDictionaryPref(
+      prefs::kPrintPreviewStickySettings,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 std::string* StickySettings::printer_app_state() {

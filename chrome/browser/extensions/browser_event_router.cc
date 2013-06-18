@@ -21,9 +21,12 @@
 #include "chrome/browser/ui/browser_iterator.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/extensions/api/extension_action/action_info.h"
 #include "chrome/common/extensions/extension_constants.h"
+#include "content/public/browser/favicon_status.h"
 #include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/web_contents.h"
@@ -128,12 +131,17 @@ void BrowserEventRouter::RegisterForTabNotifications(WebContents* contents) {
   // a devtools WebContents that is opened in window, docked, then closed.
   registrar_.Add(this, content::NOTIFICATION_WEB_CONTENTS_DESTROYED,
                  content::Source<WebContents>(contents));
+
+  registrar_.Add(this, chrome::NOTIFICATION_FAVICON_UPDATED,
+                 content::Source<WebContents>(contents));
 }
 
 void BrowserEventRouter::UnregisterForTabNotifications(WebContents* contents) {
   registrar_.Remove(this, content::NOTIFICATION_NAV_ENTRY_COMMITTED,
       content::Source<NavigationController>(&contents->GetController()));
   registrar_.Remove(this, content::NOTIFICATION_WEB_CONTENTS_DESTROYED,
+      content::Source<WebContents>(contents));
+  registrar_.Remove(this, chrome::NOTIFICATION_FAVICON_UPDATED,
       content::Source<WebContents>(contents));
 }
 
@@ -256,7 +264,7 @@ void BrowserEventRouter::TabClosingAt(TabStripModel* tab_strip_model,
 void BrowserEventRouter::ActiveTabChanged(WebContents* old_contents,
                                           WebContents* new_contents,
                                           int index,
-                                          bool user_gesture) {
+                                          int reason) {
   scoped_ptr<ListValue> args(new ListValue());
   int tab_id = ExtensionTabUtil::GetTabId(new_contents);
   args->Append(Value::CreateIntegerValue(tab_id));
@@ -270,8 +278,10 @@ void BrowserEventRouter::ActiveTabChanged(WebContents* old_contents,
   // deprecated events take two arguments: tabId, {windowId}.
   Profile* profile =
       Profile::FromBrowserContext(new_contents->GetBrowserContext());
-  EventRouter::UserGestureState gesture = user_gesture ?
-      EventRouter::USER_GESTURE_ENABLED : EventRouter::USER_GESTURE_NOT_ENABLED;
+  EventRouter::UserGestureState gesture =
+      reason & CHANGE_REASON_USER_GESTURE
+      ? EventRouter::USER_GESTURE_ENABLED
+      : EventRouter::USER_GESTURE_NOT_ENABLED;
   DispatchEvent(profile, events::kOnTabSelectionChanged,
                 scoped_ptr<ListValue>(args->DeepCopy()), gesture);
   DispatchEvent(profile, events::kOnTabActiveChanged,
@@ -349,6 +359,21 @@ void BrowserEventRouter::TabUpdated(WebContents* contents, bool did_navigate) {
     changed_properties.reset(entry->UpdateLoadState(contents));
 
   if (changed_properties)
+    DispatchTabUpdatedEvent(contents, changed_properties.Pass());
+}
+
+void BrowserEventRouter::FaviconUrlUpdated(WebContents* contents,
+                                           const bool* icon_url_changed) {
+    if (!icon_url_changed || !*icon_url_changed)
+      return;
+    content::NavigationEntry* entry =
+        contents->GetController().GetActiveEntry();
+    if (!entry || !entry->GetFavicon().valid)
+      return;
+    scoped_ptr<DictionaryValue> changed_properties(new DictionaryValue());
+    changed_properties->SetString(
+        tab_keys::kFaviconUrlKey,
+        entry->GetFavicon().url.possibly_invalid_spec());
     DispatchTabUpdatedEvent(contents, changed_properties.Pass());
 }
 
@@ -467,6 +492,12 @@ void BrowserEventRouter::Observe(int type,
         content::Source<NavigationController>(&contents->GetController()));
     registrar_.Remove(this, content::NOTIFICATION_WEB_CONTENTS_DESTROYED,
         content::Source<WebContents>(contents));
+    registrar_.Remove(this, chrome::NOTIFICATION_FAVICON_UPDATED,
+        content::Source<WebContents>(contents));
+  } else if (type == chrome::NOTIFICATION_FAVICON_UPDATED) {
+    WebContents* contents = content::Source<WebContents>(source).ptr();
+    const bool* icon_url_changed = content::Details<bool>(details).ptr();
+    FaviconUrlUpdated(contents, icon_url_changed);
   } else {
     NOTREACHED();
   }

@@ -63,7 +63,7 @@ cr.define('ntp', function() {
     set dataItems(dataItems) {
       this.dataItems_ = dataItems;
       this.needsRebuild_ = true;
-      this.classList.toggle('invisible', !dataItems.length);
+      this.hidden = !dataItems.length;
     },
 
     /**
@@ -93,20 +93,23 @@ cr.define('ntp', function() {
                      ntp.APP_LAUNCH.NTP_RECENTLY_CLOSED]);
         var index = Array.prototype.indexOf.call(a.parentNode.children, a);
         var orig = e.originalEvent;
+        var button = 0;
+        if (orig instanceof MouseEvent)
+          button = orig.button;
         var params = [data.sessionId,
                       index,
-                      orig.type == 'click' ? orig.button : 0,
+                      button,
                       orig.altKey,
                       orig.ctrlKey,
                       orig.metaKey,
                       orig.shiftKey];
         chrome.send('reopenTab', params);
 
-        // We are likely deleted by this point!
-        e.stopPropagation();
         e.preventDefault();
+        e.stopPropagation();
       }
       a.addEventListener('activate', onActivated);
+      a.addEventListener('click', function(e) { e.preventDefault(); });
 
       this.menu.appendChild(a);
       cr.ui.decorate(a, MenuItem);

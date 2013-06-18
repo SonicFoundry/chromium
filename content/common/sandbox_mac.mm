@@ -23,11 +23,11 @@ extern "C" {
 #include "base/memory/scoped_nsobject.h"
 #include "base/rand_util.h"
 #include "base/string16.h"
-#include "base/string_piece.h"
 #include "base/string_util.h"
 #include "base/stringprintf.h"
+#include "base/strings/string_piece.h"
+#include "base/strings/sys_string_conversions.h"
 #include "base/sys_info.h"
-#include "base/sys_string_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
@@ -38,6 +38,9 @@ extern "C" {
 
 namespace content {
 namespace {
+
+// Is the sandbox currently active.
+bool gSandboxIsActive = false;
 
 struct SandboxTypeToResourceIDMapping {
   SandboxType sandbox_type;
@@ -573,7 +576,13 @@ bool Sandbox::EnableSandbox(int sandbox_type,
                            << " "
                            << error_buff;
   sandbox_free_error(error_buff);
+  gSandboxIsActive = success;
   return success;
+}
+
+// static
+bool Sandbox::SandboxIsCurrentlyActive() {
+  return gSandboxIsActive;
 }
 
 // static

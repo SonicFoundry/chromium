@@ -27,7 +27,7 @@ class ProviderImpl::PollingThread : public base::Thread {
  public:
   PollingThread(const char* name,
                 base::WeakPtr<ProviderImpl> provider,
-                MessageLoop* creator_loop);
+                base::MessageLoop* creator_loop);
   virtual ~PollingThread();
 
   // Method for creating a DataFetcher and starting the polling, if the fetcher
@@ -44,7 +44,7 @@ class ProviderImpl::PollingThread : public base::Thread {
 
   // Schedule a notification to the |provider_| which lives on a different
   // thread (|creator_loop_| is its message loop).
-  void ScheduleDoNotify(const DeviceData* device_data,
+  void ScheduleDoNotify(const scoped_refptr<const DeviceData>& device_data,
                         DeviceData::Type device_data_type);
 
   enum { kDesiredSamplingIntervalMs = 100 };
@@ -52,7 +52,7 @@ class ProviderImpl::PollingThread : public base::Thread {
 
   // The Message Loop on which this object was created.
   // Typically the I/O loop, but may be something else during testing.
-  MessageLoop* creator_loop_;
+  base::MessageLoop* creator_loop_;
 
   scoped_ptr<DataFetcher> data_fetcher_;
   std::map<DeviceData::Type, scoped_refptr<const DeviceData> >
@@ -62,28 +62,24 @@ class ProviderImpl::PollingThread : public base::Thread {
   base::WeakPtr<ProviderImpl> provider_;
 };
 
-ProviderImpl::PollingThread::PollingThread(
-    const char* name,
-    base::WeakPtr<ProviderImpl> provider,
-    MessageLoop* creator_loop)
-    : base::Thread(name),
-      creator_loop_(creator_loop),
-      provider_(provider) {
-}
+ProviderImpl::PollingThread::PollingThread(const char* name,
+                                           base::WeakPtr<ProviderImpl> provider,
+                                           base::MessageLoop* creator_loop)
+    : base::Thread(name), creator_loop_(creator_loop), provider_(provider) {}
 
 ProviderImpl::PollingThread::~PollingThread() {
   Stop();
 }
 
 void ProviderImpl::PollingThread::DoAddPollingDataType(DeviceData::Type type) {
-  DCHECK(MessageLoop::current() == message_loop());
+  DCHECK(base::MessageLoop::current() == message_loop());
 
   polling_data_types_.insert(type);
 }
 
 void ProviderImpl::PollingThread::Initialize(DataFetcherFactory factory,
                                              DeviceData::Type type) {
-  DCHECK(MessageLoop::current() == message_loop());
+  DCHECK(base::MessageLoop::current() == message_loop());
 
   if (factory != NULL) {
     // Try to use factory to create a fetcher that can provide this type of
@@ -91,7 +87,7 @@ void ProviderImpl::PollingThread::Initialize(DataFetcherFactory factory,
     // start polling.
     scoped_ptr<DataFetcher> fetcher(factory());
 
-    if (fetcher.get()) {
+    if (fetcher) {
       scoped_refptr<const DeviceData> device_data(fetcher->GetDeviceData(type));
       if (device_data != NULL) {
         // Pass ownership of fetcher to provider_.
@@ -113,8 +109,9 @@ void ProviderImpl::PollingThread::Initialize(DataFetcherFactory factory,
 }
 
 void ProviderImpl::PollingThread::ScheduleDoNotify(
-    const DeviceData* device_data, DeviceData::Type device_data_type) {
-  DCHECK(MessageLoop::current() == message_loop());
+    const scoped_refptr<const DeviceData>& device_data,
+    DeviceData::Type device_data_type) {
+  DCHECK(base::MessageLoop::current() == message_loop());
 
   creator_loop_->PostTask(FROM_HERE,
                           base::Bind(&ProviderImpl::DoNotify, provider_,
@@ -122,7 +119,7 @@ void ProviderImpl::PollingThread::ScheduleDoNotify(
 }
 
 void ProviderImpl::PollingThread::DoPoll() {
-  DCHECK(MessageLoop::current() == message_loop());
+  DCHECK(base::MessageLoop::current() == message_loop());
 
   // Poll the fetcher for each type of data.
   typedef std::set<DeviceData::Type>::const_iterator SetIterator;
@@ -151,7 +148,7 @@ void ProviderImpl::PollingThread::DoPoll() {
 }
 
 void ProviderImpl::PollingThread::ScheduleDoPoll() {
-  DCHECK(MessageLoop::current() == message_loop());
+  DCHECK(base::MessageLoop::current() == message_loop());
 
   message_loop()->PostDelayedTask(
       FROM_HERE,
@@ -160,7 +157,7 @@ void ProviderImpl::PollingThread::ScheduleDoPoll() {
 }
 
 base::TimeDelta ProviderImpl::PollingThread::SamplingInterval() const {
-  DCHECK(MessageLoop::current() == message_loop());
+  DCHECK(base::MessageLoop::current() == message_loop());
   DCHECK(data_fetcher_.get());
 
   // TODO(erg): There used to be unused code here, that called a default
@@ -170,9 +167,9 @@ base::TimeDelta ProviderImpl::PollingThread::SamplingInterval() const {
 }
 
 ProviderImpl::ProviderImpl(DataFetcherFactory factory)
-    : creator_loop_(MessageLoop::current()),
+    : creator_loop_(base::MessageLoop::current()),
       factory_(factory),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)),
+      weak_factory_(this),
       polling_thread_(NULL) {
 }
 
@@ -181,9 +178,9 @@ ProviderImpl::~ProviderImpl() {
 }
 
 void ProviderImpl::ScheduleDoAddPollingDataType(DeviceData::Type type) {
-  DCHECK(MessageLoop::current() == creator_loop_);
+  DCHECK(base::MessageLoop::current() == creator_loop_);
 
-  MessageLoop* polling_loop = polling_thread_->message_loop();
+  base::MessageLoop* polling_loop = polling_thread_->message_loop();
   polling_loop->PostTask(FROM_HERE,
                          base::Bind(&PollingThread::DoAddPollingDataType,
                                     base::Unretained(polling_thread_),
@@ -191,7 +188,7 @@ void ProviderImpl::ScheduleDoAddPollingDataType(DeviceData::Type type) {
 }
 
 void ProviderImpl::AddObserver(Observer* observer) {
-  DCHECK(MessageLoop::current() == creator_loop_);
+  DCHECK(base::MessageLoop::current() == creator_loop_);
 
   DeviceData::Type type = observer->device_data_type();
 
@@ -209,7 +206,7 @@ void ProviderImpl::AddObserver(Observer* observer) {
 }
 
 void ProviderImpl::RemoveObserver(Observer* observer) {
-  DCHECK(MessageLoop::current() == creator_loop_);
+  DCHECK(base::MessageLoop::current() == creator_loop_);
 
   observers_.erase(observer);
   if (observers_.empty())
@@ -217,12 +214,15 @@ void ProviderImpl::RemoveObserver(Observer* observer) {
 }
 
 void ProviderImpl::Start(DeviceData::Type type) {
-  DCHECK(MessageLoop::current() == creator_loop_);
+  DCHECK(base::MessageLoop::current() == creator_loop_);
   DCHECK(!polling_thread_);
 
   polling_thread_ = new PollingThread("Device data polling thread",
                                       weak_factory_.GetWeakPtr(),
                                       creator_loop_);
+#if defined(OS_WIN)
+  polling_thread_->init_com_with_mta(true);
+#endif
   if (!polling_thread_->Start()) {
     LOG(ERROR) << "Failed to start device data polling thread";
     delete polling_thread_;
@@ -233,7 +233,7 @@ void ProviderImpl::Start(DeviceData::Type type) {
 }
 
 void ProviderImpl::Stop() {
-  DCHECK(MessageLoop::current() == creator_loop_);
+  DCHECK(base::MessageLoop::current() == creator_loop_);
 
   weak_factory_.InvalidateWeakPtrs();
   if (polling_thread_) {
@@ -249,9 +249,9 @@ void ProviderImpl::Stop() {
 
 void ProviderImpl::ScheduleInitializePollingThread(
     DeviceData::Type device_data_type) {
-  DCHECK(MessageLoop::current() == creator_loop_);
+  DCHECK(base::MessageLoop::current() == creator_loop_);
 
-  MessageLoop* polling_loop = polling_thread_->message_loop();
+  base::MessageLoop* polling_loop = polling_thread_->message_loop();
   polling_loop->PostTask(FROM_HERE,
                          base::Bind(&PollingThread::Initialize,
                                     base::Unretained(polling_thread_),
@@ -259,11 +259,9 @@ void ProviderImpl::ScheduleInitializePollingThread(
                                     device_data_type));
 }
 
-void ProviderImpl::DoNotify(const DeviceData* device_data,
+void ProviderImpl::DoNotify(const scoped_refptr<const DeviceData>& data,
     DeviceData::Type device_data_type) {
-  DCHECK(MessageLoop::current() == creator_loop_);
-
-  scoped_refptr<const DeviceData> data(device_data);
+  DCHECK(base::MessageLoop::current() == creator_loop_);
 
   // Update last notification of this type.
   last_notifications_map_[device_data_type] = data;

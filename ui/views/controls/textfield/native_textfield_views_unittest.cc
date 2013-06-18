@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -172,7 +173,7 @@ class NativeTextfieldViewsTest : public ViewsTestBase,
     ASSERT_FALSE(textfield_);
     textfield_ = new TestTextfield(style);
     textfield_->SetController(this);
-    widget_ = new Widget;
+    widget_ = new Widget();
     Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
     params.bounds = gfx::Rect(100, 100, 100, 100);
     widget_->Init(params);
@@ -198,11 +199,8 @@ class NativeTextfieldViewsTest : public ViewsTestBase,
     input_method_ = new MockInputMethod();
     widget_->ReplaceInputMethod(input_method_);
 
-    // Assumes the Widget is always focused.
-    input_method_->OnFocus();
-
-    // TODO(msw): Determine why this requires two calls to work on Windows.
-    textfield_->RequestFocus();
+    // Activate the widget and focus the textfield for input handling.
+    widget_->Activate();
     textfield_->RequestFocus();
   }
 
@@ -598,8 +596,8 @@ TEST_F(NativeTextfieldViewsTest, PasswordTest) {
   SetClipboardText("foo");
   SendKeyEvent(ui::VKEY_C, false, true);
   SendKeyEvent(ui::VKEY_X, false, true);
-  ExecuteCommand(IDS_APP_COPY);
-  ExecuteCommand(IDS_APP_CUT);
+  ExecuteCommand(IDS_APP_COPY, 0);
+  ExecuteCommand(IDS_APP_CUT, 0);
   EXPECT_STR_EQ("foo", string16(GetClipboardText()));
   EXPECT_STR_EQ("my password", textfield_->text());
 }
@@ -680,6 +678,38 @@ TEST_F(NativeTextfieldViewsTest, OnKeyPressReturnValueTest) {
   SendKeyEvent(ui::VKEY_DOWN);
   EXPECT_TRUE(textfield_->key_received());
   EXPECT_FALSE(textfield_->key_handled());
+  textfield_->clear();
+
+  // Empty Textfield does not handle left/right.
+  textfield_->SetText(string16());
+  SendKeyEvent(ui::VKEY_LEFT);
+  EXPECT_TRUE(textfield_->key_received());
+  EXPECT_FALSE(textfield_->key_handled());
+  textfield_->clear();
+
+  SendKeyEvent(ui::VKEY_RIGHT);
+  EXPECT_TRUE(textfield_->key_received());
+  EXPECT_FALSE(textfield_->key_handled());
+  textfield_->clear();
+
+  // Add a char. Right key should not be handled when cursor is at the end.
+  SendKeyEvent(ui::VKEY_B);
+  SendKeyEvent(ui::VKEY_RIGHT);
+  EXPECT_TRUE(textfield_->key_received());
+  EXPECT_FALSE(textfield_->key_handled());
+  textfield_->clear();
+
+  // First left key is handled to move cursor left to the beginning.
+  SendKeyEvent(ui::VKEY_LEFT);
+  EXPECT_TRUE(textfield_->key_received());
+  EXPECT_TRUE(textfield_->key_handled());
+  textfield_->clear();
+
+  // Now left key should not be handled.
+  SendKeyEvent(ui::VKEY_LEFT);
+  EXPECT_TRUE(textfield_->key_received());
+  EXPECT_FALSE(textfield_->key_handled());
+  textfield_->clear();
 }
 
 TEST_F(NativeTextfieldViewsTest, CursorMovement) {
@@ -900,7 +930,14 @@ TEST_F(NativeTextfieldViewsTest, DragAndDrop_AcceptDrop) {
 }
 #endif
 
-TEST_F(NativeTextfieldViewsTest, DragAndDrop_InitiateDrag) {
+// TODO(erg): Disabled while the other half of drag and drop is being written.
+// http://crbug.com/130806
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+#define MAYBE_DragAndDrop_InitiateDrag DISABLED_DragAndDrop_InitiateDrag
+#else
+#define MAYBE_DragAndDrop_InitiateDrag DragAndDrop_InitiateDrag
+#endif
+TEST_F(NativeTextfieldViewsTest, MAYBE_DragAndDrop_InitiateDrag) {
   InitTextfield(Textfield::STYLE_DEFAULT);
   textfield_->SetText(ASCIIToUTF16("hello string world"));
 
@@ -930,6 +967,9 @@ TEST_F(NativeTextfieldViewsTest, DragAndDrop_InitiateDrag) {
             textfield_view_->GetDragOperationsForView(NULL, kStringPoint));
   textfield_->SetObscured(false);
   // Ensure that textfields only initiate drag operations inside the selection.
+  ui::MouseEvent press_event(ui::ET_MOUSE_PRESSED, kStringPoint, kStringPoint,
+                             ui::EF_LEFT_MOUSE_BUTTON);
+  textfield_view_->OnMousePressed(press_event);
   EXPECT_EQ(ui::DragDropTypes::DRAG_NONE,
             textfield_view_->GetDragOperationsForView(NULL, gfx::Point()));
   EXPECT_FALSE(textfield_view_->CanStartDragForView(NULL, gfx::Point(),
@@ -943,7 +983,14 @@ TEST_F(NativeTextfieldViewsTest, DragAndDrop_InitiateDrag) {
       textfield_view_->GetDragOperationsForView(textfield_view_, kStringPoint));
 }
 
-TEST_F(NativeTextfieldViewsTest, DragAndDrop_ToTheRight) {
+// TODO(erg): Disabled while the other half of drag and drop is being written.
+// http://crbug.com/130806
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+#define MAYBE_DragAndDrop_ToTheRight DISABLED_DragAndDrop_ToTheRight
+#else
+#define MAYBE_DragAndDrop_ToTheRight DragAndDrop_ToTheRight
+#endif
+TEST_F(NativeTextfieldViewsTest, MAYBE_DragAndDrop_ToTheRight) {
   InitTextfield(Textfield::STYLE_DEFAULT);
   textfield_->SetText(ASCIIToUTF16("hello world"));
 
@@ -998,7 +1045,14 @@ TEST_F(NativeTextfieldViewsTest, DragAndDrop_ToTheRight) {
   EXPECT_STR_EQ("h welloorld", textfield_->text());
 }
 
-TEST_F(NativeTextfieldViewsTest, DragAndDrop_ToTheLeft) {
+// TODO(erg): Disabled while the other half of drag and drop is being written.
+// http://crbug.com/130806
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+#define MAYBE_DragAndDrop_ToTheLeft DISABLED_DragAndDrop_ToTheLeft
+#else
+#define MAYBE_DragAndDrop_ToTheLeft DragAndDrop_ToTheLeft
+#endif
+TEST_F(NativeTextfieldViewsTest, MAYBE_DragAndDrop_ToTheLeft) {
   InitTextfield(Textfield::STYLE_DEFAULT);
   textfield_->SetText(ASCIIToUTF16("hello world"));
 
@@ -1053,7 +1107,14 @@ TEST_F(NativeTextfieldViewsTest, DragAndDrop_ToTheLeft) {
   EXPECT_STR_EQ("h worlellod", textfield_->text());
 }
 
-TEST_F(NativeTextfieldViewsTest, DragAndDrop_Canceled) {
+// TODO(erg): Disabled while the other half of drag and drop is being written.
+// http://crbug.com/130806
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+#define MAYBE_DragAndDrop_Canceled DISABLED_DragAndDrop_Canceled
+#else
+#define MAYBE_DragAndDrop_Canceled DragAndDrop_Canceled
+#endif
+TEST_F(NativeTextfieldViewsTest, MAYBE_DragAndDrop_Canceled) {
   InitTextfield(Textfield::STYLE_DEFAULT);
   textfield_->SetText(ASCIIToUTF16("hello world"));
 
@@ -1153,7 +1214,7 @@ TEST_F(NativeTextfieldViewsTest, TextInputClientTest) {
 
   EXPECT_TRUE(client->SetSelectionRange(ui::Range(1, 4)));
   EXPECT_TRUE(client->GetSelectionRange(&range));
-  EXPECT_EQ(ui::Range(1,4), range);
+  EXPECT_EQ(ui::Range(1, 4), range);
 
   // This code can't be compiled because of a bug in base::Callback.
 #if 0
@@ -1182,7 +1243,7 @@ TEST_F(NativeTextfieldViewsTest, TextInputClientTest) {
   EXPECT_TRUE(client->HasCompositionText());
   EXPECT_TRUE(client->GetCompositionTextRange(&range));
   EXPECT_STR_EQ("0321456789", textfield_->text());
-  EXPECT_EQ(ui::Range(1,4), range);
+  EXPECT_EQ(ui::Range(1, 4), range);
   EXPECT_EQ(2, on_before_user_action_);
   EXPECT_EQ(2, on_after_user_action_);
 
@@ -1216,6 +1277,15 @@ TEST_F(NativeTextfieldViewsTest, TextInputClientTest) {
   EXPECT_EQ(8U, textfield_->GetCursorPosition());
   EXPECT_EQ(1, on_before_user_action_);
   EXPECT_EQ(1, on_after_user_action_);
+
+  // On{Before,After}UserAction should be called by whatever user action
+  // triggers clearing or setting a selection if appropriate.
+  on_before_user_action_ = on_after_user_action_ = 0;
+  textfield_->clear();
+  textfield_->ClearSelection();
+  textfield_->SelectAll(false);
+  EXPECT_EQ(0, on_before_user_action_);
+  EXPECT_EQ(0, on_after_user_action_);
 
   input_method_->Clear();
   textfield_->SetReadOnly(true);
@@ -1691,17 +1761,20 @@ TEST_F(NativeTextfieldViewsTest, GetCompositionCharacterBoundsTest) {
   EXPECT_FALSE(client->GetCompositionCharacterBounds(0, &rect));
 
   // Get each character boundary by cursor.
-  gfx::Rect char_rect[char_count];
+  gfx::Rect char_rect_in_screen_coord[char_count];
   gfx::Rect prev_cursor = GetCursorBounds();
   for (uint32 i = 0; i < char_count; ++i) {
     composition.selection = ui::Range(0, i+1);
     client->SetCompositionText(composition);
     EXPECT_TRUE(client->HasCompositionText()) << " i=" << i;
     gfx::Rect cursor_bounds = GetCursorBounds();
-    char_rect[i] = gfx::Rect(prev_cursor.x(),
-                             prev_cursor.y(),
-                             cursor_bounds.x() - prev_cursor.x(),
-                             prev_cursor.height());
+    gfx::Point top_left(prev_cursor.x(), prev_cursor.y());
+    gfx::Point bottom_right(cursor_bounds.x(), prev_cursor.bottom());
+    views::View::ConvertPointToScreen(textfield_view_, &top_left);
+    views::View::ConvertPointToScreen(textfield_view_, &bottom_right);
+    char_rect_in_screen_coord[i].set_origin(top_left);
+    char_rect_in_screen_coord[i].set_width(bottom_right.x() - top_left.x());
+    char_rect_in_screen_coord[i].set_height(bottom_right.y() - top_left.y());
     prev_cursor = cursor_bounds;
   }
 
@@ -1709,7 +1782,7 @@ TEST_F(NativeTextfieldViewsTest, GetCompositionCharacterBoundsTest) {
     gfx::Rect actual_rect;
     EXPECT_TRUE(client->GetCompositionCharacterBounds(i, &actual_rect))
         << " i=" << i;
-    EXPECT_EQ(char_rect[i], actual_rect) << " i=" << i;
+    EXPECT_EQ(char_rect_in_screen_coord[i], actual_rect) << " i=" << i;
   }
 
   // Return false if the index is out of range.
@@ -1729,7 +1802,9 @@ TEST_F(NativeTextfieldViewsTest, TouchSelectionAndDraggingTest) {
   CommandLine::ForCurrentProcess()->AppendSwitch(switches::kEnableTouchEditing);
 
   // Tapping on the textfield should turn on the TouchSelectionController.
-  GestureEventForTest tap(ui::ET_GESTURE_TAP, eventX, eventY, 0);
+  ui::GestureEvent tap(ui::ET_GESTURE_TAP, eventX, eventY, 0, base::TimeDelta(),
+                       ui::GestureEventDetails(ui::ET_GESTURE_TAP, 1.0f, 0.0f),
+                       0);
   textfield_view_->OnGestureEvent(&tap);
   EXPECT_TRUE(GetTouchSelectionController());
 

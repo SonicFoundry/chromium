@@ -161,7 +161,7 @@ void NonClientView::ViewHierarchyChanged(bool is_add, View* parent,
 }
 
 void NonClientView::GetAccessibleState(ui::AccessibleViewState* state) {
-  state->role = ui::AccessibilityTypes::ROLE_WINDOW;
+  state->role = ui::AccessibilityTypes::ROLE_CLIENT;
   state->name = accessible_name_;
 }
 
@@ -188,6 +188,23 @@ views::View* NonClientView::GetEventHandlerForPoint(const gfx::Point& point) {
   }
 
   return View::GetEventHandlerForPoint(point);
+}
+
+views::View* NonClientView::GetTooltipHandlerForPoint(const gfx::Point& point) {
+  // The same logic as for |GetEventHandlerForPoint()| applies here.
+  if (frame_view_->parent() == this) {
+    // During the reset of the frame_view_ it's possible to be in this code
+    // after it's been removed from the view hierarchy but before it's been
+    // removed from the NonClientView.
+    gfx::Point point_in_child_coords(point);
+    View::ConvertPointToTarget(this, frame_view_.get(), &point_in_child_coords);
+    views::View* handler =
+        frame_view_->GetTooltipHandlerForPoint(point_in_child_coords);
+    if (handler)
+      return handler;
+  }
+
+  return View::GetTooltipHandlerForPoint(point);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -271,7 +288,7 @@ void NonClientFrameView::ShouldPaintAsActiveChanged() {
 }
 
 void NonClientFrameView::GetAccessibleState(ui::AccessibleViewState* state) {
-  state->role = ui::AccessibilityTypes::ROLE_WINDOW;
+  state->role = ui::AccessibilityTypes::ROLE_CLIENT;
 }
 
 std::string NonClientFrameView::GetClassName() const {

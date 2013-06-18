@@ -14,6 +14,10 @@
 class GURL;
 class Profile;
 
+namespace base {
+class Time;
+}
+
 namespace google_apis {
 class DriveUploaderInterface;
 }
@@ -39,7 +43,9 @@ class DriveFileSyncClientInterface {
   typedef base::Callback<void(google_apis::GDataErrorCode error)>
       GDataErrorCallback;
   typedef base::Callback<void(google_apis::GDataErrorCode error,
-                              const std::string& file_md5)>
+                              const std::string& file_md5,
+                              int64 file_size,
+                              const base::Time& last_updated)>
       DownloadFileCallback;
   typedef base::Callback<void(google_apis::GDataErrorCode error,
                               const std::string& resource_id,
@@ -147,6 +153,14 @@ class DriveFileSyncClientInterface {
                                   const base::FilePath& local_file_path,
                                   const UploadFileCallback& callback) = 0;
 
+  // Creates a new directory with specified |title| into the directory
+  // identified by |parent_resource_id|.
+  // Upon completion, invokes |callback| and returns HTTP_CREATED if
+  // the directory is created.
+  virtual void CreateDirectory(const std::string& parent_resource_id,
+                               const std::string& title,
+                               const ResourceIdCallback& callback) = 0;
+
   // Returns true if the user is authenticated.
   virtual bool IsAuthenticated() const = 0;
 
@@ -163,9 +177,15 @@ class DriveFileSyncClientInterface {
   virtual void DeleteFile(const std::string& resource_id,
                           const std::string& remote_file_md5,
                           const GDataErrorCallback& callback) = 0;
+
   // Converts |resource_id| to corresponing resource link.
   virtual GURL ResourceIdToResourceLink(
       const std::string& resource_id) const = 0;
+
+  // Ensures the sync root directory is not in 'My Drive'. Even if the directory
+  // is in directories other than 'My Drive', it will not be removed from there.
+  virtual void EnsureSyncRootIsNotInMyDrive(
+      const std::string& sync_root_resource_id) const = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(DriveFileSyncClientInterface);

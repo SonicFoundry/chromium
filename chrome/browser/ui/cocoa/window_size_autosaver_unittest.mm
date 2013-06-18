@@ -8,9 +8,9 @@
 
 #include "base/memory/scoped_nsobject.h"
 #include "base/prefs/pref_service.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/ui/cocoa/cocoa_profile_test.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 
@@ -27,11 +27,11 @@ class WindowSizeAutosaverTest : public CocoaProfileTest {
                                       backing:NSBackingStoreBuffered
                                         defer:NO];
     // TODO(joi): Do all registration up front.
-    static_cast<PrefRegistrySyncable*>(
+    static_cast<user_prefs::PrefRegistrySyncable*>(
         profile()->GetPrefs()->DeprecatedGetPrefRegistry())->
             RegisterDictionaryPref(
                 path_,
-                PrefRegistrySyncable::UNSYNCABLE_PREF);
+                user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
   }
 
   virtual void TearDown() {

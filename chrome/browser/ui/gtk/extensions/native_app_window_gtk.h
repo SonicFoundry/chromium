@@ -7,6 +7,7 @@
 
 #include <gtk/gtk.h>
 
+#include "base/observer_list.h"
 #include "base/timer.h"
 #include "chrome/browser/ui/extensions/native_app_window.h"
 #include "chrome/browser/ui/extensions/shell_window.h"
@@ -67,6 +68,13 @@ class NativeAppWindowGtk : public NativeAppWindow,
   virtual void RenderViewHostChanged() OVERRIDE;
   virtual gfx::Insets GetFrameInsets() const OVERRIDE;
 
+  // WebContentsModalDialogHost implementation.
+  virtual gfx::Point GetDialogPosition(const gfx::Size& size) OVERRIDE;
+  virtual void AddObserver(
+      WebContentsModalDialogHostObserver* observer) OVERRIDE;
+  virtual void RemoveObserver(
+      WebContentsModalDialogHostObserver* observer) OVERRIDE;
+
   content::WebContents* web_contents() const {
     return shell_window_->web_contents();
   }
@@ -125,6 +133,9 @@ class NativeAppWindowGtk : public NativeAppWindow,
   // True if the window shows without frame.
   bool frameless_;
 
+  // True if the window should be resizable by the user.
+  bool resizable_;
+
   // The current window cursor.  We set it to a resize cursor when over the
   // custom frame border.  We set it to NULL if we want the default cursor.
   GdkCursor* frame_cursor_;
@@ -136,6 +147,10 @@ class NativeAppWindowGtk : public NativeAppWindow,
   // accelerators that are sent to the window, that are destined to be turned
   // into events and sent to the extension.
   scoped_ptr<ExtensionKeybindingRegistryGtk> extension_keybinding_registry_;
+
+  // Observers to be notified when any web contents modal dialog requires
+  // updating its dimensions.
+  ObserverList<WebContentsModalDialogHostObserver> observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(NativeAppWindowGtk);
 };

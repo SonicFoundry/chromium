@@ -565,12 +565,20 @@ sub parselicense($) {
         $license = "MIT/X11 (BSD like) $license";
     }
 
+    if ($licensetext =~ /License MIT(-| )License/) {
+        $license = "MIT/X11 (BSD like) $license";
+    }
+
     if ($licensetext =~ /As a special exception, you may create a larger work that contains part or all of the Bison parser skeleton and distribute that work under terms of your choice/) {
         $license = $license . "with Bison parser exception";
     }
 
     if ($licensetext =~ /As a special exception to the GNU General Public License, if you distribute this file as part of a program or library that is built using GNU Libtool, you may include this file under the same distribution terms that you use for the rest of that program/) {
         $license = $license . "with libtool exception";
+    }
+
+    if ($licensetext =~ /These materials are protected by copyright laws and contain material proprietary to the Khronos Group, Inc\. You may use these materials for implementing Khronos specifications, without altering or removing any trademark, copyright or other notice from the specification/) {
+        $license = $license . "Khronos Group";
     }
 
     $license = "UNKNOWN" if (!length($license));

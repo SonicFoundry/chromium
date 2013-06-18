@@ -5,12 +5,12 @@
 #include "net/spdy/spdy_credential_builder.h"
 
 #include "base/threading/sequenced_worker_pool.h"
-#include "crypto/ec_signature_creator.h"
 #include "crypto/ec_private_key.h"
-#include "net/base/asn1_util.h"
-#include "net/base/default_server_bound_cert_store.h"
-#include "net/base/server_bound_cert_service.h"
+#include "crypto/ec_signature_creator.h"
+#include "net/cert/asn1_util.h"
 #include "net/spdy/spdy_test_util_spdy3.h"
+#include "net/ssl/default_server_bound_cert_store.h"
+#include "net/ssl/server_bound_cert_service.h"
 #include "testing/platform_test.h"
 
 using namespace net::test_spdy3;
@@ -37,7 +37,7 @@ void CreateCertAndKey(std::string* cert, std::string* key) {
   SSLClientCertType cert_type;
   ServerBoundCertService::RequestHandle request_handle;
   int rv = server_bound_cert_service->GetDomainBoundCert(
-      "https://www.google.com", requested_cert_types, &cert_type, key, cert,
+      "www.google.com", requested_cert_types, &cert_type, key, cert,
       callback.callback(), &request_handle);
   EXPECT_EQ(ERR_IO_PENDING, rv);
   EXPECT_EQ(OK, callback.WaitForResult());

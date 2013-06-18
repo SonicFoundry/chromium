@@ -51,7 +51,7 @@ scoped_ptr<Value> CreateMegabyte() {
 
 class ExtensionSettingsFrontendTest : public testing::Test {
  public:
-   ExtensionSettingsFrontendTest()
+  ExtensionSettingsFrontendTest()
       : storage_factory_(new util::ScopedSettingsStorageFactory()),
         ui_thread_(BrowserThread::UI, MessageLoop::current()),
         file_thread_(BrowserThread::FILE, MessageLoop::current()) {}
@@ -184,11 +184,6 @@ TEST_F(ExtensionSettingsFrontendTest, LeveldbDatabaseDeletedFromDiskOnClear) {
   //EXPECT_FALSE(file_util::PathExists(temp_dir_.path()));
 }
 
-#if defined(OS_WIN)
-// Failing on vista dbg. http://crbug.com/111100, http://crbug.com/108724
-#define QuotaLimitsEnforcedCorrectlyForSyncAndLocal \
-  DISABLED_QuotaLimitsEnforcedCorrectlyForSyncAndLocal
-#endif
 TEST_F(ExtensionSettingsFrontendTest,
        QuotaLimitsEnforcedCorrectlyForSyncAndLocal) {
   const std::string id = "ext";
@@ -263,11 +258,16 @@ static void UnlimitedLocalStorageTestCallback(ValueStore* local_storage) {
 }
 
 #if defined(OS_WIN)
-// Failing on vista dbg. http://crbug.com/111100, http://crbug.com/108724
-#define UnlimitedStorageForLocalButNotSync DISABLED_UnlimitedStorageForLocalButNotSync
+// See: http://crbug.com/227296
+#define MAYBE_UnlimitedStorageForLocalButNotSync \
+    DISABLED_UnlimitedStorageForLocalButNotSync
+#else
+#define MAYBE_UnlimitedStorageForLocalButNotSync \
+    UnlimitedStorageForLocalButNotSync
 #endif
+
 TEST_F(ExtensionSettingsFrontendTest,
-       UnlimitedStorageForLocalButNotSync) {
+       MAYBE_UnlimitedStorageForLocalButNotSync) {
   const std::string id = "ext";
   std::set<std::string> permissions;
   permissions.insert("unlimitedStorage");

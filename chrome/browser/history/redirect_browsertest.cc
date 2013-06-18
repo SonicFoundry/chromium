@@ -29,7 +29,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "net/base/net_util.h"
-#include "net/test/test_server.h"
+#include "net/test/spawned_test_server.h"
 #include "ui/base/events/event_constants.h"
 
 class RedirectTest : public InProcessBrowserTest {
@@ -122,7 +122,7 @@ IN_PROC_BROWSER_TEST_F(RedirectTest, ClientEmptyReferer) {
   // test server.
   GURL final_url = test_server()->GetURL(std::string());
   ASSERT_TRUE(final_url.is_valid());
-  std::string file_redirect_contents = StringPrintf(
+  std::string file_redirect_contents = base::StringPrintf(
       "<html>"
       "<head></head>"
       "<body onload=\"document.location='%s'\"></body>"
@@ -281,7 +281,7 @@ IN_PROC_BROWSER_TEST_F(RedirectTest,
   content::TestNavigationObserver observer(
       content::Source<content::NavigationController>(
           &web_contents->GetController()),
-      NULL, 2);
+      2);
 
   ui_test_utils::NavigateToURLWithDisposition(
       browser(), first_url, CURRENT_TAB, ui_test_utils::BROWSER_TEST_NONE);

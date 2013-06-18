@@ -4,6 +4,7 @@
 
 #include "content/public/test/test_renderer_host.h"
 
+#include "base/run_loop.h"
 #include "content/browser/renderer_host/render_view_host_factory.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/test_render_view_host.h"
@@ -124,7 +125,7 @@ WebContents* RenderViewHostTestHarness::CreateTestWebContents() {
 #endif
 
   // See comment above browser_context_ decl for why we check for NULL here.
-  if (!browser_context_.get())
+  if (!browser_context_)
     browser_context_.reset(new TestBrowserContext());
 
   // This will be deleted when the WebContentsImpl goes away.
@@ -145,6 +146,14 @@ void RenderViewHostTestHarness::Reload() {
       rvh())->SendNavigate(entry->GetPageID(), entry->GetURL());
 }
 
+void RenderViewHostTestHarness::FailedReload() {
+  NavigationEntry* entry = controller().GetLastCommittedEntry();
+  DCHECK(entry);
+  controller().Reload(false);
+  static_cast<TestRenderViewHost*>(
+      rvh())->SendFailedNavigate(entry->GetPageID(), entry->GetURL());
+}
+
 void RenderViewHostTestHarness::SetUp() {
 #if defined(OS_WIN)
   ole_initializer_.reset(new ui::ScopedOleInitializer());
@@ -163,15 +172,15 @@ void RenderViewHostTestHarness::TearDown() {
 #endif
   // Make sure that we flush any messages related to WebContentsImpl destruction
   // before we destroy the browser context.
-  MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Delete any RenderProcessHosts before the BrowserContext goes away.
-  if (rvh_test_enabler_.rph_factory_.get())
+  if (rvh_test_enabler_.rph_factory_)
     rvh_test_enabler_.rph_factory_.reset();
 
   // Release the browser context on the UI thread.
   message_loop_.DeleteSoon(FROM_HERE, browser_context_.release());
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
 #if defined(OS_WIN)
   ole_initializer_.reset();

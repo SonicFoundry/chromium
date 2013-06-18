@@ -13,6 +13,7 @@
 
 namespace net {
 
+class CryptoHandshakeMessage;
 struct QuicAckFrame;
 class QuicConnection;
 class QuicConnectionVisitorInterface;

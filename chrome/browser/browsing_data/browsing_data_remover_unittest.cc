@@ -15,12 +15,7 @@
 #include "base/platform_file.h"
 #include "base/prefs/testing_pref_service.h"
 #include "base/utf_string_conversions.h"
-#include "chrome/browser/autofill/autofill_common_test.h"
-#include "chrome/browser/autofill/autofill_profile.h"
-#include "chrome/browser/autofill/credit_card.h"
-#include "chrome/browser/autofill/personal_data_manager.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
-#include "chrome/browser/autofill/personal_data_manager_observer.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
 #include "chrome/browser/extensions/mock_extension_special_storage_policy.h"
 #include "chrome/browser/history/history_service.h"
@@ -30,20 +25,24 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/autofill/browser/autofill_common_test.h"
+#include "components/autofill/browser/autofill_profile.h"
+#include "components/autofill/browser/credit_card.h"
+#include "components/autofill/browser/personal_data_manager.h"
+#include "components/autofill/browser/personal_data_manager_observer.h"
 #include "content/public/browser/dom_storage_context.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/test/test_browser_thread.h"
-#include "net/base/server_bound_cert_service.h"
-#include "net/base/server_bound_cert_store.h"
-#include "net/base/ssl_client_cert_type.h"
 #include "net/cookies/cookie_monster.h"
+#include "net/ssl/server_bound_cert_service.h"
+#include "net/ssl/server_bound_cert_store.h"
+#include "net/ssl/ssl_client_cert_type.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebCString.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebSecurityOrigin.h"
 #include "webkit/dom_storage/dom_storage_types.h"
 #include "webkit/glue/webkit_glue.h"
 #include "webkit/quota/mock_quota_manager.h"
@@ -378,12 +377,12 @@ class RemoveHistoryTester {
   DISALLOW_COPY_AND_ASSIGN(RemoveHistoryTester);
 };
 
-class RemoveAutofillTester : public PersonalDataManagerObserver {
+class RemoveAutofillTester : public autofill::PersonalDataManagerObserver {
  public:
   explicit RemoveAutofillTester(TestingProfile* profile)
       : personal_data_manager_(
-            PersonalDataManagerFactory::GetForProfile(profile)) {
-    autofill_test::DisableSystemServices(profile);
+            autofill::PersonalDataManagerFactory::GetForProfile(profile)) {
+        autofill::test::DisableSystemServices(profile);
     personal_data_manager_->AddObserver(this);
   }
 
@@ -394,26 +393,28 @@ class RemoveAutofillTester : public PersonalDataManagerObserver {
   // Returns true if there are autofill profiles.
   bool HasProfile() {
     return !personal_data_manager_->GetProfiles().empty() &&
-           !personal_data_manager_->credit_cards().empty();
+           !personal_data_manager_->GetCreditCards().empty();
   }
 
   void AddProfile() {
-    AutofillProfile profile;
-    profile.SetRawInfo(NAME_FIRST, ASCIIToUTF16("Bob"));
-    profile.SetRawInfo(NAME_LAST, ASCIIToUTF16("Smith"));
-    profile.SetRawInfo(ADDRESS_HOME_ZIP, ASCIIToUTF16("94043"));
-    profile.SetRawInfo(EMAIL_ADDRESS, ASCIIToUTF16("sue@example.com"));
-    profile.SetRawInfo(COMPANY_NAME, ASCIIToUTF16("Company X"));
+    autofill::AutofillProfile profile;
+    profile.SetRawInfo(autofill::NAME_FIRST, ASCIIToUTF16("Bob"));
+    profile.SetRawInfo(autofill::NAME_LAST, ASCIIToUTF16("Smith"));
+    profile.SetRawInfo(autofill::ADDRESS_HOME_ZIP, ASCIIToUTF16("94043"));
+    profile.SetRawInfo(autofill::EMAIL_ADDRESS,
+                       ASCIIToUTF16("sue@example.com"));
+    profile.SetRawInfo(autofill::COMPANY_NAME, ASCIIToUTF16("Company X"));
 
-    std::vector<AutofillProfile> profiles;
+    std::vector<autofill::AutofillProfile> profiles;
     profiles.push_back(profile);
     personal_data_manager_->SetProfiles(&profiles);
     MessageLoop::current()->Run();
 
-    CreditCard card;
-    card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("1234-5678-9012-3456"));
+    autofill::CreditCard card;
+    card.SetRawInfo(autofill::CREDIT_CARD_NUMBER,
+                    ASCIIToUTF16("1234-5678-9012-3456"));
 
-    std::vector<CreditCard> cards;
+    std::vector<autofill::CreditCard> cards;
     cards.push_back(card);
     personal_data_manager_->SetCreditCards(&cards);
     MessageLoop::current()->Run();
@@ -424,7 +425,7 @@ class RemoveAutofillTester : public PersonalDataManagerObserver {
     MessageLoop::current()->Quit();
   }
 
-  PersonalDataManager* personal_data_manager_;
+  autofill::PersonalDataManager* personal_data_manager_;
   DISALLOW_COPY_AND_ASSIGN(RemoveAutofillTester);
 };
 

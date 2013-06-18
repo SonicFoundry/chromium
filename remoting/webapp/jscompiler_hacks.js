@@ -67,20 +67,23 @@ var WebKitMutationObserver = function(callback) {};
     @param {Object} options */
 WebKitMutationObserver.prototype.observe = function(element, options) {};
 
+// TODO(jamiewalch): Flesh this out with the correct type when we're a v2 app.
+/** @type {remoting.MockStorage} */
+remoting.storage.local = null;
+
 /** @type {Object} */
 chrome.storage = {};
 
-// TODO(jamiewalch): Flesh this out with the correct type when we're a v2 app.
 /** @type {remoting.MockStorage} */
-chrome.storage.local = null;
+chrome.storage.local;
+
+/** @type {remoting.MockStorage} */
+chrome.storage.sync;
 
 /** @type {Object} */
 chrome.app.runtime = {
-  /** @type {Object} */
-  onLaunched: {
-    /** @param {function():void} callback */
-    addListener: function(callback) {}
-  }
+  /** @type {chrome.Event} */
+  onLaunched: null
 };
 
 /** @type {Object} */
@@ -101,8 +104,36 @@ chrome.experimental.identity = {
    * @param {Object.<string>} parameters
    * @param {function(string):void} callback
    */
-  getAuthToken: function(parameters, callback) {}
+  getAuthToken: function(parameters, callback) {},
+  /**
+   * @param {Object.<string>} parameters
+   * @param {function(string):void} callback
+   */
+  launchWebAuthFlow: function(parameters, callback) {}
 };
+
+/** @constructor */
+chrome.Event = function() {};
+
+/** @param {function():void} callback */
+chrome.Event.prototype.addListener = function(callback) {};
+
+/** @param {function():void} callback */
+chrome.Event.prototype.removeListener = function(callback) {};
+
+/** @constructor */
+chrome.extension.Port = function() {};
+
+/** @type {chrome.Event} */
+chrome.extension.Port.prototype.onMessage;
+
+/** @type {chrome.Event} */
+chrome.extension.Port.prototype.onDisconnect;
+
+/**
+ * @param {Object} message
+ */
+chrome.extension.Port.prototype.postMessage = function(message) {};
 
 /** @type {Object} */
 chrome.runtime = {
@@ -114,6 +145,11 @@ chrome.runtime = {
   /** @return {{version: string}} */
   getManifest: function() {}
 };
+
+/**
+ * @type {?function(string):chrome.extension.Port}
+ */
+chrome.runtime.connectNative = function(name) {};
 
 /** @type {Object} */
 chrome.tabs;
@@ -143,4 +179,24 @@ chrome.Window = function() {
   this.state = '';
   /** @type {string} */
   this.type = '';
+};
+
+/** @param {string} message*/
+chrome.extension.sendMessage = function(message) {}
+
+/** @type {chrome.Event} */
+chrome.extension.onMessage;
+
+/** @type {Object} */
+chrome.permissions = {
+  /**
+   * @param {Object.<string>} permissions
+   * @param {function(boolean):void} callback
+   */
+  contains: function(permissions, callback) {},
+/**
+ * @param {Object.<string>} permissions
+ * @param {function(boolean):void} callback
+ */
+  request: function(permissions, callback) {}
 };

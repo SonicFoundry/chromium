@@ -20,6 +20,7 @@
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chrome/test/base/ui_test_utils.h"
 #include "content/public/test/test_browser_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -67,8 +68,9 @@ class HistoryContentsProviderTest : public testing::Test,
   virtual bool BodyOnly() { return false; }
 
  private:
-  static ProfileKeyedService* CreateTemplateURLService(Profile* profile) {
-    return new TemplateURLService(profile);
+  static ProfileKeyedService* CreateTemplateURLService(
+      content::BrowserContext* profile) {
+    return new TemplateURLService(static_cast<Profile*>(profile));
   }
 
   // testing::Test
@@ -132,8 +134,9 @@ class HistoryContentsProviderBodyOnlyTest : public HistoryContentsProviderTest {
 };
 
 TEST_F(HistoryContentsProviderTest, Body) {
-  AutocompleteInput input(ASCIIToUTF16("FOO"), string16::npos, string16(), true,
-                          false, true, AutocompleteInput::ALL_MATCHES);
+  AutocompleteInput input(ASCIIToUTF16("FOO"), string16::npos, string16(),
+                          GURL(), true, false, true,
+                          AutocompleteInput::ALL_MATCHES);
   RunQuery(input, false);
 
   // The results should be the first two pages, in decreasing order.
@@ -147,7 +150,8 @@ TEST_F(HistoryContentsProviderTest, Body) {
 
 TEST_F(HistoryContentsProviderTest, Title) {
   AutocompleteInput input(ASCIIToUTF16("PAGEONE"), string16::npos, string16(),
-                          true, false, true, AutocompleteInput::ALL_MATCHES);
+                          GURL(), true, false, true,
+                          AutocompleteInput::ALL_MATCHES);
   RunQuery(input, false);
 
   // The results should be the first two pages.
@@ -164,7 +168,7 @@ TEST_F(HistoryContentsProviderTest, MinimalChanges) {
   // A minimal changes request when there have been no real queries should
   // give us no results.
   AutocompleteInput sync_input(ASCIIToUTF16("PAGEONE"), string16::npos,
-                               string16(), true, false, true,
+                               string16(), GURL(), true, false, true,
                                AutocompleteInput::SYNCHRONOUS_MATCHES);
   RunQuery(sync_input, true);
   const ACMatches& m1 = matches();
@@ -172,7 +176,7 @@ TEST_F(HistoryContentsProviderTest, MinimalChanges) {
 
   // Now do a "regular" query to get the results.
   AutocompleteInput async_input(ASCIIToUTF16("PAGEONE"), string16::npos,
-                                string16(), true, false, true,
+                                string16(), GURL(), true, false, true,
                                 AutocompleteInput::ALL_MATCHES);
   RunQuery(async_input, false);
   const ACMatches& m2 = matches();
@@ -189,7 +193,7 @@ TEST_F(HistoryContentsProviderBodyOnlyTest, MinimalChanges) {
   // A minimal changes request when there have been no real queries should
   // give us no results.
   AutocompleteInput sync_input(ASCIIToUTF16("PAGEONE"), string16::npos,
-                               string16(), true, false, true,
+                               string16(), GURL(), true, false, true,
                                AutocompleteInput::SYNCHRONOUS_MATCHES);
   RunQuery(sync_input, true);
   const ACMatches& m1 = matches();
@@ -197,7 +201,7 @@ TEST_F(HistoryContentsProviderBodyOnlyTest, MinimalChanges) {
 
   // Now do a "regular" query to get no results because we are body-only.
   AutocompleteInput async_input(ASCIIToUTF16("PAGEONE"), string16::npos,
-                                string16(), true, false, true,
+                                string16(), GURL(), true, false, true,
                                 AutocompleteInput::ALL_MATCHES);
   RunQuery(async_input, false);
   const ACMatches& m2 = matches();
@@ -212,8 +216,9 @@ TEST_F(HistoryContentsProviderBodyOnlyTest, MinimalChanges) {
 
 // Tests that history is deleted properly.
 TEST_F(HistoryContentsProviderTest, DeleteMatch) {
-  AutocompleteInput input(ASCIIToUTF16("bar"), string16::npos, string16(), true,
-                          false, true, AutocompleteInput::ALL_MATCHES);
+  AutocompleteInput input(ASCIIToUTF16("bar"), string16::npos, string16(),
+                          GURL(), true, false, true,
+                          AutocompleteInput::ALL_MATCHES);
   RunQuery(input, false);
 
   // Query; the result should be the third page.
@@ -229,18 +234,18 @@ TEST_F(HistoryContentsProviderTest, DeleteMatch) {
 // Tests deleting starred results from history, not affecting bookmarks/matches.
 TEST_F(HistoryContentsProviderTest, DeleteStarredMatch) {
   profile()->CreateBookmarkModel(false);
-  profile()->BlockUntilBookmarkModelLoaded();
+
+  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  ui_test_utils::WaitForBookmarkModelToLoad(model);
 
   // Bookmark a history item.
   GURL bookmark_url(test_entries[2].url);
-  bookmark_utils::AddIfNotBookmarked(
-      BookmarkModelFactory::GetForProfile(profile()),
-      bookmark_url,
-      ASCIIToUTF16("bar"));
+  bookmark_utils::AddIfNotBookmarked(model, bookmark_url, ASCIIToUTF16("bar"));
 
   // Get the match to delete its history
-  AutocompleteInput input(ASCIIToUTF16("bar"), string16::npos, string16(), true,
-                          false, true, AutocompleteInput::ALL_MATCHES);
+  AutocompleteInput input(ASCIIToUTF16("bar"), string16::npos, string16(),
+                          GURL(), true, false, true,
+                          AutocompleteInput::ALL_MATCHES);
   RunQuery(input, false);
   const ACMatches& m = matches();
   ASSERT_EQ(1U, m.size());
@@ -251,7 +256,7 @@ TEST_F(HistoryContentsProviderTest, DeleteStarredMatch) {
 
   // Run a query that would only match history (but the history is deleted)
   AutocompleteInput you_input(ASCIIToUTF16("you"), string16::npos, string16(),
-                              true, false, true,
+                              GURL(), true, false, true,
                               AutocompleteInput::ALL_MATCHES);
   RunQuery(you_input, false);
   EXPECT_EQ(0U, matches().size());
@@ -269,8 +274,9 @@ TEST_F(HistoryContentsProviderTest, CullSearchResults) {
   template_url_service->SetDefaultSearchProvider(template_url);
   template_url_service->Load();
 
-  AutocompleteInput input(ASCIIToUTF16("moo"), string16::npos, string16(), true,
-                          false, true, AutocompleteInput::ALL_MATCHES);
+  AutocompleteInput input(ASCIIToUTF16("moo"), string16::npos, string16(),
+                          GURL(), true, false, true,
+                          AutocompleteInput::ALL_MATCHES);
   RunQuery(input, false);
 
   // Run a query that is found on a search result page and on the main page

@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/printing/print_dialog_cloud.h"
-#include "chrome/browser/printing/print_dialog_cloud_internal.h"
+
 
 #include "base/base64.h"
 #include "base/bind.h"
@@ -16,8 +16,8 @@
 #include "base/values.h"
 #include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/printing/cloud_print/cloud_print_url.h"
+#include "chrome/browser/printing/print_dialog_cloud_internal.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser_dialogs.h"
@@ -25,6 +25,7 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/common/print_messages.h"
 #include "chrome/common/url_constants.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
@@ -141,7 +142,7 @@ bool GetPageSetupParameters(const std::string& json,
 
 string16 GetSwitchValueString16(const CommandLine& command_line,
                                 const char* switchName) {
-#ifdef OS_WIN
+#if defined(OS_WIN)
   CommandLine::StringType native_switch_val;
   native_switch_val = command_line.GetSwitchValueNative(switchName);
   return string16(native_switch_val);
@@ -341,8 +342,7 @@ void CloudPrintFlowHandler::Observe(
           url.scheme() == dialog_url.scheme()) {
         RenderViewHost* rvh = web_ui()->GetWebContents()->GetRenderViewHost();
         if (rvh) {
-          webkit_glue::WebPreferences webkit_prefs =
-              rvh->GetWebkitPreferences();
+          WebPreferences webkit_prefs = rvh->GetWebkitPreferences();
           webkit_prefs.allow_scripts_to_close_windows = true;
           rvh->UpdateWebkitPreferences(webkit_prefs);
         } else {
@@ -690,15 +690,15 @@ void CreateDialogForFileImpl(content::BrowserContext* browser_context,
 
 namespace print_dialog_cloud {
 
-void RegisterUserPrefs(PrefRegistrySyncable* registry) {
+void RegisterUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterIntegerPref(
       prefs::kCloudPrintDialogWidth,
       kDefaultWidth,
-      PrefRegistrySyncable::UNSYNCABLE_PREF);
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
   registry->RegisterIntegerPref(
       prefs::kCloudPrintDialogHeight,
       kDefaultHeight,
-      PrefRegistrySyncable::UNSYNCABLE_PREF);
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 // Called on the FILE or UI thread.  This is the main entry point into creating

@@ -7,8 +7,8 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/utf_string_conversions.h"
 #include "base/stringprintf.h"
+#include "base/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_browser_main.h"
@@ -36,7 +36,7 @@
 #include "content/public/common/context_menu_params.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test_utils.h"
-#include "net/base/mock_host_resolver.h"
+#include "net/dns/mock_host_resolver.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebContextMenuData.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebInputEvent.h"
 #include "webkit/glue/resource_type.h"
@@ -351,8 +351,7 @@ class WebNavigationApiTest : public ExtensionApiTest {
     test_navigation_listener_ = new TestNavigationListener();
     content_browser_client_.reset(
         new TestContentBrowserClient(test_navigation_listener_.get()));
-    original_content_browser_client_ = content::GetContentClient()->browser();
-    content::GetContentClient()->set_browser_for_testing(
+    original_content_browser_client_ = content::SetBrowserClientForTesting(
         content_browser_client_.get());
 
     FrameNavigationState::set_allow_extension_scheme(true);
@@ -366,8 +365,7 @@ class WebNavigationApiTest : public ExtensionApiTest {
 
   virtual void TearDownInProcessBrowserTestFixture() OVERRIDE {
     ExtensionApiTest::TearDownInProcessBrowserTestFixture();
-    content::GetContentClient()->set_browser_for_testing(
-        original_content_browser_client_);
+    content::SetBrowserClientForTesting(original_content_browser_client_);
   }
 
   TestNavigationListener* test_navigation_listener() {
@@ -404,9 +402,14 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, ServerRedirect) {
           << message_;
 }
 
-// Timing out. crbug.com/172258
+// http://crbug.com/235171
+#if defined(OS_CHROMEOS) || (defined(OS_LINUX) && defined(USE_AURA))
+#define MAYBE_ServerRedirectSingleProcess DISABLED_ServerRedirectSingleProcess
+#else
+#define MAYBE_ServerRedirectSingleProcess ServerRedirectSingleProcess
+#endif
 IN_PROC_BROWSER_TEST_F(WebNavigationApiTest,
-                       DISABLED_ServerRedirectSingleProcess) {
+                       MAYBE_ServerRedirectSingleProcess) {
   // Set max renderers to 1 to force running out of processes.
   content::RenderProcessHost::SetMaxRendererProcessCount(1);
 
@@ -507,7 +510,7 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, UserAction) {
 
   TestRenderViewContextMenu menu(tab, params);
   menu.Init();
-  menu.ExecuteCommand(IDC_CONTENT_CONTEXT_OPENLINKNEWTAB);
+  menu.ExecuteCommand(IDC_CONTENT_CONTEXT_OPENLINKNEWTAB, 0);
 
   ASSERT_TRUE(catcher.GetNextResult()) << catcher.message();
 }

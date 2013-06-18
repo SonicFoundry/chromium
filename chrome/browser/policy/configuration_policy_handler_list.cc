@@ -14,12 +14,11 @@
 #include "chrome/browser/policy/policy_map.h"
 #include "chrome/common/extensions/manifest.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/network/onc/onc_constants.h"
 #include "grit/generated_resources.h"
 #include "policy/policy_constants.h"
 
 #if defined(OS_CHROMEOS)
-#include "chrome/browser/policy/configuration_policy_handler_chromeos.h"
+#include "chrome/browser/chromeos/policy/configuration_policy_handler_chromeos.h"
 #endif  // defined(OS_CHROMEOS)
 
 namespace policy {
@@ -328,6 +327,18 @@ const PolicyToPreferenceMapEntry kSimplePolicyMap[] = {
   { key::kHideWebStoreIcon,
     prefs::kHideWebStoreIcon,
     Value::TYPE_BOOLEAN },
+  { key::kVariationsRestrictParameter,
+    prefs::kVariationsRestrictParameter,
+    Value::TYPE_STRING },
+  { key::kContentPackDefaultFilteringBehavior,
+    prefs::kDefaultManagedModeFilteringBehavior,
+    Value::TYPE_INTEGER },
+  { key::kContentPackManualBehaviorHosts,
+    prefs::kManagedModeManualHosts,
+    Value::TYPE_DICTIONARY },
+  { key::kContentPackManualBehaviorURLs,
+    prefs::kManagedModeManualURLs,
+    Value::TYPE_DICTIONARY },
 
 #if defined(OS_CHROMEOS)
   { key::kChromeOsLockOnIdleSuspend,
@@ -363,11 +374,20 @@ const PolicyToPreferenceMapEntry kSimplePolicyMap[] = {
   { key::kPowerManagementUsesVideoActivity,
     prefs::kPowerUseVideoActivity,
     Value::TYPE_BOOLEAN },
+  { key::kAllowScreenWakeLocks,
+    prefs::kPowerAllowScreenWakeLocks,
+    Value::TYPE_BOOLEAN },
   { key::kTermsOfServiceURL,
     prefs::kTermsOfServiceURL,
     Value::TYPE_STRING },
   { key::kShowAccessibilityOptionsInSystemTrayMenu,
     prefs::kShouldAlwaysShowAccessibilityMenu,
+    Value::TYPE_BOOLEAN },
+  { key::kRebootAfterUpdate,
+    prefs::kRebootAfterUpdate,
+    Value::TYPE_BOOLEAN },
+  { key::kAttestationEnabledForUser,
+    prefs::kAttestationEnabled,
     Value::TYPE_BOOLEAN },
 #endif  // defined(OS_CHROMEOS)
 
@@ -427,6 +447,12 @@ ConfigurationPolicyHandlerList::ConfigurationPolicyHandlerList() {
           key::kExtensionAllowedTypes, prefs::kExtensionAllowedTypes,
           kExtensionAllowedTypesMap,
           kExtensionAllowedTypesMap + arraysize(kExtensionAllowedTypesMap)));
+#if defined(OS_CHROMEOS)
+  handlers_.push_back(
+      new ExtensionListPolicyHandler(key::kAttestationExtensionWhitelist,
+                                     prefs::kAttestationExtensionWhitelist,
+                                     false));
+#endif  // defined(OS_CHROMEOS)
 
 #if !defined(OS_CHROMEOS)
   handlers_.push_back(new DownloadDirPolicyHandler());
@@ -434,13 +460,8 @@ ConfigurationPolicyHandlerList::ConfigurationPolicyHandlerList() {
 
 #if defined(OS_CHROMEOS)
   handlers_.push_back(
-      new NetworkConfigurationPolicyHandler(
-          key::kDeviceOpenNetworkConfiguration,
-          chromeos::onc::ONC_SOURCE_DEVICE_POLICY));
-  handlers_.push_back(
-      new NetworkConfigurationPolicyHandler(
-          key::kOpenNetworkConfiguration,
-          chromeos::onc::ONC_SOURCE_USER_POLICY));
+      NetworkConfigurationPolicyHandler::CreateForDevicePolicy());
+  handlers_.push_back(NetworkConfigurationPolicyHandler::CreateForUserPolicy());
   handlers_.push_back(new PinnedLauncherAppsPolicyHandler());
 
   handlers_.push_back(
@@ -457,6 +478,11 @@ ConfigurationPolicyHandlerList::ConfigurationPolicyHandlerList() {
       new IntRangePolicyHandler(
           key::kScreenLockDelayAC,
           prefs::kPowerAcScreenLockDelayMs,
+          0, INT_MAX, true));
+  handlers_.push_back(
+      new IntRangePolicyHandler(
+          key::kIdleWarningDelayAC,
+          prefs::kPowerAcIdleWarningDelayMs,
           0, INT_MAX, true));
   handlers_.push_back(
       new IntRangePolicyHandler(
@@ -480,6 +506,11 @@ ConfigurationPolicyHandlerList::ConfigurationPolicyHandlerList() {
           0, INT_MAX, true));
   handlers_.push_back(
       new IntRangePolicyHandler(
+          key::kIdleWarningDelayBattery,
+          prefs::kPowerBatteryIdleWarningDelayMs,
+          0, INT_MAX, true));
+  handlers_.push_back(
+      new IntRangePolicyHandler(
           key::kIdleDelayBattery,
           prefs::kPowerBatteryIdleDelayMs,
           0, INT_MAX, true));
@@ -498,6 +529,9 @@ ConfigurationPolicyHandlerList::ConfigurationPolicyHandlerList() {
           key::kPresentationIdleDelayScale,
           prefs::kPowerPresentationIdleDelayFactor,
           100, INT_MAX, true));
+  handlers_.push_back(new IntRangePolicyHandler(key::kUptimeLimit,
+                                                prefs::kUptimeLimit,
+                                                3600, INT_MAX, true));
 #endif  // defined(OS_CHROMEOS)
 }
 

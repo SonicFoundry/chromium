@@ -11,6 +11,8 @@
 #include "base/stringprintf.h"
 #include "base/sys_info.h"
 #include "base/values.h"
+#include "chrome/test/chromedriver/chrome/status.h"
+#include "chrome/test/chromedriver/chrome/version.h"
 #include "chrome/test/chromedriver/command_names.h"
 #include "chrome/test/chromedriver/commands.h"
 #include "chrome/test/chromedriver/element_commands.h"
@@ -18,8 +20,6 @@
 #include "chrome/test/chromedriver/session.h"
 #include "chrome/test/chromedriver/session_commands.h"
 #include "chrome/test/chromedriver/session_map.h"
-#include "chrome/test/chromedriver/status.h"
-#include "chrome/test/chromedriver/version.h"
 #include "chrome/test/chromedriver/window_commands.h"
 
 #if defined(OS_MACOSX)
@@ -65,6 +65,8 @@ void CommandExecutorImpl::Init() {
       base::Bind(&ExecuteSendKeysToElement);
   element_command_map[CommandNames::kSubmitElement] =
       base::Bind(&ExecuteSubmitElement);
+  element_command_map[CommandNames::kTouchSingleTap] =
+      base::Bind(&ExecuteTouchSingleTap);
   element_command_map[CommandNames::kGetElementText] =
       base::Bind(&ExecuteGetElementText);
   element_command_map[CommandNames::kGetElementValue] =
@@ -102,6 +104,8 @@ void CommandExecutorImpl::Init() {
   window_command_map[CommandNames::kGet] = base::Bind(&ExecuteGet);
   window_command_map[CommandNames::kExecuteScript] =
       base::Bind(&ExecuteExecuteScript);
+  window_command_map[CommandNames::kExecuteAsyncScript] =
+      base::Bind(&ExecuteExecuteAsyncScript);
   window_command_map[CommandNames::kSwitchToFrame] =
       base::Bind(&ExecuteSwitchToFrame);
   window_command_map[CommandNames::kGetTitle] =
@@ -132,6 +136,8 @@ void CommandExecutorImpl::Init() {
       base::Bind(&ExecuteMouseDoubleClick);
   window_command_map[CommandNames::kGetActiveElement] =
       base::Bind(&ExecuteGetActiveElement);
+  window_command_map[CommandNames::kSendKeysToActiveElement] =
+      base::Bind(&ExecuteSendKeysToActiveElement);
   window_command_map[CommandNames::kGetStatus] =
       base::Bind(&ExecuteGetAppCacheStatus);
   window_command_map[CommandNames::kIsBrowserOnline] =
@@ -162,6 +168,16 @@ void CommandExecutorImpl::Init() {
       base::Bind(&ExecuteGetStorageSize, kSessionStorage);
   window_command_map[CommandNames::kScreenshot] =
       base::Bind(&ExecuteScreenshot);
+  window_command_map[CommandNames::kGetCookies] =
+      base::Bind(&ExecuteGetCookies);
+  window_command_map[CommandNames::kAddCookie] =
+      base::Bind(&ExecuteAddCookie);
+  window_command_map[CommandNames::kDeleteCookie] =
+      base::Bind(&ExecuteDeleteCookie);
+  window_command_map[CommandNames::kDeleteAllCookies] =
+      base::Bind(&ExecuteDeleteAllCookies);
+  window_command_map[CommandNames::kSetLocation] =
+      base::Bind(&ExecuteSetLocation);
 
   // Commands which require a session.
   typedef std::map<std::string, SessionCommand> SessionCommandMap;
@@ -172,18 +188,24 @@ void CommandExecutorImpl::Init() {
     session_command_map[it->first] =
         base::Bind(&ExecuteWindowCommand, it->second);
   }
+  session_command_map[CommandNames::kGetSessionCapabilities] =
+      base::Bind(&ExecuteGetSessionCapabilities, &session_map_);
   session_command_map[CommandNames::kQuit] =
       base::Bind(&ExecuteQuit, &session_map_);
   session_command_map[CommandNames::kGetCurrentWindowHandle] =
       base::Bind(&ExecuteGetCurrentWindowHandle);
   session_command_map[CommandNames::kClose] =
-      base::Bind(&ExecuteClose);
+      base::Bind(&ExecuteClose, &session_map_);
   session_command_map[CommandNames::kGetWindowHandles] =
       base::Bind(&ExecuteGetWindowHandles);
   session_command_map[CommandNames::kSwitchToWindow] =
       base::Bind(&ExecuteSwitchToWindow);
   session_command_map[CommandNames::kSetTimeout] =
       base::Bind(&ExecuteSetTimeout);
+  session_command_map[CommandNames::kSetScriptTimeout] =
+      base::Bind(&ExecuteSetScriptTimeout);
+  session_command_map[CommandNames::kImplicitlyWait] =
+      base::Bind(&ExecuteImplicitlyWait);
   session_command_map[CommandNames::kGetAlert] =
       base::Bind(&ExecuteGetAlert);
   session_command_map[CommandNames::kGetAlertText] =
@@ -194,6 +216,26 @@ void CommandExecutorImpl::Init() {
       base::Bind(&ExecuteAcceptAlert);
   session_command_map[CommandNames::kDismissAlert] =
       base::Bind(&ExecuteDismissAlert);
+  session_command_map[CommandNames::kIsLoading] =
+      base::Bind(&ExecuteIsLoading);
+  session_command_map[CommandNames::kGetLocation] =
+      base::Bind(&ExecuteGetLocation);
+  session_command_map[CommandNames::kGetWindowPosition] =
+      base::Bind(&ExecuteGetWindowPosition);
+  session_command_map[CommandNames::kSetWindowPosition] =
+      base::Bind(&ExecuteSetWindowPosition);
+  session_command_map[CommandNames::kGetWindowSize] =
+      base::Bind(&ExecuteGetWindowSize);
+  session_command_map[CommandNames::kSetWindowSize] =
+      base::Bind(&ExecuteSetWindowSize);
+  session_command_map[CommandNames::kMaximizeWindow] =
+      base::Bind(&ExecuteMaximizeWindow);
+  session_command_map[CommandNames::kGetAvailableLogTypes] =
+      base::Bind(&ExecuteGetAvailableLogTypes);
+  session_command_map[CommandNames::kGetLog] =
+      base::Bind(&ExecuteGetLog);
+  session_command_map[CommandNames::kUploadFile] =
+      base::Bind(&ExecuteUploadFile);
 
   // Wrap SessionCommand into non-session Command.
   base::Callback<Status(

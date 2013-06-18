@@ -10,8 +10,8 @@
 #include "base/time.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_export.h"
-#include "net/base/ssl_info.h"
 #include "net/http/http_vary_data.h"
+#include "net/ssl/ssl_info.h"
 
 class Pickle;
 
@@ -24,6 +24,17 @@ class SSLCertRequestInfo;
 
 class NET_EXPORT HttpResponseInfo {
  public:
+  // Describes the kind of connection used to fetch this response.
+  enum ConnectionInfo {
+    CONNECTION_INFO_UNKNOWN,
+    CONNECTION_INFO_HTTP1,
+    CONNECTION_INFO_SPDY2,
+    CONNECTION_INFO_SPDY3,
+    CONNECTION_INFO_SPDY4,
+    CONNECTION_INFO_QUIC1_SPDY3,
+    NUM_OF_CONNECTION_INFOS,
+  };
+
   HttpResponseInfo();
   HttpResponseInfo(const HttpResponseInfo& rhs);
   ~HttpResponseInfo();
@@ -48,6 +59,15 @@ class NET_EXPORT HttpResponseInfo {
   // when reloading previously visited pages (without going over the network).
   bool was_cached;
 
+  // True if the request was fetched from cache rather than the network
+  // because of a LOAD_FROM_CACHE_IF_OFFLINE flag when the system
+  // was unable to contact the server.
+  bool server_data_unavailable;
+
+  // True if the request accessed the network in the process of retrieving
+  // data.
+  bool network_accessed;
+
   // True if the request was fetched over a SPDY channel.
   bool was_fetched_via_spdy;
 
@@ -58,6 +78,9 @@ class NET_EXPORT HttpResponseInfo {
   // be any type of proxy, HTTP or SOCKS.  Note, we do not know if a
   // transparent proxy may have been involved.
   bool was_fetched_via_proxy;
+
+  // Whether the request use http proxy or server authentication.
+  bool did_use_http_auth;
 
   // Remote address of the socket which fetched this resource.
   //
@@ -70,6 +93,9 @@ class NET_EXPORT HttpResponseInfo {
 
   // Protocol negotiated with the server.
   std::string npn_negotiated_protocol;
+
+  // The type of connection used for this response.
+  ConnectionInfo connection_info;
 
   // The time at which the request was made that resulted in this response.
   // For cached responses, this is the last time the cache entry was validated.

@@ -16,7 +16,7 @@ StreamTextureHost::StreamTextureHost(GpuChannelHost* channel)
       stream_id_(0),
       listener_(NULL),
       channel_(channel),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_(this)) {
+      weak_ptr_factory_(this) {
   DCHECK(channel);
 }
 
@@ -52,13 +52,10 @@ bool StreamTextureHost::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
-void StreamTextureHost::EstablishPeer(
-    SurfaceTexturePeer::SurfaceTextureTarget type,
-    int32 primary_id, int32 secondary_id) {
-  if (channel_.get()) {
+void StreamTextureHost::EstablishPeer(int32 primary_id, int32 secondary_id) {
+  if (channel_) {
     channel_->Send(new GpuChannelMsg_EstablishStreamTexture(
-        stream_id_, type,
-        primary_id, secondary_id));
+        stream_id_, primary_id, secondary_id));
   }
 }
 void StreamTextureHost::OnChannelError() {

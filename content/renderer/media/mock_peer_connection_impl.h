@@ -40,6 +40,9 @@ class MockPeerConnectionImpl : public webrtc::PeerConnectionInterface {
 
   virtual bool GetStats(webrtc::StatsObserver* observer,
                         webrtc::MediaStreamTrackInterface* track) OVERRIDE;
+  // Set Call this function to make sure next call to GetStats fail.
+  void SetGetStatsResult(bool result) { getstats_result_ = result; }
+
   virtual SignalingState signaling_state() OVERRIDE {
     NOTIMPLEMENTED();
     return PeerConnectionInterface::kStable;
@@ -78,9 +81,12 @@ class MockPeerConnectionImpl : public webrtc::PeerConnectionInterface {
   void SetLocalDescriptionWorker(
       webrtc::SetSessionDescriptionObserver* observer,
       webrtc::SessionDescriptionInterface* desc) ;
-  virtual void SetRemoteDescription(
+  MOCK_METHOD2(SetRemoteDescription,
+               void(webrtc::SetSessionDescriptionObserver* observer,
+                    webrtc::SessionDescriptionInterface* desc));
+  void SetRemoteDescriptionWorker(
       webrtc::SetSessionDescriptionObserver* observer,
-      webrtc::SessionDescriptionInterface* desc) OVERRIDE;
+      webrtc::SessionDescriptionInterface* desc);
   virtual bool UpdateIce(
       const IceServers& configuration,
       const webrtc::MediaConstraintsInterface* constraints) OVERRIDE;
@@ -117,6 +123,7 @@ class MockPeerConnectionImpl : public webrtc::PeerConnectionInterface {
   scoped_ptr<webrtc::SessionDescriptionInterface> created_sessiondescription_;
   bool hint_audio_;
   bool hint_video_;
+  bool getstats_result_;
   std::string description_sdp_;
   std::string sdp_mid_;
   int sdp_mline_index_;

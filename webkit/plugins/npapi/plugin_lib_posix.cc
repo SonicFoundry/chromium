@@ -17,9 +17,9 @@
 
 #include "base/file_util.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/string_split.h"
 #include "base/string_util.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/string_split.h"
+#include "base/strings/sys_string_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "webkit/plugins/npapi/plugin_list.h"
 

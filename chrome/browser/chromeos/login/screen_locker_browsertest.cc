@@ -19,13 +19,16 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/ui_controls.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/mock_dbus_thread_manager.h"
 #include "chromeos/dbus/mock_power_manager_client.h"
 #include "chromeos/dbus/mock_session_manager_client.h"
+#include "chromeos/dbus/mock_update_engine_client.h"
 #include "content/public/browser/notification_service.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/compositor/layer_animator.h"
+#include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/views/widget/widget.h"
 
 using testing::_;
@@ -134,14 +137,17 @@ class ScreenLockerTest : public CrosInProcessBrowserTest {
         cros_mock_->mock_network_library();
     EXPECT_CALL(*mock_network_library, AddUserActionObserver(_))
         .Times(AnyNumber());
-    EXPECT_CALL(*mock_network_library, LoadOncNetworks(_, _, _, _))
-        .WillRepeatedly(Return(true));
-    ui::LayerAnimator::set_disable_animations_for_test(true);
+    EXPECT_CALL(*mock_network_library, LoadOncNetworks(_, _))
+        .Times(AnyNumber());
+    zero_duration_mode_.reset(new ui::ScopedAnimationDurationScaleMode(
+        ui::ScopedAnimationDurationScaleMode::ZERO_DURATION));
   }
 
   virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
     command_line->AppendSwitchASCII(switches::kLoginProfile, "user");
   }
+
+  scoped_ptr<ui::ScopedAnimationDurationScaleMode> zero_duration_mode_;
 
   DISALLOW_COPY_AND_ASSIGN(ScreenLockerTest);
 };

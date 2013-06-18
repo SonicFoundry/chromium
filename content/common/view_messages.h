@@ -8,17 +8,17 @@
 #include "base/process.h"
 #include "base/shared_memory.h"
 #include "base/string16.h"
-#include "cc/compositor_frame.h"
-#include "cc/compositor_frame_ack.h"
+#include "cc/output/compositor_frame.h"
+#include "cc/output/compositor_frame_ack.h"
 #include "content/common/content_export.h"
 #include "content/common/content_param_traits.h"
-#include "content/common/edit_command.h"
 #include "content/common/navigation_gesture.h"
 #include "content/common/pepper_renderer_instance_data.h"
 #include "content/common/view_message_enums.h"
 #include "content/port/common/input_event_ack_state.h"
 #include "content/public/common/common_param_traits.h"
 #include "content/public/common/context_menu_params.h"
+#include "content/public/common/favicon_url.h"
 #include "content/public/common/file_chooser_params.h"
 #include "content/public/common/frame_navigate_params.h"
 #include "content/public/common/javascript_message_type.h"
@@ -31,20 +31,20 @@
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_message_macros.h"
 #include "ipc/ipc_platform_file.h"
+#include "media/audio/audio_parameters.h"
 #include "media/base/channel_layout.h"
 #include "media/base/media_log_event.h"
-#include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebFloatPoint.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebFloatRect.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebCompositionUnderline.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebFindOptions.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebInputEvent.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebMediaPlayerAction.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebPluginAction.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebPopupType.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebScreenInfo.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebWindowFeatures.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebTextDirection.h"
+#include "third_party/WebKit/Source/WebKit/chromium/public/WebWindowFeatures.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/ime/text_input_type.h"
 #include "ui/base/range/range.h"
 #include "ui/gfx/point.h"
@@ -74,8 +74,8 @@ IPC_ENUM_TRAITS(WebKit::WebPopupType)
 IPC_ENUM_TRAITS(WebKit::WebTextDirection)
 IPC_ENUM_TRAITS(WebMenuItem::Type)
 IPC_ENUM_TRAITS(WindowContainerType)
+IPC_ENUM_TRAITS(content::FaviconURL::IconType)
 IPC_ENUM_TRAITS(content::FileChooserParams::Mode)
-IPC_ENUM_TRAITS(content::InputEventAckState)
 IPC_ENUM_TRAITS(content::JavaScriptMessageType)
 IPC_ENUM_TRAITS(content::NavigationGesture)
 IPC_ENUM_TRAITS(content::PageZoom)
@@ -214,9 +214,9 @@ IPC_STRUCT_TRAITS_BEGIN(content::CustomContextMenuContext)
   IPC_STRUCT_TRAITS_MEMBER(render_widget_id)
 IPC_STRUCT_TRAITS_END()
 
-IPC_STRUCT_TRAITS_BEGIN(content::EditCommand)
-  IPC_STRUCT_TRAITS_MEMBER(name)
-  IPC_STRUCT_TRAITS_MEMBER(value)
+IPC_STRUCT_TRAITS_BEGIN(content::FaviconURL)
+  IPC_STRUCT_TRAITS_MEMBER(icon_url)
+  IPC_STRUCT_TRAITS_MEMBER(icon_type)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(content::FileChooserParams)
@@ -449,6 +449,10 @@ IPC_STRUCT_BEGIN_WITH_PARENT(ViewHostMsg_FrameNavigate_Params,
 
   // User agent override used to navigate.
   IPC_STRUCT_MEMBER(bool, is_overriding_user_agent)
+
+  // Notifies the browser that for this navigation, the session history was
+  // successfully cleared.
+  IPC_STRUCT_MEMBER(bool, history_list_was_cleared)
 IPC_STRUCT_END()
 
 IPC_STRUCT_BEGIN(ViewHostMsg_OpenURL_Params)
@@ -600,6 +604,11 @@ IPC_STRUCT_BEGIN(ViewMsg_Navigate_Params)
   IPC_STRUCT_MEMBER(int, current_history_list_offset)
   IPC_STRUCT_MEMBER(int, current_history_list_length)
 
+  // Informs the RenderView the session history should be cleared. In that
+  // case, the RenderView needs to notify the browser that the clearing was
+  // succesful when the navigation commits.
+  IPC_STRUCT_MEMBER(bool, should_clear_history_list)
+
   // The URL to load.
   IPC_STRUCT_MEMBER(GURL, url)
 
@@ -656,6 +665,9 @@ IPC_STRUCT_BEGIN(ViewMsg_Navigate_Params)
 
   // If not empty, which frame to navigate.
   IPC_STRUCT_MEMBER(std::string, frame_to_navigate)
+
+  // The navigationStart time to expose to JS for this navigation.
+  IPC_STRUCT_MEMBER(base::TimeTicks, browser_navigation_start)
 IPC_STRUCT_END()
 
 IPC_STRUCT_BEGIN(ViewMsg_New_Params)
@@ -663,7 +675,7 @@ IPC_STRUCT_BEGIN(ViewMsg_New_Params)
   IPC_STRUCT_MEMBER(content::RendererPreferences, renderer_preferences)
 
   // Preferences for this view.
-  IPC_STRUCT_MEMBER(webkit_glue::WebPreferences, web_preferences)
+  IPC_STRUCT_MEMBER(WebPreferences, web_preferences)
 
   // The ID of the view to be created.
   IPC_STRUCT_MEMBER(int32, view_id)
@@ -694,6 +706,11 @@ IPC_STRUCT_BEGIN(ViewMsg_New_Params)
 
   // The accessibility mode of the renderer.
   IPC_STRUCT_MEMBER(AccessibilityMode, accessibility_mode)
+
+  // Specifies whether partially swapping composited buffers is
+  // allowed for a renderer. Partial swaps will be used if they are both
+  // allowed and supported.
+  IPC_STRUCT_MEMBER(bool, allow_partial_swap)
 IPC_STRUCT_END()
 
 IPC_STRUCT_BEGIN(ViewMsg_PostMessage_Params)
@@ -704,14 +721,6 @@ IPC_STRUCT_BEGIN(ViewMsg_PostMessage_Params)
   // the source process.  The browser replaces it with the routing ID of the
   // equivalent (swapped out) frame in the destination process.
   IPC_STRUCT_MEMBER(int, source_routing_id)
-  // The identifier of the source frame in the source process.
-  IPC_STRUCT_MEMBER(int, source_frame_id)
-
-  // The full set of identifiers to uniquely describe the target frame. See
-  // the comment on ViewMsg_FrameTreeUpdated for details.
-  IPC_STRUCT_MEMBER(int, target_process_id)
-  IPC_STRUCT_MEMBER(int, target_routing_id)
-  IPC_STRUCT_MEMBER(int, target_frame_id)
 
   // The origin of the source frame.
   IPC_STRUCT_MEMBER(string16, source_origin)
@@ -772,7 +781,7 @@ IPC_MESSAGE_ROUTED0(ViewMsg_MouseLockLost)
 IPC_MESSAGE_ROUTED1(ViewMsg_OrientationChangeEvent,
                     int /* orientation */)
 
-// Sent by the renderer when the parameters for vsync alignment have changed.
+// Sent by the browser when the parameters for vsync alignment have changed.
 IPC_MESSAGE_ROUTED2(ViewMsg_UpdateVSyncParameters,
                     base::TimeTicks /* timebase */,
                     base::TimeDelta /* interval */)
@@ -812,7 +821,7 @@ IPC_MESSAGE_ROUTED1(ViewMsg_SetRendererPrefs,
 
 // This passes a set of webkit preferences down to the renderer.
 IPC_MESSAGE_ROUTED1(ViewMsg_UpdateWebPreferences,
-                    webkit_glue::WebPreferences)
+                    WebPreferences)
 
 // Informs the renderer that the timezone has changed.
 IPC_MESSAGE_ROUTED0(ViewMsg_TimezoneChange)
@@ -825,9 +834,10 @@ IPC_MESSAGE_ROUTED0(ViewMsg_Close)
 // the view's current size.  The generated ViewHostMsg_PaintRect message will
 // have the IS_RESIZE_ACK flag set. It also receives the resizer rect so that
 // we don't have to fetch it every time WebKit asks for it.
-IPC_MESSAGE_ROUTED4(ViewMsg_Resize,
+IPC_MESSAGE_ROUTED5(ViewMsg_Resize,
                     gfx::Size /* new_size */,
                     gfx::Size /* physical_backing_size */,
+                    float /* overdraw_bottom_height */,
                     gfx::Rect /* resizer_rect */,
                     bool /* is_fullscreen */)
 
@@ -877,49 +887,13 @@ IPC_MESSAGE_ROUTED0(ViewMsg_UpdateRect_ACK)
 // compositor path.
 IPC_MESSAGE_ROUTED0(ViewMsg_SwapBuffers_ACK)
 
-// Sends an input event to the render widget.
-IPC_MESSAGE_ROUTED2(ViewMsg_HandleInputEvent,
-                    IPC::WebInputEventPointer /* event */,
-                    bool /* is_keyboard_shortcut */)
-
 // Tells the render widget that a smooth scroll completed.
-IPC_MESSAGE_ROUTED1(ViewMsg_SmoothScrollCompleted,
-                    int /* gesture_id */)
-
-// This message notifies the renderer that the next key event is bound to one
-// or more pre-defined edit commands. If the next key event is not handled
-// by webkit, the specified edit commands shall be executed against current
-// focused frame.
-// Parameters
-// * edit_commands (see chrome/common/edit_command_types.h)
-//   Contains one or more edit commands.
-// See third_party/WebKit/Source/WebCore/editing/EditorCommand.cpp for detailed
-// definition of webkit edit commands.
-//
-// This message must be sent just before sending a key event.
-IPC_MESSAGE_ROUTED1(ViewMsg_SetEditCommandsForNextKeyEvent,
-                    std::vector<content::EditCommand> /* edit_commands */)
-
-// Message payload is the name/value of a WebCore edit command to execute.
-IPC_MESSAGE_ROUTED2(ViewMsg_ExecuteEditCommand,
-                    std::string, /* name */
-                    std::string /* value */)
-
-IPC_MESSAGE_ROUTED0(ViewMsg_MouseCaptureLost)
-
-// TODO(darin): figure out how this meshes with RestoreFocus
-IPC_MESSAGE_ROUTED1(ViewMsg_SetFocus,
-                    bool /* enable */)
+IPC_MESSAGE_ROUTED0(ViewMsg_SmoothScrollCompleted)
 
 // Tells the renderer to focus the first (last if reverse is true) focusable
 // node.
 IPC_MESSAGE_ROUTED1(ViewMsg_SetInitialFocus,
                     bool /* reverse */)
-
-// Tells the renderer to scroll the currently focused node into rect only if
-// the currently focused node is a Text node (textfield, text area or content
-// editable divs).
-IPC_MESSAGE_ROUTED1(ViewMsg_ScrollFocusedEditableNodeIntoRect, gfx::Rect)
 
 // Executes custom context menu action that was provided from WebKit.
 IPC_MESSAGE_ROUTED2(ViewMsg_CustomContextMenuAction,
@@ -930,6 +904,9 @@ IPC_MESSAGE_ROUTED2(ViewMsg_CustomContextMenuAction,
 // the menu has been closed.
 IPC_MESSAGE_ROUTED1(ViewMsg_ContextMenuClosed,
                     content::CustomContextMenuContext /* custom_context */)
+
+// Sent to inform the renderer to invoke a context menu.
+IPC_MESSAGE_ROUTED0(ViewMsg_ShowContextMenu)
 
 // Tells the renderer to perform the specified navigation, interrupting any
 // existing navigation.
@@ -951,43 +928,9 @@ IPC_MESSAGE_ROUTED3(ViewMsg_Find,
 IPC_MESSAGE_ROUTED1(ViewMsg_StopFinding,
                     content::StopFindAction /* action */)
 
-// These messages are typically generated from context menus and request the
-// renderer to apply the specified operation to the current selection.
-IPC_MESSAGE_ROUTED0(ViewMsg_Undo)
-IPC_MESSAGE_ROUTED0(ViewMsg_Redo)
-IPC_MESSAGE_ROUTED0(ViewMsg_Cut)
-IPC_MESSAGE_ROUTED0(ViewMsg_Copy)
-#if defined(OS_MACOSX)
-IPC_MESSAGE_ROUTED0(ViewMsg_CopyToFindPboard)
-#endif
-IPC_MESSAGE_ROUTED0(ViewMsg_Paste)
-IPC_MESSAGE_ROUTED0(ViewMsg_PasteAndMatchStyle)
-// Replaces the selected region or a word around the cursor with the
-// specified string.
-IPC_MESSAGE_ROUTED1(ViewMsg_Replace,
-                    string16)
-// Replaces the misspelling in the selected region with the specified string.
-IPC_MESSAGE_ROUTED1(ViewMsg_ReplaceMisspelling,
-                    string16)
-IPC_MESSAGE_ROUTED0(ViewMsg_Delete)
-IPC_MESSAGE_ROUTED0(ViewMsg_SelectAll)
-
 // Replaces a date time input field.
 IPC_MESSAGE_ROUTED1(ViewMsg_ReplaceDateTime,
                     ViewHostMsg_DateTimeDialogValue_Params /* value */)
-
-IPC_MESSAGE_ROUTED0(ViewMsg_Unselect)
-
-// Requests the renderer to select the region between two points.
-// Expects a SelectRange_ACK message when finished.
-IPC_MESSAGE_ROUTED2(ViewMsg_SelectRange,
-                    gfx::Point /* start */,
-                    gfx::Point /* end */)
-
-// Requests the renderer to move the caret selection toward the point.
-// Expects a MoveCaret_ACK message when finished.
-IPC_MESSAGE_ROUTED1(ViewMsg_MoveCaret,
-                    gfx::Point /* location */)
 
 // Copies the image at location x, y to the clipboard (if there indeed is an
 // image at that location).
@@ -1043,16 +986,6 @@ IPC_MESSAGE_ROUTED1(ViewMsg_PostMessageEvent,
 // Requests that the RenderView's main frame sets its opener to null.
 IPC_MESSAGE_ROUTED0(ViewMsg_DisownOpener)
 
-// Sends a JSON serialized frame tree to RenderView along with the process id
-// and route id of the source renderer.
-//
-// This message must be sent to swapped out RenderViews every time the browser
-// receives a ViewHostMsg_FrameTreeUpdated message.
-IPC_MESSAGE_ROUTED3(ViewMsg_UpdateFrameTree,
-                    int, /* the child process id of the active renderer */
-                    int, /* route_id of the active renderer */
-                    std::string /* json encoded frame tree */)
-
 // Request for the renderer to evaluate an xpath to a frame and insert css
 // into that frame's document. See ViewMsg_ScriptEvalRequest for details on
 // allowed xpath expressions.
@@ -1087,7 +1020,9 @@ IPC_MESSAGE_ROUTED2(ViewMsg_SetZoomLevelForLoadingURL,
 
 // Set the zoom level for a particular url, so all render views
 // displaying this url can update their zoom levels to match.
-IPC_MESSAGE_CONTROL2(ViewMsg_SetZoomLevelForCurrentURL,
+// If scheme is empty, then only host is used for matching.
+IPC_MESSAGE_CONTROL3(ViewMsg_SetZoomLevelForCurrentURL,
+                     std::string /* scheme */,
                      std::string /* host */,
                      double /* zoom_level */)
 
@@ -1264,9 +1199,6 @@ IPC_MESSAGE_ROUTED1(ViewMsg_DisableScrollbarsForSmallWindows,
 IPC_MESSAGE_ROUTED1(ViewMsg_SetActive,
                     bool /* active */)
 
-IPC_MESSAGE_ROUTED1(ViewMsg_SetNavigationStartTime,
-                    base::TimeTicks /* browser_navigation_start */)
-
 // Response message to ViewHostMsg_CreateShared/DedicatedWorker.
 // Sent when the worker has started.
 IPC_MESSAGE_ROUTED0(ViewMsg_WorkerCreated)
@@ -1333,14 +1265,11 @@ IPC_MESSAGE_ROUTED3(ViewMsg_WindowSnapshotCompleted,
                     gfx::Size /* size */,
                     std::vector<unsigned char> /* png */)
 
-#if defined(OS_ANDROID)
-// Sent when the user clicks on the find result bar to activate a find result.
-// The point (x,y) is in fractions of the content document's width and height.
-IPC_MESSAGE_ROUTED3(ViewMsg_ActivateNearestFindResult,
-                    int /* request_id */,
-                    float /* x */,
-                    float /* y */)
+// Tells the renderer to suspend/resume the webkit timers.
+IPC_MESSAGE_CONTROL1(ViewMsg_SetWebKitSharedTimersSuspended,
+                     bool /* suspend */)
 
+#if defined(OS_ANDROID)
 // Sent when the browser wants the bounding boxes of the current find matches.
 //
 // If match rects are already cached on the browser side, |current_version|
@@ -1353,21 +1282,6 @@ IPC_MESSAGE_ROUTED3(ViewMsg_ActivateNearestFindResult,
 // final_update set to true).
 IPC_MESSAGE_ROUTED1(ViewMsg_FindMatchRects,
                     int /* current_version */)
-
-// Sent when the user wants to search for all occurrences of a word or find
-// the next result in a synchronous way. This method forces the UI thread in
-// the browser to wait for the renderer to reply, therefore blocking the UI.
-//
-// This functionality is required for compatibility with the legacy Android
-// WebView API. As this goes strongly against the Chromium design guidelines,
-// don't use this as inspiration.
-//
-IPC_SYNC_MESSAGE_ROUTED3_2(ViewMsg_SynchronousFind,
-                           int /* request_id */,
-                           string16 /* search_string */,
-                           WebKit::WebFindOptions /* options */,
-                           int /* match_count */,
-                           int /* active_ordinal */)
 
 // External popup menus.
 IPC_MESSAGE_ROUTED2(ViewMsg_SelectPopupMenuItems,
@@ -1382,11 +1296,19 @@ IPC_MESSAGE_ROUTED0(ViewMsg_UndoScrollFocusedEditableNodeIntoView)
 IPC_MESSAGE_ROUTED1(ViewMsg_ImeBatchStateChanged,
     bool /* is_begin */)
 
-// Notifies the renderer whether hiding the top controls is enabled.
-IPC_MESSAGE_ROUTED1(ViewMsg_EnableHidingTopControls,
-                    bool /* enable */)
+// Notifies the renderer whether hiding/showing the top controls is enabled
+// and whether or not to animate to the proper state.
+IPC_MESSAGE_ROUTED3(ViewMsg_UpdateTopControlsState,
+                    bool /* enable_hiding */,
+                    bool /* enable_showing */,
+                    bool /* animate */)
 
 IPC_MESSAGE_ROUTED0(ViewMsg_ShowImeIfNeeded)
+
+// Sent by the browser when the display vsync signal was triggered and the
+// renderer should generate a new frame.
+IPC_MESSAGE_ROUTED1(ViewMsg_DidVSync,
+                    base::TimeTicks /* frame_time */)
 
 #elif defined(OS_MACOSX)
 // Let the RenderView know its window has changed visibility.
@@ -1416,6 +1338,10 @@ IPC_MESSAGE_ROUTED1(ViewMsg_SelectPopupMenuItem,
 // Sent by the browser as a reply to ViewHostMsg_SwapCompositorFrame.
 IPC_MESSAGE_ROUTED1(ViewMsg_SwapCompositorFrameAck,
                     cc::CompositorFrameAck /* ack */)
+
+// Sent by the browser to ask the renderer for a snapshot of the current view.
+IPC_MESSAGE_ROUTED1(ViewMsg_Snapshot,
+                    gfx::Rect /* src_subrect */)
 
 // Notifies that the render process will shutdown
 IPC_SYNC_MESSAGE_CONTROL0_1(ViewMsg_WillQuit,
@@ -1453,12 +1379,10 @@ IPC_SYNC_MESSAGE_CONTROL1_2(ViewHostMsg_CreateFullscreenWidget,
 IPC_SYNC_MESSAGE_CONTROL0_1(ViewHostMsg_GenerateRoutingID,
                             int /* routing_id */)
 
-// Asks the browser for the default audio hardware buffer-size.
-IPC_SYNC_MESSAGE_CONTROL0_4(ViewHostMsg_GetAudioHardwareConfig,
-                            int /* output_buffer_size */,
-                            int /* output_sample_rate */,
-                            int /* input_sample_rate */,
-                            media::ChannelLayout /* input_channel_layout */)
+// Asks the browser for the default audio hardware configuration.
+IPC_SYNC_MESSAGE_CONTROL0_2(ViewHostMsg_GetAudioHardwareConfig,
+                            media::AudioParameters /* input parameters */,
+                            media::AudioParameters /* output parameters */)
 
 // Asks the browser for CPU usage of the renderer process in percents.
 IPC_SYNC_MESSAGE_CONTROL0_1(ViewHostMsg_GetCPUUsage,
@@ -1707,11 +1631,6 @@ IPC_MESSAGE_ROUTED0(ViewHostMsg_UpdateIsDelayed)
 IPC_MESSAGE_ROUTED1(ViewHostMsg_DidActivateAcceleratedCompositing,
                     bool /* true if the accelerated compositor is actve */)
 
-// Acknowledges receipt of a ViewMsg_HandleInputEvent message.
-IPC_MESSAGE_ROUTED2(ViewHostMsg_HandleInputEvent_ACK,
-                    WebKit::WebInputEvent::Type,
-                    content::InputEventAckState /* ack_result */)
-
 IPC_STRUCT_BEGIN(ViewHostMsg_BeginSmoothScroll_Params)
   IPC_STRUCT_MEMBER(bool, scroll_down)
   IPC_STRUCT_MEMBER(int, pixels_to_scroll)
@@ -1719,8 +1638,7 @@ IPC_STRUCT_BEGIN(ViewHostMsg_BeginSmoothScroll_Params)
   IPC_STRUCT_MEMBER(int, mouse_event_y)
 IPC_STRUCT_END()
 
-IPC_MESSAGE_ROUTED2(ViewHostMsg_BeginSmoothScroll,
-                    int /* gesture_id */,
+IPC_MESSAGE_ROUTED1(ViewHostMsg_BeginSmoothScroll,
                     ViewHostMsg_BeginSmoothScroll_Params /* params */)
 
 IPC_MESSAGE_ROUTED0(ViewHostMsg_Focus)
@@ -2150,6 +2068,12 @@ IPC_MESSAGE_ROUTED3(ViewHostMsg_AsyncOpenFile,
                     int /* flags */,
                     int /* message_id */)
 
+// Reply to a snapshot request containing whether snapshotting succeeded and the
+// SkBitmap if it succeeded.
+IPC_MESSAGE_ROUTED2(ViewHostMsg_Snapshot,
+                    bool, /* success */
+                    SkBitmap /* bitmap */)
+
 //---------------------------------------------------------------------------
 // Request for cryptographic operation messages:
 // These are messages from the renderer to the browser to perform a
@@ -2221,8 +2145,8 @@ IPC_MESSAGE_ROUTED3(ViewHostMsg_SendSerializedHtmlData,
                     int32 /* complete status */)
 
 // Notifies the browser of an event occurring in the media pipeline.
-IPC_MESSAGE_CONTROL1(ViewHostMsg_MediaLogEvent,
-                     media::MediaLogEvent /* event */)
+IPC_MESSAGE_CONTROL1(ViewHostMsg_MediaLogEvents,
+                     std::vector<media::MediaLogEvent> /* events */)
 
 // Requests to lock the mouse. Will result in a ViewMsg_LockMouse_ACK message
 // being sent back.
@@ -2257,37 +2181,6 @@ IPC_MESSAGE_ROUTED3(ViewHostMsg_PepperPluginHung,
                     base::FilePath /* path */,
                     bool /* is_hung */)
 
-// Chrome allows JavaScript calls to be routed across process boundaries. To
-// achieve this, each active RenderView in the source process has a swapped out
-// "mirror" in the target process. The active RenderView and its mirror
-// need to have identical frame tree structure, so calls originating in and
-// targeting subframes can be routed properly. This is achieved by each active
-// RenderView sending a ViewHostMsg_FrameTreeUpdated message to the browser,
-// which in turn sends the update to the corresponding mirror RenderView(s)
-// through the ViewMsg_UpdateFrameTree. We use best effort to keep these
-// trees synchronized across processes.
-//
-// When routing JavaScript calls across processes, the target information
-// is kept in the renderer process instead of the browser process. This design
-// was chosen because frame ids are allocated by the renderer process. If the
-// browser was to keep a mapping of the frame ids across processes, it would
-// require an extra IPC message with the newly allocated frame ids, as a
-// response to this particular message.
-//
-// The frame tree for a RenderView is serialized to JSON, so it can be sent to
-// the browser process. Each node in the tree is an object with three
-// properties:
-// * id - (integer) the frame identifier in this RenderView
-// * name - (string) the name of the frame, if one has been assigned
-// * subtree - an array of the same type of objects for each frame that is a
-//     direct child of the current frame. This property can be omitted if
-//     there are no direct child frames, so less data is transferred.
-//
-// This message must be sent on any events that modify the tree structure or
-// the names of any frames.
-IPC_MESSAGE_ROUTED1(ViewHostMsg_FrameTreeUpdated,
-                    std::string /* json encoded frame tree */)
-
 // Notifies that multiple touch targets may have been pressed, and to show
 // the disambiguation popup.
 IPC_MESSAGE_ROUTED3(ViewHostMsg_ShowDisambiguationPopup,
@@ -2320,6 +2213,16 @@ IPC_MESSAGE_ROUTED1(ViewHostMsg_FrameDetached,
 // first paint.
 IPC_MESSAGE_ROUTED0(ViewHostMsg_WillInsertBody)
 
+// Notification that the urls for the favicon of a site has been determined.
+IPC_MESSAGE_ROUTED2(ViewHostMsg_UpdateFaviconURL,
+                    int32 /* page_id */,
+                    std::vector<content::FaviconURL> /* candidates */)
+
+// Sent once a paint happens after the first non empty layout. In other words
+// after the page has painted something.
+IPC_MESSAGE_ROUTED1(ViewHostMsg_DidFirstVisuallyNonEmptyPaint,
+                    int /* page_id */)
+
 #if defined(OS_ANDROID)
 // Response to ViewMsg_FindMatchRects.
 //
@@ -2349,19 +2252,22 @@ IPC_MESSAGE_ROUTED1(ViewHostMsg_StartContentIntent,
 IPC_MESSAGE_ROUTED1(ViewHostMsg_DidChangeBodyBackgroundColor,
                     uint32  /* bg_color */)
 
-// Information about current document scroll, scale and size. Sent on a
-// best-effort basis.
-IPC_MESSAGE_ROUTED5(ViewHostMsg_UpdateFrameInfo,
-                    gfx::Vector2d /* scroll_offset */,
-                    float /* page_scale_factor */,
-                    float /* min_page_scale_factor */,
-                    float /* max_page_scale_factor */,
-                    gfx::Size /* content_size */)
-
 // This message is an ACK that the batch state change has been received by
 // the renderer and all IME related messages should be processed accordingly.
 IPC_MESSAGE_ROUTED1(ViewHostMsg_ImeBatchStateChanged_ACK,
                     bool /* is_begin */)
+
+// This message runs the MediaCodec for decoding audio for webaudio.
+IPC_MESSAGE_CONTROL3(ViewHostMsg_RunWebAudioMediaCodec,
+                     base::SharedMemoryHandle /* encoded_data_handle */,
+                     base::FileDescriptor /* pcm_output */,
+                     size_t /* data_size*/)
+
+// Sent by renderer to request a ViewMsg_VSync message for upcoming display
+// vsync events. If |enabled| is true, the vsync message will continue to be be
+// delivered until the notification is disabled.
+IPC_MESSAGE_ROUTED1(ViewHostMsg_SetVSyncNotificationEnabled,
+                    bool /* enabled */)
 
 #elif defined(OS_MACOSX)
 // Request that the browser load a font into shared memory for us.
@@ -2398,58 +2304,6 @@ IPC_MESSAGE_ROUTED2(ViewHostMsg_PluginFocusChanged,
 // Instructs the browser to start plugin IME.
 IPC_MESSAGE_ROUTED0(ViewHostMsg_StartPluginIme)
 
-//---------------------------------------------------------------------------
-// Messages related to accelerated plugins
-
-// This is sent from the renderer to the browser to allocate a fake
-// PluginWindowHandle on the browser side which is used to identify
-// the plugin to the browser later when backing store is allocated
-// or reallocated. |opaque| indicates whether the plugin's output is
-// considered to be opaque, as opposed to translucent. This message
-// is reused for rendering the accelerated compositor's output.
-// |root| indicates whether the output is supposed to cover the
-// entire window.
-IPC_SYNC_MESSAGE_ROUTED2_1(ViewHostMsg_AllocateFakePluginWindowHandle,
-                           bool /* opaque */,
-                           bool /* root */,
-                           gfx::PluginWindowHandle /* id */)
-
-// Destroys a fake window handle previously allocated using
-// AllocateFakePluginWindowHandle.
-IPC_MESSAGE_ROUTED1(ViewHostMsg_DestroyFakePluginWindowHandle,
-                    gfx::PluginWindowHandle /* id */)
-
-// This message, used on Mac OS X 10.5 and earlier (no IOSurface support),
-// is sent from the renderer to the browser on behalf of the plug-in
-// to indicate that a new backing store was allocated for that plug-in
-// instance.
-IPC_MESSAGE_ROUTED4(ViewHostMsg_AcceleratedSurfaceSetTransportDIB,
-                    gfx::PluginWindowHandle /* window */,
-                    int32 /* width */,
-                    int32 /* height */,
-                    TransportDIB::Handle /* handle for the DIB */)
-
-// This message, used on Mac OS X 10.6 and later (where IOSurface is
-// supported), is sent from the renderer to the browser on behalf of the
-// plug-in to indicate that a new backing store was allocated for that
-// plug-in instance.
-//
-// NOTE: the original intent was to pass a mach port as the IOSurface
-// identifier but it looks like that will be a lot of work. For now we pass an
-// ID from IOSurfaceGetID.
-IPC_MESSAGE_ROUTED4(ViewHostMsg_AcceleratedSurfaceSetIOSurface,
-                    gfx::PluginWindowHandle /* window */,
-                    int32 /* width */,
-                    int32 /* height */,
-                    uint64 /* surface_id */)
-
-// This message notifies the browser process that the plug-in
-// swapped the buffers associated with the given "window", which
-// should cause the browser to redraw the various plug-ins'
-// contents.
-IPC_MESSAGE_ROUTED2(ViewHostMsg_AcceleratedSurfaceBuffersSwapped,
-                    gfx::PluginWindowHandle /* window */,
-                    uint64 /* surface_handle */)
 #elif defined(OS_WIN)
 // Request that the given font characters be loaded by the browser so it's
 // cached by the OS. Please see RenderMessageFilter::OnPreCacheFontCharacters

@@ -112,9 +112,14 @@ SMInterface* SpdySM::FindOrMakeNewSMConnectionInterface(
   }
 
   sm_http_interface->InitSMInterface(this, server_idx);
-  sm_http_interface->InitSMConnection(NULL, sm_http_interface,
-                                      epoll_server_, -1,
-                                      server_ip, server_port, "", false);
+  sm_http_interface->InitSMConnection(NULL,
+                                      sm_http_interface,
+                                      epoll_server_,
+                                      -1,
+                                      server_ip,
+                                      server_port,
+                                      std::string(),
+                                      false);
 
   return sm_http_interface;
 }
@@ -185,7 +190,7 @@ int SpdySM::SpdyHandleNewStream(
 void SpdySM::OnStreamFrameData(SpdyStreamId stream_id,
                                const char* data,
                                size_t len,
-                               SpdyDataFlags flags) {
+                               bool fin) {
   VLOG(2) << ACCEPTOR_CLIENT_IDENT << "SpdySM: StreamData(" << stream_id
           << ", [" << len << "])";
   StreamToSmif::iterator it = stream_to_smif_.find(stream_id);

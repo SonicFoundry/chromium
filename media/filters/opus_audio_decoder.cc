@@ -243,6 +243,8 @@ static void ParseOpusHeader(const uint8* data, int data_size,
 OpusAudioDecoder::OpusAudioDecoder(
     const scoped_refptr<base::MessageLoopProxy>& message_loop)
     : message_loop_(message_loop),
+      weak_factory_(this),
+      demuxer_stream_(NULL),
       opus_decoder_(NULL),
       bits_per_channel_(0),
       channel_layout_(CHANNEL_LAYOUT_NONE),
@@ -253,7 +255,7 @@ OpusAudioDecoder::OpusAudioDecoder(
 }
 
 void OpusAudioDecoder::Initialize(
-    const scoped_refptr<DemuxerStream>& stream,
+    DemuxerStream* stream,
     const PipelineStatusCB& status_cb,
     const StatisticsCB& statistics_cb) {
   DCHECK(message_loop_->BelongsToCurrentThread());
@@ -266,6 +268,7 @@ void OpusAudioDecoder::Initialize(
     CHECK(false);
   }
 
+  weak_this_ = weak_factory_.GetWeakPtr();
   demuxer_stream_ = stream;
 
   if (!ConfigureDecoder()) {
@@ -318,7 +321,7 @@ OpusAudioDecoder::~OpusAudioDecoder() {
 
 void OpusAudioDecoder::ReadFromDemuxerStream() {
   DCHECK(!read_cb_.is_null());
-  demuxer_stream_->Read(base::Bind(&OpusAudioDecoder::BufferReady, this));
+  demuxer_stream_->Read(base::Bind(&OpusAudioDecoder::BufferReady, weak_this_));
 }
 
 void OpusAudioDecoder::BufferReady(

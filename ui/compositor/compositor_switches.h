@@ -10,12 +10,11 @@
 namespace switches {
 
 COMPOSITOR_EXPORT extern const char kDisableTestCompositor[];
-COMPOSITOR_EXPORT extern const char kUIEnablePartialSwap[];
-COMPOSITOR_EXPORT extern const char kUIShowFPSCounter[];
-COMPOSITOR_EXPORT extern const char kUIShowLayerBorders[];
-COMPOSITOR_EXPORT extern const char kUIShowLayerTree[];
-COMPOSITOR_EXPORT extern const char kUIEnablePerTilePainting[];
+COMPOSITOR_EXPORT extern const char kUIDisableThreadedCompositing[];
+COMPOSITOR_EXPORT extern const char kUIEnableSoftwareCompositing[];
 COMPOSITOR_EXPORT extern const char kUIEnableThreadedCompositing[];
+COMPOSITOR_EXPORT extern const char kUIMaxFramesPending[];
+COMPOSITOR_EXPORT extern const char kUIShowPaintRects[];
 
 }  // namespace switches
 

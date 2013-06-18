@@ -113,6 +113,13 @@ class NativeAppWindowCocoa : public NativeAppWindow {
   virtual void RenderViewHostChanged() OVERRIDE;
   virtual gfx::Insets GetFrameInsets() const OVERRIDE;
 
+  // WebContentsModalDialogHost implementation.
+  virtual gfx::Point GetDialogPosition(const gfx::Size& size) OVERRIDE;
+  virtual void AddObserver(
+      WebContentsModalDialogHostObserver* observer) OVERRIDE;
+  virtual void RemoveObserver(
+      WebContentsModalDialogHostObserver* observer) OVERRIDE;
+
  private:
   virtual ~NativeAppWindowCocoa();
 
@@ -143,6 +150,7 @@ class NativeAppWindowCocoa : public NativeAppWindow {
 
   gfx::Size min_size_;
   gfx::Size max_size_;
+  bool resizable_;
 
   scoped_nsobject<NativeAppWindowController> window_controller_;
   NSInteger attention_request_id_;  // identifier from requestUserAttention

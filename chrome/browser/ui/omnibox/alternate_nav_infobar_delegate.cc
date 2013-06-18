@@ -5,7 +5,7 @@
 #include "chrome/browser/ui/omnibox/alternate_nav_infobar_delegate.h"
 
 #include "base/utf_string_conversions.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "content/public/browser/web_contents.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
@@ -49,7 +49,7 @@ bool AlternateNavInfoBarDelegate::LinkClicked(
       // the future.
       content::PAGE_TRANSITION_TYPED,
       false);
-  owner()->GetWebContents()->OpenURL(params);
+  web_contents()->OpenURL(params);
 
   // We should always close, even if the navigation did not occur within this
   // WebContents.

@@ -11,8 +11,8 @@
 #include "base/threading/platform_thread.h"
 #include "base/utf_string_conversions.h"
 #include "net/base/auth.h"
-#include "net/base/host_resolver.h"
 #include "net/base/net_util.h"
+#include "net/dns/host_resolver.h"
 #include "net/http/http_auth_handler.h"
 #include "net/http/http_auth_handler_factory.h"
 #include "net/http/http_network_session.h"
@@ -456,8 +456,8 @@ bool HttpAuthController::SelectNextAuthIdentityToTry() {
     identity_.source = HttpAuth::IDENT_SRC_URL;
     identity_.invalid = false;
     // Extract the username:password from the URL.
-    string16 username;
-    string16 password;
+    base::string16 username;
+    base::string16 password;
     GetIdentityFromURL(auth_url_, &username, &password);
     identity_.credentials.Set(username, password);
     embedded_identity_used_ = true;

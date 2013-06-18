@@ -6,12 +6,13 @@
 
 #import "base/auto_reset.h"
 #include "base/debug/crash_logging.h"
+#include "base/debug/stack_trace.h"
 #import "base/logging.h"
 #import "base/mac/scoped_nsexception_enabler.h"
 #import "base/memory/scoped_nsobject.h"
 #import "base/metrics/histogram.h"
 #include "base/stringprintf.h"
-#import "base/sys_string_conversions.h"
+#import "base/strings/sys_string_conversions.h"
 #import "chrome/browser/app_controller_mac.h"
 #include "chrome/browser/ui/tab_contents/tab_contents_iterator.h"
 #include "chrome/common/crash_keys.h"
@@ -66,6 +67,8 @@ static IMP gOriginalInitIMP = NULL;
     std::string value = base::StringPrintf("%s reason %s",
         [aName UTF8String], [aReason UTF8String]);
     base::debug::SetCrashKeyValue(crash_keys::mac::kNSException, value);
+    base::debug::SetCrashKeyToStackTrace(crash_keys::mac::kNSExceptionTrace,
+                                         base::debug::StackTrace());
 
     // Force crash for selected exceptions to generate crash dumps.
     BOOL fatal = NO;

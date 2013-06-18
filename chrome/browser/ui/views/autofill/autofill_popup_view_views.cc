@@ -28,21 +28,32 @@ const SkColor kValueTextColor = SkColorSetARGB(0xFF, 0x00, 0x00, 0x00);
 
 }  // namespace
 
+namespace autofill {
+
 AutofillPopupViewViews::AutofillPopupViewViews(
-    AutofillPopupController* controller)
+    AutofillPopupController* controller, views::Widget* observing_widget)
     : controller_(controller),
-      observing_widget_(NULL) {}
+      observing_widget_(observing_widget) {}
 
 AutofillPopupViewViews::~AutofillPopupViewViews() {
-  if (observing_widget_)
-    observing_widget_->RemoveObserver(this);
+  if (controller_) {
+    controller_->ViewDestroyed();
 
-  controller_->ViewDestroyed();
+    HideInternal();
+  }
 }
 
 void AutofillPopupViewViews::Hide() {
+  // The controller is no longer valid after it hides us.
+  controller_ = NULL;
+
+  HideInternal();
+
   if (GetWidget()) {
-    // This deletes |this|.
+    // Don't call CloseNow() because some of the functions higher up the stack
+    // assume the the widget is still valid after this point.
+    // http://crbug.com/229224
+    // NOTE: This deletes |this|.
     GetWidget()->Close();
   } else {
     delete this;
@@ -50,6 +61,9 @@ void AutofillPopupViewViews::Hide() {
 }
 
 void AutofillPopupViewViews::OnPaint(gfx::Canvas* canvas) {
+  if (!controller_)
+    return;
+
   canvas->DrawColor(kPopupBackground);
   OnPaintBorder(canvas);
 
@@ -66,11 +80,15 @@ void AutofillPopupViewViews::OnPaint(gfx::Canvas* canvas) {
 }
 
 void AutofillPopupViewViews::OnMouseCaptureLost() {
-  controller_->MouseExitedPopup();
+  if (controller_)
+    controller_->MouseExitedPopup();
 }
 
 bool AutofillPopupViewViews::OnMouseDragged(const ui::MouseEvent& event) {
-  if (HitTestPoint(gfx::Point(event.x(), event.y()))) {
+  if (!controller_)
+    return false;
+
+  if (HitTestPoint(event.location())) {
     controller_->MouseHovered(event.x(), event.y());
 
     // We must return true in order to get future OnMouseDragged and
@@ -84,11 +102,13 @@ bool AutofillPopupViewViews::OnMouseDragged(const ui::MouseEvent& event) {
 }
 
 void AutofillPopupViewViews::OnMouseExited(const ui::MouseEvent& event) {
-  controller_->MouseExitedPopup();
+  if (controller_)
+    controller_->MouseExitedPopup();
 }
 
 void AutofillPopupViewViews::OnMouseMoved(const ui::MouseEvent& event) {
-  controller_->MouseHovered(event.x(), event.y());
+  if (controller_)
+    controller_->MouseHovered(event.x(), event.y());
 }
 
 bool AutofillPopupViewViews::OnMousePressed(const ui::MouseEvent& event) {
@@ -97,45 +117,40 @@ bool AutofillPopupViewViews::OnMousePressed(const ui::MouseEvent& event) {
 }
 
 void AutofillPopupViewViews::OnMouseReleased(const ui::MouseEvent& event) {
+  if (!controller_)
+    return;
+
   // We only care about the left click.
   if (event.IsOnlyLeftMouseButton() &&
-      HitTestPoint(gfx::Point(event.x(), event.y())))
+      HitTestPoint(event.location()))
     controller_->MouseClicked(event.x(), event.y());
 }
 
 void AutofillPopupViewViews::OnWidgetBoundsChanged(
     views::Widget* widget,
     const gfx::Rect& new_bounds) {
-  Hide();
+  controller_->Hide();
 }
 
 void AutofillPopupViewViews::Show() {
   if (!GetWidget()) {
+    observing_widget_->AddObserver(this);
+
     // The widget is destroyed by the corresponding NativeWidget, so we use
     // a weak pointer to hold the reference and don't have to worry about
     // deletion.
     views::Widget* widget = new views::Widget;
     views::Widget::InitParams params(views::Widget::InitParams::TYPE_POPUP);
     params.delegate = this;
-    params.transparent = true;
-    // Note: since there is no parent specified, this popup must handle deleting
-    // itself.
-    params.context = controller_->container_view();
+    params.parent = controller_->container_view();
     widget->Init(params);
     widget->SetContentsView(this);
-    widget->SetBounds(controller_->popup_bounds());
-    widget->Show();
-
-    // Setup an observer to check for when the browser moves or changes size,
-    // since the popup should always be hidden in those cases.
-    observing_widget_ = views::Widget::GetTopLevelWidgetForNativeView(
-        controller_->container_view());
-    observing_widget_->AddObserver(this);
   }
 
   set_border(views::Border::CreateSolidBorder(kBorderThickness, kBorderColor));
 
   UpdateBoundsAndRedrawPopup();
+  GetWidget()->Show();
 }
 
 void AutofillPopupViewViews::InvalidateRow(size_t row) {
@@ -145,6 +160,12 @@ void AutofillPopupViewViews::InvalidateRow(size_t row) {
 void AutofillPopupViewViews::UpdateBoundsAndRedrawPopup() {
   GetWidget()->SetBounds(controller_->popup_bounds());
   SchedulePaint();
+}
+
+void AutofillPopupViewViews::HideInternal() {
+  AutofillPopupView::Hide();
+
+  observing_widget_->RemoveObserver(this);
 }
 
 void AutofillPopupViewViews::DrawAutofillEntry(gfx::Canvas* canvas,
@@ -173,23 +194,9 @@ void AutofillPopupViewViews::DrawAutofillEntry(gfx::Canvas* canvas,
   // Use this to figure out where all the other Autofill items should be placed.
   int x_align_left = is_rtl ? kEndPadding : entry_rect.width() - kEndPadding;
 
-  // Draw the delete icon, if one is needed.
+  // Draw the Autofill icon, if one exists
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   int row_height = controller_->GetRowBounds(index).height();
-  if (controller_->CanDelete(index)) {
-    x_align_left += is_rtl ? 0 : -kDeleteIconWidth;
-
-    // TODO(csharp): Create a custom resource for the delete icon.
-    // http://crbug.com/131801
-    canvas->DrawImageInt(
-        *rb.GetImageSkiaNamed(IDR_CLOSE_BAR),
-        x_align_left,
-        entry_rect.y() + (row_height - kDeleteIconHeight) / 2);
-
-    x_align_left += is_rtl ? kDeleteIconWidth + kIconPadding : -kIconPadding;
-  }
-
-  // Draw the Autofill icon, if one exists
   if (!controller_->icons()[index].empty()) {
     int icon = controller_->GetIconResourceID(controller_->icons()[index]);
     DCHECK_NE(-1, icon);
@@ -222,5 +229,16 @@ void AutofillPopupViewViews::DrawAutofillEntry(gfx::Canvas* canvas,
 
 AutofillPopupView* AutofillPopupView::Create(
     AutofillPopupController* controller) {
-  return new AutofillPopupViewViews(controller);
+  views::Widget* observing_widget =
+      views::Widget::GetTopLevelWidgetForNativeView(
+          controller->container_view());
+
+  // If the top level widget can't be found, cancel the popup since we can't
+  // fully set it up.
+  if (!observing_widget)
+    return NULL;
+
+  return new AutofillPopupViewViews(controller, observing_widget);
 }
+
+}  // namespace autofill

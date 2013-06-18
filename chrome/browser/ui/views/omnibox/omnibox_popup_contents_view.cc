@@ -4,12 +4,12 @@
 
 #include "chrome/browser/ui/views/omnibox/omnibox_popup_contents_view.h"
 
+#include "chrome/browser/search/search.h"
 #include "chrome/browser/ui/omnibox/omnibox_popup_non_view.h"
 #include "chrome/browser/ui/omnibox/omnibox_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_result_view.h"
 #include "chrome/browser/ui/views/omnibox/touch_omnibox_popup_contents_view.h"
-#include "chrome/browser/ui/search/search.h"
 #include "ui/base/theme_provider.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/image/image.h"
@@ -64,7 +64,7 @@ OmniboxPopupView* OmniboxPopupContentsView::Create(
     OmniboxView* omnibox_view,
     OmniboxEditModel* edit_model,
     views::View* location_bar) {
-  if (chrome::search::IsInstantExtendedAPIEnabled(edit_model->profile()))
+  if (chrome::IsInstantExtendedAPIEnabled())
     return new OmniboxPopupNonView(edit_model);
 
   OmniboxPopupContentsView* view = NULL;
@@ -87,11 +87,10 @@ OmniboxPopupContentsView::OmniboxPopupContentsView(
     views::View* location_bar)
     : model_(new OmniboxPopupModel(this, edit_model)),
       omnibox_view_(omnibox_view),
-      profile_(edit_model->profile()),
       location_bar_(location_bar),
       font_(font.DeriveFont(kEditFontAdjust)),
       ignore_mouse_drag_(false),
-      ALLOW_THIS_IN_INITIALIZER_LIST(size_animation_(this)) {
+      size_animation_(this) {
   bubble_border_ = new views::BubbleBorder(views::BubbleBorder::NONE,
       views::BubbleBorder::NO_SHADOW, SK_ColorWHITE);
   set_border(const_cast<views::BubbleBorder*>(bubble_border_));
@@ -303,6 +302,11 @@ views::View* OmniboxPopupContentsView::GetEventHandlerForPoint(
   return this;
 }
 
+views::View* OmniboxPopupContentsView::GetTooltipHandlerForPoint(
+    const gfx::Point& point) {
+  return NULL;
+}
+
 bool OmniboxPopupContentsView::OnMousePressed(
     const ui::MouseEvent& event) {
   ignore_mouse_drag_ = false;  // See comment on |ignore_mouse_drag_| in header.
@@ -388,7 +392,7 @@ OmniboxResultView* OmniboxPopupContentsView::CreateResultView(
     OmniboxResultViewModel* model,
     int model_index,
     const gfx::Font& font) {
-  return new OmniboxResultView(model, model_index, font);
+  return new OmniboxResultView(model, model_index, location_bar_, font);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

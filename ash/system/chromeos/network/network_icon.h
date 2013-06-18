@@ -41,8 +41,12 @@ gfx::ImageSkia GetImageForDisconnectedNetwork(IconType icon_type,
                                               const std::string& network_type);
 
 // Returns the label for |network| based on |icon_type|. |network| can be NULL.
-string16 GetLabelForNetwork(const chromeos::NetworkState* network,
-                            IconType icon_type);
+base::string16 GetLabelForNetwork(const chromeos::NetworkState* network,
+                                  IconType icon_type);
+
+// Updates and returns the appropriate message id if the cellular network
+// is uninitialized.
+int GetCellularUninitializedMsg();
 
 }  // namespace network_icon
 }  // namespace ash

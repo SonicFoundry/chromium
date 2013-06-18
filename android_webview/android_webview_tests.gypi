@@ -4,34 +4,62 @@
 {
   'targets': [
     {
+      'target_name': 'android_webview_apk',
+      'type': 'none',
+      'dependencies': [
+        'libwebviewchromium',
+        'android_webview_java',
+        'android_webview_pak',
+      ],
+      'variables': {
+        'apk_name': 'AndroidWebView',
+        'java_in_dir': 'test/shell',
+        'native_lib_target': 'libwebviewchromium',
+        'resource_dir': 'test/shell/res',
+        'additional_input_paths': [
+          '<(PRODUCT_DIR)/android_webview_apk/assets/webviewchromium.pak',
+          '<(PRODUCT_DIR)/android_webview_apk/assets/asset_file.html',
+          '<(PRODUCT_DIR)/android_webview_apk/assets/asset_icon.png',
+          '<(PRODUCT_DIR)/android_webview_apk/assets/full_screen_video_test.html',
+        ],
+      },
+      'copies': [
+        {
+          'destination': '<(PRODUCT_DIR)/android_webview_apk/assets',
+          'files': [
+            '<(java_in_dir)/assets/asset_file.html',
+            '<(java_in_dir)/assets/asset_icon.png',
+            '<(java_in_dir)/assets/full_screen_video_test.html',
+          ],
+        },
+      ],
+      'includes': [ '../build/java_apk.gypi' ],
+    },
+    {
+      # android_webview_apk creates a .jar as a side effect. Any java
+      # targets that need that .jar in their classpath should depend on this
+      # target. For more details see the chromium_testshell_java target.
+      'target_name': 'android_webview_apk_java',
+      'type': 'none',
+      'dependencies': [
+        'android_webview_apk',
+      ],
+      'includes': [ '../build/apk_fake_jar.gypi' ],
+    },
+    {
       'target_name': 'android_webview_test_apk',
       'type': 'none',
       'dependencies': [
         '../base/base.gyp:base_java_test_support',
         '../content/content.gyp:content_java_test_support',
         '../net/net.gyp:net_java_test_support',
-       'android_webview_java',
-        'libwebviewchromium',
+        'android_webview_apk_java',
       ],
       'variables': {
         'apk_name': 'AndroidWebViewTest',
         'java_in_dir': '../android_webview/javatests',
-        'resource_dir': 'res',
         'is_test_apk': 1,
-        'additional_input_paths': [
-          '<(PRODUCT_DIR)/android_webview_test_apk/assets/asset_file.html',
-          '<(PRODUCT_DIR)/android_webview_test_apk/assets/asset_icon.png',
-        ],
       },
-      'copies': [
-        {
-          'destination': '<(PRODUCT_DIR)/android_webview_test_apk/assets',
-          'files': [
-            '<(java_in_dir)/assets/asset_file.html',
-            '<(java_in_dir)/assets/asset_icon.png',
-          ],
-        },
-      ],
       'includes': [ '../build/java_apk.gypi' ],
     },
     {
@@ -78,7 +106,7 @@
           '../android_webview/unittestjava/src/org/chromium/android_webview/unittest/InputStreamUnittest.java',
       ],
       'variables': {
-        'jni_gen_dir': 'android_webview_unittests',
+        'jni_gen_package': 'android_webview_unittests',
       },
       'includes': [ '../build/jni_generator.gypi' ],
     },

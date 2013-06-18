@@ -64,6 +64,7 @@ class CONTENT_EXPORT WebContentsViewGuest
   virtual void SetPageTitle(const string16& title) OVERRIDE;
   virtual void RenderViewCreated(RenderViewHost* host) OVERRIDE;
   virtual void RenderViewSwappedIn(RenderViewHost* host) OVERRIDE;
+  virtual void SetOverscrollControllerEnabled(bool enabled) OVERRIDE;
 #if defined(OS_MACOSX)
   virtual bool IsEventTracking() const OVERRIDE;
   virtual void CloseTabAfterEventTracking() OVERRIDE;
@@ -96,6 +97,7 @@ class CONTENT_EXPORT WebContentsViewGuest
   // The platform dependent view backing this WebContentsView.
   // Calls to this WebContentsViewGuest are forwarded to |platform_view_|.
   WebContentsViewPort* platform_view_;
+  gfx::Size size_;
 
   DISALLOW_COPY_AND_ASSIGN(WebContentsViewGuest);
 };

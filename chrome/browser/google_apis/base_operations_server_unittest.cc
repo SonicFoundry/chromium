@@ -11,6 +11,7 @@
 #include "base/values.h"
 #include "chrome/browser/google_apis/operation_registry.h"
 #include "chrome/browser/google_apis/operation_runner.h"
+#include "chrome/browser/google_apis/task_util.h"
 #include "chrome/browser/google_apis/test_server/http_request.h"
 #include "chrome/browser/google_apis/test_server/http_response.h"
 #include "chrome/browser/google_apis/test_server/http_server.h"
@@ -27,20 +28,6 @@ namespace {
 const char kTestAuthToken[] = "testtoken";
 const char kTestUserAgent[] = "test-user-agent";
 
-// Copies the results from DownloadActionCallback and quit the message loop.
-// The contents of the download cache file are copied to a string, and the
-// file is removed.
-void CopyResultsFromDownloadActionCallbackAndQuit(
-    GDataErrorCode* out_result_code,
-    std::string* contents,
-    GDataErrorCode result_code,
-    const base::FilePath& cache_file_path) {
-  *out_result_code = result_code;
-  file_util::ReadFileToString(cache_file_path, contents);
-  file_util::Delete(cache_file_path, false);
-  MessageLoop::current()->Quit();
-}
-
 }  // namespace
 
 class BaseOperationsServerTest : public testing::Test {
@@ -48,7 +35,9 @@ class BaseOperationsServerTest : public testing::Test {
   BaseOperationsServerTest()
       : ui_thread_(content::BrowserThread::UI, &message_loop_),
         file_thread_(content::BrowserThread::FILE),
-        io_thread_(content::BrowserThread::IO) {
+        io_thread_(content::BrowserThread::IO),
+        test_server_(content::BrowserThread::GetMessageLoopProxyForThread(
+                    content::BrowserThread::IO)) {
   }
 
   virtual void SetUp() OVERRIDE {
@@ -68,7 +57,7 @@ class BaseOperationsServerTest : public testing::Test {
   }
 
   virtual void TearDown() OVERRIDE {
-    test_server_.ShutdownAndWaitUntilComplete();
+    EXPECT_TRUE(test_server_.ShutdownAndWaitUntilComplete());
     request_context_getter_ = NULL;
   }
 
@@ -94,15 +83,16 @@ class BaseOperationsServerTest : public testing::Test {
 
 TEST_F(BaseOperationsServerTest, DownloadFileOperation_ValidFile) {
   GDataErrorCode result_code = GDATA_OTHER_ERROR;
-  std::string contents;
+  base::FilePath temp_file;
   DownloadFileOperation* operation = new DownloadFileOperation(
       &operation_registry_,
       request_context_getter_.get(),
-      base::Bind(&CopyResultsFromDownloadActionCallbackAndQuit,
-                 &result_code,
-                 &contents),
+      CreateComposedCallback(
+          base::Bind(&test_util::RunAndQuit),
+          test_util::CreateCopyResultCallback(&result_code, &temp_file)),
       GetContentCallback(),
-      test_server_.GetURL("/files/gdata/testfile.txt"),
+      ProgressCallback(),
+      test_server_.GetURL("/files/chromeos/gdata/testfile.txt"),
       base::FilePath::FromUTF8Unsafe("/dummy/gdata/testfile.txt"),
       GetTestCachedFilePath(
           base::FilePath::FromUTF8Unsafe("cached_testfile.txt")));
@@ -110,12 +100,16 @@ TEST_F(BaseOperationsServerTest, DownloadFileOperation_ValidFile) {
                    base::Bind(&test_util::DoNothingForReAuthenticateCallback));
   MessageLoop::current()->Run();
 
+  std::string contents;
+  file_util::ReadFileToString(temp_file, &contents);
+  file_util::Delete(temp_file, false);
+
   EXPECT_EQ(HTTP_SUCCESS, result_code);
   EXPECT_EQ(test_server::METHOD_GET, http_request_.method);
-  EXPECT_EQ("/files/gdata/testfile.txt", http_request_.relative_url);
+  EXPECT_EQ("/files/chromeos/gdata/testfile.txt", http_request_.relative_url);
 
   const base::FilePath expected_path =
-      test_util::GetTestFilePath("gdata/testfile.txt");
+      test_util::GetTestFilePath("chromeos/gdata/testfile.txt");
   std::string expected_contents;
   file_util::ReadFileToString(expected_path, &expected_contents);
   EXPECT_EQ(expected_contents, contents);
@@ -125,15 +119,16 @@ TEST_F(BaseOperationsServerTest, DownloadFileOperation_ValidFile) {
 TEST_F(BaseOperationsServerTest,
        DISABLED_DownloadFileOperation_NonExistentFile) {
   GDataErrorCode result_code = GDATA_OTHER_ERROR;
-  std::string contents;
+  base::FilePath temp_file;
   DownloadFileOperation* operation = new DownloadFileOperation(
       &operation_registry_,
       request_context_getter_.get(),
-      base::Bind(&CopyResultsFromDownloadActionCallbackAndQuit,
-                 &result_code,
-                 &contents),
+      CreateComposedCallback(
+          base::Bind(&test_util::RunAndQuit),
+          test_util::CreateCopyResultCallback(&result_code, &temp_file)),
       GetContentCallback(),
-      test_server_.GetURL("/files/gdata/no-such-file.txt"),
+      ProgressCallback(),
+      test_server_.GetURL("/files/chromeos/gdata/no-such-file.txt"),
       base::FilePath::FromUTF8Unsafe("/dummy/gdata/no-such-file.txt"),
       GetTestCachedFilePath(
           base::FilePath::FromUTF8Unsafe("cache_no-such-file.txt")));
@@ -141,9 +136,14 @@ TEST_F(BaseOperationsServerTest,
                    base::Bind(&test_util::DoNothingForReAuthenticateCallback));
   MessageLoop::current()->Run();
 
+  std::string contents;
+  file_util::ReadFileToString(temp_file, &contents);
+  file_util::Delete(temp_file, false);
+
   EXPECT_EQ(HTTP_NOT_FOUND, result_code);
   EXPECT_EQ(test_server::METHOD_GET, http_request_.method);
-  EXPECT_EQ("/files/gdata/no-such-file.txt", http_request_.relative_url);
+  EXPECT_EQ("/files/chromeos/gdata/no-such-file.txt",
+            http_request_.relative_url);
   // Do not verify the not found message.
 }
 

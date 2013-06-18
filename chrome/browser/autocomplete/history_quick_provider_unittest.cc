@@ -28,6 +28,7 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chrome/test/base/ui_test_utils.h"
 #include "content/public/test/test_browser_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -110,8 +111,9 @@ class HistoryQuickProviderTest : public testing::Test,
     std::set<std::string> matches_;
   };
 
-  static ProfileKeyedService* CreateTemplateURLService(Profile* profile) {
-    return new TemplateURLService(profile);
+  static ProfileKeyedService* CreateTemplateURLService(
+      content::BrowserContext* profile) {
+    return new TemplateURLService(static_cast<Profile*>(profile));
   }
 
   virtual void SetUp();
@@ -149,7 +151,7 @@ void HistoryQuickProviderTest::SetUp() {
   profile_.reset(new TestingProfile());
   profile_->CreateHistoryService(true, false);
   profile_->CreateBookmarkModel(true);
-  profile_->BlockUntilBookmarkModelLoaded();
+  ui_test_utils::WaitForBookmarkModelToLoad(profile_.get());
   profile_->BlockUntilHistoryIndexIsRefreshed();
   history_service_ =
       HistoryServiceFactory::GetForProfile(profile_.get(),
@@ -173,7 +175,7 @@ bool HistoryQuickProviderTest::UpdateURL(const history::URLRow& row) {
   DCHECK(index);
   history::URLIndexPrivateData* private_data = index->private_data();
   DCHECK(private_data);
-  return private_data->UpdateURL(row, index->languages_,
+  return private_data->UpdateURL(history_service_, row, index->languages_,
                                  index->scheme_whitelist_);
 }
 
@@ -227,8 +229,8 @@ void HistoryQuickProviderTest::RunTest(const string16 text,
                                        string16 expected_fill_into_edit) {
   SCOPED_TRACE(text);  // Minimal hint to query being run.
   MessageLoop::current()->RunUntilIdle();
-  AutocompleteInput input(text, string16::npos, string16(), false, false, true,
-                          AutocompleteInput::ALL_MATCHES);
+  AutocompleteInput input(text, string16::npos, string16(), GURL(),false, false,
+                          true, AutocompleteInput::ALL_MATCHES);
   provider_->Start(input, false);
   EXPECT_TRUE(provider_->done());
 

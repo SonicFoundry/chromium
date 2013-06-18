@@ -18,8 +18,8 @@
 #include "base/observer_list.h"
 #include "content/public/renderer/render_view_observer.h"
 #include "content/renderer/mouse_lock_dispatcher.h"
-#include "content/renderer/pepper/pepper_parent_context_provider.h"
 #include "content/renderer/render_view_pepper_helper.h"
+#include "ppapi/c/pp_file_info.h"
 #include "ppapi/shared_impl/private/ppb_tcp_server_socket_shared.h"
 #include "ppapi/shared_impl/private/tcp_socket_private_impl.h"
 #include "ui/base/ime/text_input_type.h"
@@ -53,6 +53,7 @@ struct WebCompositionUnderline;
 }
 
 namespace content {
+class ContextProviderCommandBuffer;
 class GamepadSharedMemoryReader;
 class PepperBrokerImpl;
 class PepperDeviceEnumerationEventHandler;
@@ -62,7 +63,6 @@ class PepperPluginDelegateImpl
     : public webkit::ppapi::PluginDelegate,
       public RenderViewPepperHelper,
       public base::SupportsWeakPtr<PepperPluginDelegateImpl>,
-      public PepperParentContextProvider,
       public RenderViewObserver {
  public:
   explicit PepperPluginDelegateImpl(RenderViewImpl* render_view);
@@ -205,16 +205,21 @@ class PepperPluginDelegateImpl
       const GURL& path,
       int flags,
       const AsyncOpenFileSystemURLCallback& callback) OVERRIDE;
-  virtual bool OpenFileSystem(
-      const GURL& origin_url,
-      fileapi::FileSystemType type,
-      long long size,
-      fileapi::FileSystemCallbackDispatcher* dispatcher) OVERRIDE;
+  virtual bool IsFileSystemOpened(PP_Instance instance,
+                                  PP_Resource resource) const OVERRIDE;
+  virtual PP_FileSystemType GetFileSystemType(
+      PP_Instance instance,
+      PP_Resource resource) const OVERRIDE;
+  virtual GURL GetFileSystemRootUrl(PP_Instance instance,
+                                    PP_Resource resource) const OVERRIDE;
   virtual bool MakeDirectory(
       const GURL& path,
       bool recursive,
       fileapi::FileSystemCallbackDispatcher* dispatcher) OVERRIDE;
   virtual bool Query(
+      const GURL& path,
+      fileapi::FileSystemCallbackDispatcher* dispatcher) OVERRIDE;
+  virtual bool ReadDirectoryEntries(
       const GURL& path,
       fileapi::FileSystemCallbackDispatcher* dispatcher) OVERRIDE;
   virtual bool Touch(
@@ -381,16 +386,20 @@ class PepperPluginDelegateImpl
       int plugin_child_id,
       bool is_external);
 
-  // Implementation of PepperParentContextProvider.
-  virtual WebGraphicsContext3DCommandBufferImpl*
-      GetParentContextForPlatformContext3D() OVERRIDE;
-
   MouseLockDispatcher::LockTarget* GetOrCreateLockTargetAdapter(
       webkit::ppapi::PluginInstance* instance);
   void UnSetAndDeleteLockTargetAdapter(webkit::ppapi::PluginInstance* instance);
 
   MouseLockDispatcher* GetMouseLockDispatcher(
       webkit::ppapi::PluginInstance* instance);
+
+  // Share a given handle with the target process.
+  virtual IPC::PlatformFileForTransit ShareHandleWithRemote(
+      base::PlatformFile handle,
+      base::ProcessId target_process_id,
+      bool should_close_source) const OVERRIDE;
+
+  virtual bool IsRunningInProcess(PP_Instance instance) const OVERRIDE;
 
   // Pointer to the RenderView that owns us.
   RenderViewImpl* render_view_;
@@ -430,6 +439,8 @@ class PepperPluginDelegateImpl
 
   scoped_ptr<PepperDeviceEnumerationEventHandler>
       device_enumeration_event_handler_;
+
+  scoped_refptr<ContextProviderCommandBuffer> offscreen_context3d_;
 
   DISALLOW_COPY_AND_ASSIGN(PepperPluginDelegateImpl);
 };

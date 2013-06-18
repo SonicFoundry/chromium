@@ -11,6 +11,7 @@
 #include "third_party/WebKit/Source/Platform/chromium/public/WebSize.h"
 #include "ui/gfx/point.h"
 #include "ui/gfx/point_f.h"
+#include "webkit/glue/webkit_glue_export.h"
 
 namespace WebKit {
 class WebGestureCurveTarget;
@@ -18,7 +19,7 @@ class WebGestureCurveTarget;
 
 namespace webkit_glue {
 
-class FlingAnimatorImpl : public WebKit::WebGestureCurve {
+class WEBKIT_GLUE_EXPORT FlingAnimatorImpl : public WebKit::WebGestureCurve {
  public:
   FlingAnimatorImpl();
   virtual ~FlingAnimatorImpl();
@@ -29,24 +30,25 @@ class FlingAnimatorImpl : public WebKit::WebGestureCurve {
 
   virtual bool apply(double time,
                      WebKit::WebGestureCurveTarget* target);
+
+  static bool RegisterJni(JNIEnv*);
+
  private:
   void StartFling(const gfx::PointF& velocity);
   // Returns true if the animation is not yet finished.
   bool UpdatePosition();
   gfx::Point GetCurrentPosition();
+  float GetCurrentVelocity();
   virtual void CancelFling();
 
   bool is_active_;
 
   // Java OverScroller instance and methods.
   base::android::ScopedJavaGlobalRef<jobject> java_scroller_;
-  jmethodID fling_method_id_;
-  jmethodID abort_method_id_;
-  jmethodID compute_method_id_;
-  jmethodID getX_method_id_;
-  jmethodID getY_method_id_;
 
   gfx::Point last_position_;
+  gfx::PointF last_velocity_;
+  double last_time_;
 
   DISALLOW_COPY_AND_ASSIGN(FlingAnimatorImpl);
 };

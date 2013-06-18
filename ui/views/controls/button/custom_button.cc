@@ -84,10 +84,8 @@ void CustomButton::SetHotTracked(bool is_hot_tracked) {
   if (state_ != STATE_DISABLED)
     SetState(is_hot_tracked ? STATE_HOVERED : STATE_NORMAL);
 
-  if (is_hot_tracked && GetWidget()) {
-    GetWidget()->NotifyAccessibilityEvent(
-        this, ui::AccessibilityTypes::EVENT_FOCUS, true);
-  }
+  if (is_hot_tracked)
+    NotifyAccessibilityEvent(ui::AccessibilityTypes::EVENT_FOCUS, true);
 }
 
 bool CustomButton::IsHotTracked() const {
@@ -281,6 +279,12 @@ void CustomButton::GetAccessibleState(ui::AccessibleViewState* state) {
       // No additional accessibility state set for this button state.
       break;
   }
+}
+
+void CustomButton::VisibilityChanged(View* starting_from, bool visible) {
+  if (state_ == STATE_DISABLED)
+    return;
+  SetState(visible && IsMouseHovered() ? STATE_HOVERED : STATE_NORMAL);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

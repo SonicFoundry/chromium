@@ -8,7 +8,7 @@
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "chrome/browser/chromeos/drive/drive_resource_metadata.h"
+#include "chrome/browser/chromeos/drive/resource_metadata.h"
 #include "chrome/browser/google_apis/gdata_errorcode.h"
 
 class GURL;
@@ -19,10 +19,13 @@ class FilePath;
 
 namespace drive {
 
-class DriveCache;
-class DriveEntryProto;
-class DriveResourceMetadata;
-class DriveScheduler;
+class FileCache;
+class JobScheduler;
+class ResourceEntry;
+
+namespace internal {
+class ResourceMetadata;
+}  // namespace internal
 
 namespace file_system {
 
@@ -33,8 +36,8 @@ class OperationObserver;
 // metadata to reflect the new state.
 class MoveOperation {
  public:
-  MoveOperation(DriveScheduler* drive_scheduler,
-                DriveResourceMetadata* metadata,
+  MoveOperation(JobScheduler* job_scheduler,
+                internal::ResourceMetadata* metadata,
                 OperationObserver* observer);
   virtual ~MoveOperation();
 
@@ -56,7 +59,7 @@ class MoveOperation {
   // to the destination directory.
   void MoveAfterRename(const FileOperationCallback& callback,
                        scoped_ptr<EntryInfoPairResult> src_dest_info,
-                       DriveFileError error,
+                       FileError error,
                        const base::FilePath& src_path);
 
   // Step 3 of Move(), called after the resource is added to the new directory.
@@ -66,7 +69,7 @@ class MoveOperation {
   // resource is contained in both the new and the old directories.
   void MoveAfterAddToDirectory(const FileOperationCallback& callback,
                                scoped_ptr<EntryInfoPairResult> src_dest_info,
-                               DriveFileError error,
+                               FileError error,
                                const base::FilePath& src_path);
 
   // Step 4 of Move(), called after the resource is removed from the old
@@ -109,24 +112,17 @@ class MoveOperation {
                              const FileMoveCallback& callback,
                              google_apis::GDataErrorCode status);
 
-  // Removes a resource |resource_id| from |dir_path|.
+  // Removes a resource |resource_id| from |directory_resource_id|.
   void RemoveFromDirectory(const std::string& resource_id,
-                           const base::FilePath& dir_path,
+                           const std::string& directory_resource_id,
                            const FileOperationCallback& callback);
-
-  // Called in RemoveFromDirectory().
-  void RemoveFromDirectoryAfterGetEntryInfo(
-      const std::string& resource_id,
-      const FileOperationCallback& callback,
-      DriveFileError error,
-      scoped_ptr<DriveEntryProto> entry_proto);
 
   // Called in RemoveFromDirectory().
   void RemoveFromDirectoryCompleted(const FileOperationCallback& callback,
                                     google_apis::GDataErrorCode status);
 
-  DriveScheduler* drive_scheduler_;
-  DriveResourceMetadata* metadata_;
+  JobScheduler* job_scheduler_;
+  internal::ResourceMetadata* metadata_;
   OperationObserver* observer_;
 
   // WeakPtrFactory bound to the UI thread.

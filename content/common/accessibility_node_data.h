@@ -214,6 +214,15 @@ struct CONTENT_EXPORT AccessibilityNodeData {
     // Table attributes.
     ATTR_TABLE_ROW_COUNT,
     ATTR_TABLE_COLUMN_COUNT,
+    ATTR_TABLE_HEADER_ID,
+
+    // Table row attributes.
+    ATTR_TABLE_ROW_INDEX,
+    ATTR_TABLE_ROW_HEADER_ID,
+
+    // Table column attributes.
+    ATTR_TABLE_COLUMN_INDEX,
+    ATTR_TABLE_COLUMN_HEADER_ID,
 
     // Table cell attributes.
     ATTR_TABLE_CELL_COLUMN_INDEX,
@@ -261,13 +270,17 @@ struct CONTENT_EXPORT AccessibilityNodeData {
 
     // Writeable attributes
     ATTR_CAN_SET_VALUE,
+
+    // If this is set, all of the other fields in this struct should
+    // be ignored and only the locations should change.
+    ATTR_UPDATE_LOCATION_ONLY,
   };
 
   AccessibilityNodeData();
-  ~AccessibilityNodeData();
+  virtual ~AccessibilityNodeData();
 
   #ifndef NDEBUG
-  std::string DebugString(bool recursive) const;
+  virtual std::string DebugString(bool recursive) const;
   #endif
 
   // This is a simple serializable struct. All member variables should be
@@ -282,7 +295,7 @@ struct CONTENT_EXPORT AccessibilityNodeData {
   std::map<IntAttribute, int32> int_attributes;
   std::map<FloatAttribute, float> float_attributes;
   std::map<BoolAttribute, bool> bool_attributes;
-  std::vector<AccessibilityNodeData> children;
+  std::vector<int32> child_ids;
   std::vector<int32> indirect_child_ids;
   std::vector<std::pair<string16, string16> > html_attributes;
   std::vector<int32> line_breaks;
@@ -296,6 +309,33 @@ struct CONTENT_EXPORT AccessibilityNodeData {
   // occurrence.
   std::vector<int32> unique_cell_ids;
 };
+
+// For testing and debugging only: this subclass of AccessibilityNodeData
+// is used to represent a whole tree of accessibility nodes, where each
+// node owns its children. This makes it easy to print the tree structure
+// or search it recursively.
+struct CONTENT_EXPORT AccessibilityNodeDataTreeNode
+    : public AccessibilityNodeData {
+  AccessibilityNodeDataTreeNode();
+  virtual ~AccessibilityNodeDataTreeNode();
+
+  AccessibilityNodeDataTreeNode& operator=(const AccessibilityNodeData& src);
+
+  #ifndef NDEBUG
+  virtual std::string DebugString(bool recursive) const OVERRIDE;
+  #endif
+
+  std::vector<AccessibilityNodeDataTreeNode> children;
+};
+
+// Given a vector of accessibility nodes that represent a complete
+// accessibility tree, where each node appears before its children,
+// build a tree of AccessibilityNodeDataTreeNode objects for easier
+// testing and debugging, where each node contains its children.
+// The |dst| argument will become the root of the new tree.
+void MakeAccessibilityNodeDataTree(
+    const std::vector<AccessibilityNodeData>& src,
+    AccessibilityNodeDataTreeNode* dst);
 
 }  // namespace content
 

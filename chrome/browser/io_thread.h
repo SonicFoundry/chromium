@@ -12,7 +12,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/prefs/public/pref_member.h"
+#include "base/prefs/pref_member.h"
 #include "chrome/browser/net/ssl_config_service_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/browser_thread_delegate.h"
@@ -48,6 +48,7 @@ class HttpServerProperties;
 class HttpTransactionFactory;
 class HttpUserAgentSettings;
 class NetworkDelegate;
+class NetworkTimeNotifier;
 class ServerBoundCertService;
 class ProxyConfigService;
 class ProxyService;
@@ -167,6 +168,7 @@ class IOThread : public content::BrowserThreadDelegate {
     // main frame load fails with a DNS error in order to provide more useful
     // information to the renderer so it can show a more specific error page.
     scoped_ptr<chrome_browser_net::DnsProbeService> dns_probe_service;
+    scoped_ptr<net::NetworkTimeNotifier> network_time_notifier;
   };
 
   // |net_log| must either outlive the IOThread or be NULL.

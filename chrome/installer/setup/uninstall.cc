@@ -339,41 +339,35 @@ void DeleteShortcuts(const InstallerState& installer_state,
   ShellUtil::ShellChange install_level = installer_state.system_install() ?
       ShellUtil::SYSTEM_LEVEL : ShellUtil::CURRENT_USER;
 
-  VLOG(1) << "Deleting Desktop shortcut.";
-  if (!ShellUtil::RemoveShortcut(ShellUtil::SHORTCUT_LOCATION_DESKTOP, dist,
-                                 target_exe, install_level, NULL)) {
-    LOG(WARNING) << "Failed to delete Desktop shortcut.";
-  }
-  // Also try to delete the alternate desktop shortcut. It is not sufficient
-  // to do so upon failure of the above call as ERROR_FILE_NOT_FOUND on
-  // delete is considered success.
-  if (!ShellUtil::RemoveShortcut(
-          ShellUtil::SHORTCUT_LOCATION_DESKTOP, dist, target_exe, install_level,
-          &dist->GetAlternateApplicationName())) {
-    LOG(WARNING) << "Failed to delete alternate Desktop shortcut.";
+  VLOG(1) << "Deleting Desktop shortcuts.";
+  if (!ShellUtil::RemoveShortcuts(ShellUtil::SHORTCUT_LOCATION_DESKTOP, dist,
+                                  install_level, target_exe)) {
+    LOG(WARNING) << "Failed to delete Desktop shortcuts.";
   }
 
-  VLOG(1) << "Deleting Quick Launch shortcut.";
-  if (!ShellUtil::RemoveShortcut(ShellUtil::SHORTCUT_LOCATION_QUICK_LAUNCH,
-                                 dist, target_exe, install_level, NULL)) {
-    LOG(WARNING) << "Failed to delete Quick Launch shortcut.";
+  VLOG(1) << "Deleting Quick Launch shortcuts.";
+  if (!ShellUtil::RemoveShortcuts(ShellUtil::SHORTCUT_LOCATION_QUICK_LAUNCH,
+                                  dist, install_level, target_exe)) {
+    LOG(WARNING) << "Failed to delete Quick Launch shortcuts.";
   }
 
   VLOG(1) << "Deleting Start Menu shortcuts.";
-  if (!ShellUtil::RemoveShortcut(ShellUtil::SHORTCUT_LOCATION_START_MENU, dist,
-                                 target_exe, install_level, NULL)) {
+  if (!ShellUtil::RemoveShortcuts(ShellUtil::SHORTCUT_LOCATION_START_MENU, dist,
+                                  install_level, target_exe)) {
     LOG(WARNING) << "Failed to delete Start Menu shortcuts.";
   }
 
-  // Although the shortcut removal calls above will unpin their shortcut if they
-  // result in a deletion (i.e. shortcut existed and pointed to |target_exe|),
-  // it is possible for shortcuts to remain pinned while their parent shortcut
-  // has been deleted or changed to point to another |target_exe|. Make sure all
-  // pinned-to-taskbar shortcuts that point to |target_exe| are unpinned.
-  ShellUtil::RemoveTaskbarShortcuts(target_exe.value());
+  // Unpin all pinned-to-taskbar shortcuts that point to |chrome_exe|.
+  if (!ShellUtil::RemoveShortcuts(ShellUtil::SHORTCUT_LOCATION_TASKBAR_PINS,
+                                  dist, ShellUtil::CURRENT_USER, target_exe)) {
+    LOG(WARNING) << "Failed to unpin taskbar shortcuts at user-level.";
+  }
 
-  ShellUtil::RemoveStartScreenShortcuts(product.distribution(),
-                                        target_exe.value());
+  // Delete the folder of secondary tiles from the start screen for |dist|.
+  if (!ShellUtil::RemoveShortcuts(ShellUtil::SHORTCUT_LOCATION_APP_SHORTCUTS,
+                                  dist, install_level, target_exe)) {
+    LOG(WARNING) << "Failed to delete start-screen shortcuts.";
+  }
 }
 
 bool ScheduleParentAndGrandparentForDeletion(const base::FilePath& path) {
@@ -704,8 +698,9 @@ void RemoveFiletypeRegistration(const InstallerState& installer_state,
       !base::win::RegKey(HKEY_LOCAL_MACHINE, (classes_path + prog_id).c_str(),
                          KEY_QUERY_VALUE).Valid()) {
     InstallUtil::ValueEquals prog_id_pred(prog_id);
-    for (const wchar_t* const* filetype = &ShellUtil::kFileAssociations[0];
-         *filetype != NULL; ++filetype) {
+    for (const wchar_t* const* filetype =
+         &ShellUtil::kPotentialFileAssociations[0]; *filetype != NULL;
+         ++filetype) {
       if (InstallUtil::DeleteRegistryValueIf(
               root, (classes_path + *filetype).c_str(), NULL,
               prog_id_pred) == InstallUtil::DELETED) {
@@ -764,16 +759,13 @@ bool DeleteChromeRegistrationKeys(const InstallerState& installer_state,
   base::FilePath chrome_exe(installer_state.target_path().Append(kChromeExe));
 
   // Delete Software\Classes\ChromeHTML.
-  // For user-level installs we now only write these entries in HKCU, but since
-  // old installs did install them to HKLM we will try to remove them in HKLM as
-  // well anyways.
   const string16 prog_id(ShellUtil::kChromeHTMLProgId + browser_entry_suffix);
   string16 reg_prog_id(ShellUtil::kRegClasses);
   reg_prog_id.push_back(base::FilePath::kSeparators[0]);
   reg_prog_id.append(prog_id);
   InstallUtil::DeleteRegistryKey(root, reg_prog_id);
 
-  // Delete Software\Classes\Chrome (Same comment as above applies for this too)
+  // Delete Software\Classes\Chrome.
   string16 reg_app_id(ShellUtil::kRegClasses);
   reg_app_id.push_back(base::FilePath::kSeparators[0]);
   // Append the requested suffix manually here (as ShellUtil::GetBrowserModelId
@@ -839,10 +831,10 @@ bool DeleteChromeRegistrationKeys(const InstallerState& installer_state,
   string16 file_assoc_key;
   string16 open_with_list_key;
   string16 open_with_progids_key;
-  for (int i = 0; ShellUtil::kFileAssociations[i] != NULL; ++i) {
+  for (int i = 0; ShellUtil::kPotentialFileAssociations[i] != NULL; ++i) {
     file_assoc_key.assign(ShellUtil::kRegClasses);
     file_assoc_key.push_back(base::FilePath::kSeparators[0]);
-    file_assoc_key.append(ShellUtil::kFileAssociations[i]);
+    file_assoc_key.append(ShellUtil::kPotentialFileAssociations[i]);
     file_assoc_key.push_back(base::FilePath::kSeparators[0]);
 
     open_with_list_key.assign(file_assoc_key);
@@ -1320,8 +1312,7 @@ InstallStatus UninstallProduct(const InstallationState& original_state,
     DeleteAppHostFilesAndFolders(installer_state, product_state->version());
   } else if (!installer_state.is_multi_install() ||
              product.is_chrome_binaries()) {
-    base::FilePath setup_exe(cmd_line.GetProgram());
-    file_util::AbsolutePath(&setup_exe);
+    base::FilePath setup_exe(base::MakeAbsoluteFilePath(cmd_line.GetProgram()));
     DeleteResult delete_result = DeleteChromeFilesAndFolders(
         installer_state, setup_exe);
     if (delete_result == DELETE_FAILED) {
@@ -1363,8 +1354,7 @@ void CleanUpInstallationDirectoryAfterUninstall(
     *uninstall_status = installer::UNINSTALL_FAILED;
     return;
   }
-  base::FilePath setup_exe(cmd_line.GetProgram());
-  file_util::AbsolutePath(&setup_exe);
+  base::FilePath setup_exe(base::MakeAbsoluteFilePath(cmd_line.GetProgram()));
   if (!target_path.IsParent(setup_exe)) {
     LOG(INFO) << "setup.exe is not in target path. Skipping installer cleanup.";
     return;

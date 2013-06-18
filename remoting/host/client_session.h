@@ -5,14 +5,15 @@
 #ifndef REMOTING_HOST_CLIENT_SESSION_H_
 #define REMOTING_HOST_CLIENT_SESSION_H_
 
-#include <list>
+#include <string>
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner_helpers.h"
+#include "base/threading/non_thread_safe.h"
 #include "base/time.h"
 #include "base/timer.h"
-#include "base/threading/non_thread_safe.h"
+#include "remoting/host/client_session_control.h"
 #include "remoting/host/mouse_clamping_filter.h"
 #include "remoting/host/remote_input_filter.h"
 #include "remoting/protocol/clipboard_echo_filter.h"
@@ -34,26 +35,27 @@ namespace remoting {
 
 class AudioEncoder;
 class AudioScheduler;
-struct ClientSessionTraits;
 class DesktopEnvironment;
 class DesktopEnvironmentFactory;
-class EventExecutor;
+class InputInjector;
+class ScreenControls;
 class VideoEncoder;
 class VideoScheduler;
 
 // A ClientSession keeps a reference to a connection to a client, and maintains
 // per-client state.
 class ClientSession
-    : public base::RefCountedThreadSafe<ClientSession, ClientSessionTraits>,
+    : public base::NonThreadSafe,
       public protocol::HostStub,
       public protocol::ConnectionToClient::EventHandler,
-      public base::NonThreadSafe {
+      public ClientSessionControl {
  public:
   // Callback interface for passing events to the ChromotingHost.
   class EventHandler {
    public:
-    // Called after authentication has finished successfully.
-    virtual void OnSessionAuthenticated(ClientSession* client) = 0;
+    // Called after authentication has finished successfully. Returns true if
+    // the connection is allowed, or false otherwise.
+    virtual bool OnSessionAuthenticated(ClientSession* client) = 0;
 
     // Called after we've finished connecting all channels.
     virtual void OnSessionChannelsConnected(ClientSession* client) = 0;
@@ -78,18 +80,11 @@ class ClientSession
         const std::string& channel_name,
         const protocol::TransportRoute& route) = 0;
 
-    // Called when the initial client resolution is received, and when it
-    // changes.
-    virtual void OnClientResolutionChanged(ClientSession* client,
-                                           const SkISize& size,
-                                           const SkIPoint& dpi) = 0;
-
    protected:
     virtual ~EventHandler() {}
   };
 
-  // |event_handler| must outlive |this|. |desktop_environment_factory| is only
-  // used by the constructor to create an instance of DesktopEnvironment.
+  // |event_handler| and |desktop_environment_factory| must outlive |this|.
   ClientSession(
       EventHandler* event_handler,
       scoped_refptr<base::SingleThreadTaskRunner> audio_task_runner,
@@ -101,6 +96,7 @@ class ClientSession
       scoped_ptr<protocol::ConnectionToClient> connection,
       DesktopEnvironmentFactory* desktop_environment_factory,
       const base::TimeDelta& max_duration);
+  virtual ~ClientSession();
 
   // protocol::HostStub interface.
   virtual void NotifyClientResolution(
@@ -109,6 +105,8 @@ class ClientSession
       const protocol::VideoControl& video_control) OVERRIDE;
   virtual void ControlAudio(
       const protocol::AudioControl& audio_control) OVERRIDE;
+  virtual void SetCapabilities(
+      const protocol::Capabilities& capabilities) OVERRIDE;
 
   // protocol::ConnectionToClient::EventHandler interface.
   virtual void OnConnectionAuthenticated(
@@ -124,37 +122,19 @@ class ClientSession
       const std::string& channel_name,
       const protocol::TransportRoute& route) OVERRIDE;
 
-  // Disconnects the session, tears down transport resources and stops scheduler
-  // components. |event_handler_| is guaranteed not to be called after this
-  // method returns.
-  void Disconnect();
-
-  // Stops the ClientSession. The caller can safely release its reference to
-  // the client session once Stop() returns.
-  void Stop();
+  // ClientSessionControl interface.
+  virtual const std::string& client_jid() const OVERRIDE;
+  virtual void DisconnectSession() OVERRIDE;
+  virtual void OnLocalMouseMoved(const SkIPoint& position) OVERRIDE;
+  virtual void SetDisableInputs(bool disable_inputs) OVERRIDE;
 
   protocol::ConnectionToClient* connection() const {
     return connection_.get();
   }
 
-  const std::string& client_jid() { return client_jid_; }
-
   bool is_authenticated() { return auth_input_filter_.enabled();  }
 
-  // Indicate that local mouse activity has been detected. This causes remote
-  // inputs to be ignored for a short time so that the local user will always
-  // have the upper hand in 'pointer wars'.
-  void LocalMouseMoved(const SkIPoint& new_pos);
-
-  // Disable handling of input events from this client. If the client has any
-  // keys or mouse buttons pressed then these will be released.
-  void SetDisableInputs(bool disable_inputs);
-
  private:
-  friend class base::DeleteHelper<ClientSession>;
-  friend struct ClientSessionTraits;
-  virtual ~ClientSession();
-
   // Creates a proxy for sending clipboard events to the client.
   scoped_ptr<protocol::ClipboardStub> CreateClipboardProxy();
 
@@ -171,12 +151,16 @@ class ClientSession
   // The connection to the client.
   scoped_ptr<protocol::ConnectionToClient> connection_;
 
-  // Used to disable callbacks to |connection_| once it is disconnected.
-  base::WeakPtrFactory<protocol::ConnectionToClient> connection_factory_;
-
   std::string client_jid_;
 
-  // The desktop environment used by this session.
+  // Used to disable callbacks to |this| once DisconnectSession() has been
+  // called.
+  base::WeakPtrFactory<ClientSessionControl> control_factory_;
+
+  // Used to create a DesktopEnvironment instance for this session.
+  DesktopEnvironmentFactory* desktop_environment_factory_;
+
+  // The DesktopEnvironment instance for this session.
   scoped_ptr<DesktopEnvironment> desktop_environment_;
 
   // Filter used as the final element in the input pipeline.
@@ -228,14 +212,19 @@ class ClientSession
   scoped_refptr<AudioScheduler> audio_scheduler_;
   scoped_refptr<VideoScheduler> video_scheduler_;
 
-  scoped_ptr<EventExecutor> event_executor_;
+  // The set of all capabilities supported by the client.
+  scoped_ptr<std::string> client_capabilities_;
+
+  // The set of all capabilities supported by the host.
+  std::string host_capabilities_;
+
+  // Used to inject mouse and keyboard input and handle clipboard events.
+  scoped_ptr<InputInjector> input_injector_;
+
+  // Used to apply client-requested changes in screen resolution.
+  scoped_ptr<ScreenControls> screen_controls_;
 
   DISALLOW_COPY_AND_ASSIGN(ClientSession);
-};
-
-// Destroys |ClienSession| instances on the network thread.
-struct ClientSessionTraits {
-  static void Destruct(const ClientSession* client);
 };
 
 }  // namespace remoting

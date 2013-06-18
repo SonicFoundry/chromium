@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "base/memory/scoped_ptr.h"
+#include "base/stl_util.h"
 #include "base/test/values_test_util.h"
 #include "base/values.h"
 #include "content/renderer/v8_value_converter_impl.h"
@@ -12,6 +13,36 @@
 #include "v8/include/v8.h"
 
 namespace content {
+
+// To improve the performance of
+// V8ValueConverterImpl::UpdateAndCheckUniqueness, identity hashes of objects
+// are used during checking for duplicates. For testing purposes we need to
+// ignore the hash sometimes. Create this helper object to avoid using identity
+// hashes for the lifetime of the helper.
+class ScopedAvoidIdentityHashForTesting {
+ public:
+  // The hashes will be ignored in |converter|, which must not be NULL and it
+  // must outlive the created instance of this helper.
+  explicit ScopedAvoidIdentityHashForTesting(
+      content::V8ValueConverterImpl* converter);
+  ~ScopedAvoidIdentityHashForTesting();
+
+ private:
+  content::V8ValueConverterImpl* converter_;
+
+  DISALLOW_COPY_AND_ASSIGN(ScopedAvoidIdentityHashForTesting);
+};
+
+ScopedAvoidIdentityHashForTesting::ScopedAvoidIdentityHashForTesting(
+    content::V8ValueConverterImpl* converter)
+    : converter_(converter) {
+  CHECK(converter_);
+  converter_->avoid_identity_hash_for_testing_ = true;
+}
+
+ScopedAvoidIdentityHashForTesting::~ScopedAvoidIdentityHashForTesting() {
+  converter_->avoid_identity_hash_for_testing_ = false;
+}
 
 namespace {
 
@@ -39,7 +70,7 @@ class V8ValueConverterImplTest : public testing::Test {
     std::string temp;
     if (!value->GetString(key, &temp)) {
       ADD_FAILURE();
-      return "";
+      return std::string();
     }
     return temp;
   }
@@ -49,7 +80,7 @@ class V8ValueConverterImplTest : public testing::Test {
         value->Get(v8::String::New(key.c_str())).As<v8::String>();
     if (temp.IsEmpty()) {
       ADD_FAILURE();
-      return "";
+      return std::string();
     }
     v8::String::Utf8Value utf8(temp);
     return std::string(*utf8, utf8.length());
@@ -59,7 +90,7 @@ class V8ValueConverterImplTest : public testing::Test {
     std::string temp;
     if (!value->GetString(static_cast<size_t>(index), &temp)) {
       ADD_FAILURE();
-      return "";
+      return std::string();
     }
     return temp;
   }
@@ -68,7 +99,7 @@ class V8ValueConverterImplTest : public testing::Test {
     v8::Handle<v8::String> temp = value->Get(index).As<v8::String>();
     if (temp.IsEmpty()) {
       ADD_FAILURE();
-      return "";
+      return std::string();
     }
     v8::String::Utf8Value utf8(temp);
     return std::string(*utf8, utf8.length());
@@ -116,7 +147,7 @@ class V8ValueConverterImplTest : public testing::Test {
                      scoped_ptr<base::Value> expected_value) {
     scoped_ptr<base::Value> raw(converter.FromV8Value(val, context_));
 
-    if (expected_value.get()) {
+    if (expected_value) {
       ASSERT_TRUE(raw.get());
       EXPECT_TRUE(expected_value->Equals(raw.get()));
       EXPECT_EQ(expected_type, raw->GetType());
@@ -131,7 +162,7 @@ class V8ValueConverterImplTest : public testing::Test {
             converter.FromV8Value(object, context_)));
     ASSERT_TRUE(dictionary.get());
 
-    if (expected_value.get()) {
+    if (expected_value) {
       base::Value* temp = NULL;
       ASSERT_TRUE(dictionary->Get("test", &temp));
       EXPECT_EQ(expected_type, temp->GetType());
@@ -145,7 +176,7 @@ class V8ValueConverterImplTest : public testing::Test {
     scoped_ptr<base::ListValue> list(
         static_cast<base::ListValue*>(converter.FromV8Value(array, context_)));
     ASSERT_TRUE(list.get());
-    if (expected_value.get()) {
+    if (expected_value) {
       base::Value* temp = NULL;
       ASSERT_TRUE(list->Get(0, &temp));
       EXPECT_EQ(expected_type, temp->GetType());
@@ -547,6 +578,73 @@ TEST_F(V8ValueConverterImplTest, UndefinedValueBehavior) {
   scoped_ptr<Value> actual_array(converter.FromV8Value(array, context_));
   EXPECT_TRUE(base::Value::Equals(
       base::test::ParseJson("[ null, null, null ]").get(), actual_array.get()));
+}
+
+TEST_F(V8ValueConverterImplTest, ObjectsWithClashingIdentityHash) {
+  v8::Context::Scope context_scope(context_);
+  v8::HandleScope handle_scope;
+  V8ValueConverterImpl converter;
+
+  // We check that the converter checks identity correctly by disabling the
+  // optimization of using identity hashes.
+  ScopedAvoidIdentityHashForTesting scoped_hash_avoider(&converter);
+
+  // Create the v8::Object to be converted.
+  v8::Handle<v8::Array> root(v8::Array::New(4));
+  root->Set(0, v8::Handle<v8::Object>(v8::Object::New()));
+  root->Set(1, v8::Handle<v8::Object>(v8::Object::New()));
+  root->Set(2, v8::Handle<v8::Object>(v8::Array::New(0)));
+  root->Set(3, v8::Handle<v8::Object>(v8::Array::New(0)));
+
+  // The expected base::Value result.
+  scoped_ptr<base::Value> expected = base::test::ParseJson("[{},{},[],[]]");
+  ASSERT_TRUE(expected.get());
+
+  // The actual result.
+  scoped_ptr<base::Value> value(converter.FromV8Value(root, context_));
+  ASSERT_TRUE(value.get());
+
+  EXPECT_TRUE(expected->Equals(value.get()));
+}
+
+TEST_F(V8ValueConverterImplTest, DetectCycles) {
+  v8::Context::Scope context_scope(context_);
+  v8::HandleScope handle_scope;
+  V8ValueConverterImpl converter;
+
+  // Create a recursive array.
+  v8::Handle<v8::Array> recursive_array(v8::Array::New(1));
+  recursive_array->Set(0, recursive_array);
+
+  // The first repetition should be trimmed and replaced by a null value.
+  base::ListValue expected_list;
+  expected_list.Append(base::Value::CreateNullValue());
+
+  // The actual result.
+  scoped_ptr<base::Value> actual_list(
+      converter.FromV8Value(recursive_array, context_));
+  ASSERT_TRUE(actual_list.get());
+
+  EXPECT_TRUE(expected_list.Equals(actual_list.get()));
+
+  // Now create a recursive object
+  const std::string key("key");
+  v8::Handle<v8::Object> recursive_object(v8::Object::New());
+  v8::TryCatch try_catch;
+  recursive_object->Set(v8::String::New(key.c_str(), key.length()),
+                        recursive_object);
+  ASSERT_FALSE(try_catch.HasCaught());
+
+  // The first repetition should be trimmed and replaced by a null value.
+  base::DictionaryValue expected_dictionary;
+  expected_dictionary.Set(key, base::Value::CreateNullValue());
+
+  // The actual result.
+  scoped_ptr<base::Value> actual_dictionary(
+      converter.FromV8Value(recursive_object, context_));
+  ASSERT_TRUE(actual_dictionary.get());
+
+  EXPECT_TRUE(expected_dictionary.Equals(actual_dictionary.get()));
 }
 
 }  // namespace content

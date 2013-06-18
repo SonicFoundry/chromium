@@ -18,10 +18,15 @@ class Rect;
 class RectF;
 }
 
+namespace autofill {
+
 // This interface provides data to an AutofillPopupView.
 class AutofillPopupController {
  public:
-  // Called when the view is going down.
+  // Called when the popup should get hidden.
+  virtual void Hide() = 0;
+
+  // Called whent the popup view was destroyed.
   virtual void ViewDestroyed() = 0;
 
   // Recalculates the height and width of the popup and triggers a redraw.
@@ -88,11 +93,10 @@ class AutofillPopupController {
   // hovered or has keyboard focus.
   virtual int selected_line() const = 0;
 
-  // Returns true if the delete icon of the selected line is currently hovered.
-  virtual bool delete_icon_hovered() const = 0;
-
  protected:
   virtual ~AutofillPopupController() {}
 };
+
+}  // namespace autofill
 
 #endif  // CHROME_BROWSER_UI_AUTOFILL_AUTOFILL_POPUP_CONTROLLER_H_

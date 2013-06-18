@@ -11,6 +11,7 @@
 #include "base/id_map.h"
 #include "base/memory/weak_ptr.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebFileSystem.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebFileSystemType.h"
 #include "webkit/fileapi/file_system_context.h"
 #include "webkit/fileapi/file_system_operation.h"
 #include "webkit/fileapi/file_system_types.h"
@@ -38,12 +39,12 @@ class SimpleFileSystem
   virtual ~SimpleFileSystem();
 
   void OpenFileSystem(WebKit::WebFrame* frame,
-                      WebKit::WebFileSystem::Type type,
+                      WebKit::WebFileSystemType type,
                       long long size,
                       bool create,
                       WebKit::WebFileSystemCallbacks* callbacks);
   void DeleteFileSystem(WebKit::WebFrame* frame,
-                        WebKit::WebFileSystem::Type type,
+                        WebKit::WebFileSystemType type,
                         WebKit::WebFileSystemCallbacks* callbacks);
 
   fileapi::FileSystemContext* file_system_context() {
@@ -88,12 +89,6 @@ class SimpleFileSystem
   virtual WebKit::WebFileWriter* createFileWriter(
       const WebKit::WebURL& path, WebKit::WebFileWriterClient*) OVERRIDE;
   virtual void createSnapshotFileAndReadMetadata(
-      const WebKit::WebURL& path,
-      WebKit::WebFileSystemCallbacks* callbacks);
-
-  // DEPRECATED
-  virtual void createSnapshotFileAndReadMetadata(
-      const WebKit::WebURL& blobURL,
       const WebKit::WebURL& path,
       WebKit::WebFileSystemCallbacks* callbacks);
 

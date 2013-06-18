@@ -8,17 +8,18 @@
 #import <Cocoa/Cocoa.h>
 
 #include "base/memory/scoped_nsobject.h"
+#include "ui/app_list/app_list_export.h"
 
-@class AppsGridController;
+@class AppListViewController;
 
 // Controller for the app list NSWindow.
+APP_LIST_EXPORT
 @interface AppListWindowController : NSWindowController<NSWindowDelegate> {
-  scoped_nsobject<AppsGridController> appsGridController_;
+ @private
+  scoped_nsobject<AppListViewController> appListViewController_;
 }
 
-- (id)initWithGridController:(AppsGridController*)gridController;
-
-- (AppsGridController*)appsGridController;
+- (AppListViewController*)appListViewController;
 
 @end
 

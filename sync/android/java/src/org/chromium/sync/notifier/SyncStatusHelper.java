@@ -8,16 +8,13 @@ package org.chromium.sync.notifier;
 import android.accounts.Account;
 import android.content.ContentResolver;
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.content.SyncStatusObserver;
 import android.os.StrictMode;
-import android.preference.PreferenceManager;
-import android.util.Log;
-
-import org.chromium.base.ObserverList;
-import org.chromium.sync.signin.AccountManagerHelper;
 
 import com.google.common.annotations.VisibleForTesting;
+
+import org.chromium.sync.signin.AccountManagerHelper;
+import org.chromium.sync.signin.ChromeSigninController;
 
 /**
  * A helper class to handle the current status of sync for Chrome in Android-land.
@@ -27,31 +24,18 @@ import com.google.common.annotations.VisibleForTesting;
  * To retrieve an instance of this class, call SyncStatusHelper.get(someContext).
  */
 public class SyncStatusHelper {
-
-    public interface Listener {
-        /**
-         * Called when the user signs out of Chrome.
-         */
-        void onClearSignedInUser();
-    }
-
     // TODO(dsmyers): remove the downstream version of this constant.
     public static final String AUTH_TOKEN_TYPE_SYNC = "chromiumsync";
 
-    @VisibleForTesting
-    public static final String SIGNED_IN_ACCOUNT_KEY = "google.services.username";
+    public static final String TAG = SyncStatusHelper.class.getSimpleName();
 
-    public static final String TAG = "SyncStatusHelper";
+    private static final Object LOCK = new Object();
+
+    private static SyncStatusHelper sSyncStatusHelper;
 
     private final Context mApplicationContext;
 
     private final SyncContentResolverDelegate mSyncContentResolverWrapper;
-
-    private static final Object lock = new Object();
-
-    private static SyncStatusHelper sSyncStatusHelper;
-
-    private ObserverList<Listener> mListeners;
 
     /**
      * @param context the context
@@ -61,7 +45,6 @@ public class SyncStatusHelper {
             SyncContentResolverDelegate syncContentResolverWrapper) {
         mApplicationContext = context.getApplicationContext();
         mSyncContentResolverWrapper = syncContentResolverWrapper;
-        mListeners = new ObserverList<Listener>();
     }
 
     /**
@@ -75,10 +58,9 @@ public class SyncStatusHelper {
      * @return a singleton instance of the SyncStatusHelper
      */
     public static SyncStatusHelper get(Context context) {
-        synchronized (lock) {
+        synchronized (LOCK) {
             if (sSyncStatusHelper == null) {
-                Context applicationContext = context.getApplicationContext();
-                sSyncStatusHelper = new SyncStatusHelper(applicationContext,
+                sSyncStatusHelper = new SyncStatusHelper(context,
                         new SystemSyncContentResolverDelegate());
             }
         }
@@ -95,7 +77,7 @@ public class SyncStatusHelper {
     @VisibleForTesting
     public static void overrideSyncStatusHelperForTests(Context context,
             SyncContentResolverDelegate syncContentResolverWrapper) {
-        synchronized (lock) {
+        synchronized (LOCK) {
             if (sSyncStatusHelper != null) {
                 throw new IllegalStateException("SyncStatusHelper already exists");
             }
@@ -147,7 +129,7 @@ public class SyncStatusHelper {
      * @return true if sync is on, false otherwise
      */
     public boolean isSyncEnabled() {
-        return isSyncEnabled(getSignedInUser());
+        return isSyncEnabled(ChromeSigninController.get(mApplicationContext).getSignedInUser());
     }
 
     /**
@@ -212,38 +194,6 @@ public class SyncStatusHelper {
         StrictMode.setThreadPolicy(oldPolicy);
     }
 
-    // TODO(nyquist) Move all these methods about signed in user to GoogleServicesManager.
-    public Account getSignedInUser() {
-        String syncAccountName = getSignedInAccountName();
-        if (syncAccountName == null) {
-            return null;
-        }
-        return AccountManagerHelper.createAccountFromName(syncAccountName);
-    }
-
-    public boolean isSignedIn() {
-        return getSignedInAccountName() != null;
-    }
-
-    public void setSignedInAccountName(String accountName) {
-        getPreferences().edit()
-            .putString(SIGNED_IN_ACCOUNT_KEY, accountName)
-            .apply();
-    }
-
-    public void clearSignedInUser() {
-        Log.d(TAG, "Clearing user signed in to Chrome");
-        setSignedInAccountName(null);
-
-        for (Listener listener : mListeners) {
-            listener.onClearSignedInUser();
-        }
-    }
-
-    private String getSignedInAccountName() {
-        return getPreferences().getString(SIGNED_IN_ACCOUNT_KEY, null);
-    }
-
     /**
      * Register with Android Sync Manager. This is what causes the "Chrome" option to appear in
      * Settings -> Accounts / Sync .
@@ -296,13 +246,6 @@ public class SyncStatusHelper {
     }
 
     /**
-     * Returns the default shared preferences.
-     */
-    private SharedPreferences getPreferences() {
-        return PreferenceManager.getDefaultSharedPreferences(mApplicationContext);
-    }
-
-    /**
      * Sets a new StrictMode.ThreadPolicy based on the current one, but allows disk reads
      * and disk writes.
      *
@@ -319,21 +262,5 @@ public class SyncStatusHelper {
         newPolicy.permitDiskWrites();
         StrictMode.setThreadPolicy(newPolicy.build());
         return oldPolicy;
-    }
-
-    /**
-     * Adds a Listener.
-     * @param listener Listener to add.
-     */
-    public void addListener(Listener listener) {
-        mListeners.addObserver(listener);
-    }
-
-    /**
-     * Removes a Listener.
-     * @param listener Listener to remove from the list.
-     */
-    public void removeListener(Listener listener) {
-        mListeners.removeObserver(listener);
     }
 }

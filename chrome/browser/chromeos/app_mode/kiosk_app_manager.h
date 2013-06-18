@@ -10,11 +10,10 @@
 
 #include "base/basictypes.h"
 #include "base/lazy_instance.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "base/observer_list.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_data_delegate.h"
-#include "chrome/browser/chromeos/app_mode/kiosk_app_prefs_observer.h"
+#include "content/public/browser/notification_observer.h"
 #include "ui/gfx/image/image_skia.h"
 
 class PrefRegistrySimple;
@@ -27,10 +26,9 @@ namespace chromeos {
 
 class KioskAppData;
 class KioskAppManagerObserver;
-class KioskAppPrefs;
 
-// KioskAppManager manages kiosk app prefs and cached app data.
-class KioskAppManager : public KioskAppPrefsObserver,
+// KioskAppManager manages cached app data.
+class KioskAppManager : public content::NotificationObserver,
                         public KioskAppDataDelegate {
  public:
   // Struct to hold app info returned from GetApps() call.
@@ -50,8 +48,6 @@ class KioskAppManager : public KioskAppPrefsObserver,
   // Sample layout:
   //   "kiosk": {
   //     "auto_launch": "app_id1",  // Exists if using local state pref
-  //     "suppress_auto_launch": true,  // Exists if when auto launch is
-  //                                    // suppressed. Default is false.
   //     "apps": {
   //       "app_id1" : {
   //         "name": "name of app1",
@@ -73,6 +69,9 @@ class KioskAppManager : public KioskAppPrefsObserver,
   // Gets the KioskAppManager instance, which is lazily created on first call..
   static KioskAppManager* Get();
 
+  // Prepares for shutdown and calls CleanUp() if needed.
+  static void Shutdown();
+
   // Registers kiosk app entries in local state.
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
@@ -81,10 +80,6 @@ class KioskAppManager : public KioskAppPrefsObserver,
 
   // Sets |app_id| as the app to auto launch at start up.
   void SetAutoLaunchApp(const std::string& app_id);
-
-  // Gets/sets suppress auto launch flag.
-  bool GetSuppressAutoLaunch() const;
-  void SetSuppressAutoLaunch(bool suppress);
 
   // Adds/removes a kiosk app by id. When removed, all locally cached data
   // will be removed as well.
@@ -102,6 +97,9 @@ class KioskAppManager : public KioskAppPrefsObserver,
   // is unknown.
   const base::RefCountedString* GetAppRawIcon(const std::string& app_id) const;
 
+  // Gets whether the bailout shortcut is disabled.
+  bool GetDisableBailoutShortcut() const;
+
   void AddObserver(KioskAppManagerObserver* observer);
   void RemoveObserver(KioskAppManagerObserver* observer);
 
@@ -109,9 +107,13 @@ class KioskAppManager : public KioskAppPrefsObserver,
   friend struct base::DefaultLazyInstanceTraits<KioskAppManager>;
   friend struct base::DefaultDeleter<KioskAppManager>;
   friend class KioskAppManagerTest;
+  friend class KioskTest;
 
   KioskAppManager();
   virtual ~KioskAppManager();
+
+  // Stop all data loading and remove its dependency on CrosSettings.
+  void CleanUp();
 
   // Gets KioskAppData for the given app id.
   const KioskAppData* GetAppData(const std::string& app_id) const;
@@ -119,17 +121,18 @@ class KioskAppManager : public KioskAppPrefsObserver,
   // Update app data |apps_| based on |prefs_|.
   void UpdateAppData();
 
-  // KioskAppPrefsObserver overrides:
-  virtual void OnKioskAutoLaunchAppChanged() OVERRIDE;
-  virtual void OnKioskAppsChanged() OVERRIDE;
+  // content::NotificationObserver overrides:
+  virtual void Observe(int type,
+                       const content::NotificationSource& source,
+                       const content::NotificationDetails& details) OVERRIDE;
 
   // KioskAppDataDelegate overrides:
   virtual void GetKioskAppIconCacheDir(base::FilePath* cache_dir) OVERRIDE;
   virtual void OnKioskAppDataChanged(const std::string& app_id) OVERRIDE;
   virtual void OnKioskAppDataLoadFailure(const std::string& app_id) OVERRIDE;
 
-  scoped_ptr<KioskAppPrefs> prefs_;
   ScopedVector<KioskAppData> apps_;
+  std::string auto_launch_app_id_;
   ObserverList<KioskAppManagerObserver, true> observers_;
 
   DISALLOW_COPY_AND_ASSIGN(KioskAppManager);

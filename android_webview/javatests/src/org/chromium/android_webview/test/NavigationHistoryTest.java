@@ -19,7 +19,7 @@ import org.chromium.net.test.util.TestWebServer;
 
 import java.util.concurrent.Callable;
 
-public class NavigationHistoryTest extends AndroidWebViewTestBase {
+public class NavigationHistoryTest extends AwTestBase {
 
     private static final String PAGE_1_PATH = "/page1.html";
     private static final String PAGE_1_TITLE = "Page 1 Title";
@@ -201,7 +201,7 @@ public class NavigationHistoryTest extends AndroidWebViewTestBase {
                 CommonResources.FAVICON_STATIC_HTML, null);
 
         assertEquals(0, list.getEntryCount());
-        getContentSettingsOnUiThread(mAwContents).setImagesEnabled(true);
+        getAwSettingsOnUiThread(mAwContents).setImagesEnabled(true);
         loadUrlSync(mAwContents, mContentsClient.getOnPageFinishedHelper(), url);
 
         list = getNavigationHistory(mAwContents);

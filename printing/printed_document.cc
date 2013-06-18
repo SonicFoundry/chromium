@@ -179,7 +179,7 @@ void PrintedDocument::DebugDump(const PrintedPage& page) {
   string16 filename;
   filename += name();
   filename += ASCIIToUTF16("_");
-  filename += ASCIIToUTF16(StringPrintf("%02d", page.page_number()));
+  filename += ASCIIToUTF16(base::StringPrintf("%02d", page.page_number()));
 #if defined(OS_WIN)
   filename += ASCIIToUTF16("_.emf");
   page.metafile()->SaveTo(
@@ -217,7 +217,7 @@ PrintedDocument::Immutable::Immutable(const PrintSettings& settings,
                                       PrintedPagesSource* source,
                                       int cookie)
     : settings_(settings),
-      source_message_loop_(MessageLoop::current()),
+      source_message_loop_(base::MessageLoop::current()),
       name_(source->RenderSourceName()),
       cookie_(cookie) {
 }

@@ -420,15 +420,15 @@ GestureSequence::Gestures* GestureSequence::ProcessTouchEventForGesture(
       break;
     case GST_PENDING_SYNTHETIC_CLICK_SECOND_PRESSED:
       PrependTapCancelGestureEvent(point, gestures.get());
-      // fall through
-    case GST_SCROLL_SECOND_PRESSED:
       if (IsSecondTouchDownCloseEnoughForTwoFingerTap()) {
         TwoFingerTouchDown(event, point, gestures.get());
         set_state(GS_PENDING_TWO_FINGER_TAP);
-      } else {
-        PinchStart(event, point, gestures.get());
-        set_state(GS_PINCH);
+        break;
       }
+      // fall through
+    case GST_SCROLL_SECOND_PRESSED:
+      PinchStart(event, point, gestures.get());
+      set_state(GS_PINCH);
       break;
     case GST_PENDING_TWO_FINGER_TAP_FIRST_RELEASED:
     case GST_PENDING_TWO_FINGER_TAP_SECOND_RELEASED:
@@ -678,16 +678,6 @@ void GestureSequence::AppendClickGestureEvent(const GesturePoint& point,
       1 << point.touch_id()));
 }
 
-void GestureSequence::AppendDoubleClickGestureEvent(const GesturePoint& point,
-                                                    Gestures* gestures) {
-  gestures->push_back(CreateGestureEvent(
-      GestureEventDetails(ui::ET_GESTURE_DOUBLE_TAP, 0, 0),
-      point.first_touch_position(),
-      flags_,
-      base::Time::FromDoubleT(point.last_touch_time()),
-      1 << point.touch_id()));
-}
-
 void GestureSequence::AppendScrollGestureBegin(const GesturePoint& point,
                                                const gfx::Point& location,
                                                Gestures* gestures) {
@@ -833,8 +823,6 @@ bool GestureSequence::Click(const TouchEvent& event,
   if (point.IsInClickWindow(event)) {
     bool double_tap = point.IsInDoubleClickWindow(event);
     AppendClickGestureEvent(point, double_tap ? 2 : 1, gestures);
-    if (double_tap)
-      AppendDoubleClickGestureEvent(point, gestures);
     return true;
   } else if (point.IsInsideManhattanSquare(event) &&
       !GetLongPressTimer()->IsRunning()) {

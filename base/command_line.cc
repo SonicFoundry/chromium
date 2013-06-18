@@ -24,7 +24,6 @@ using base::FilePath;
 
 CommandLine* CommandLine::current_process_commandline_ = NULL;
 
-
 namespace {
 const CommandLine::CharType kSwitchTerminator[] = FILE_PATH_LITERAL("--");
 const CommandLine::CharType kSwitchValueSeparator[] = FILE_PATH_LITERAL("=");
@@ -90,7 +89,6 @@ void AppendSwitchesAndArguments(CommandLine& command_line,
     }
   }
 }
-
 
 // Lowercase switches for backwards compatiblity *on Windows*.
 std::string LowerASCIIOnWindows(const std::string& string) {

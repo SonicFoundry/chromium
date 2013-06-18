@@ -89,7 +89,7 @@ Value* NetLogQuicCongestionFeedbackFrameCallback(
                frame->inter_arrival.received_packet_times.begin();
            it != frame->inter_arrival.received_packet_times.end(); ++it) {
         std::string value = base::Uint64ToString(it->first) + "@" +
-            base::Uint64ToString(it->second.ToMilliseconds());
+            base::Uint64ToString(it->second.ToDebuggingValue());
         received->Append(new base::StringValue(value));
       }
       break;
@@ -147,6 +147,11 @@ void QuicConnectionLogger::OnPacketReceived(const IPEndPoint& self_address,
                  packet.length()));
 }
 
+void QuicConnectionLogger::OnProtocolVersionMismatch(
+    QuicVersionTag received_version) {
+  // TODO(rtenneti): Add logging.
+}
+
 void QuicConnectionLogger::OnPacketHeader(const QuicPacketHeader& header) {
   net_log_.AddEvent(
       NetLog::TYPE_QUIC_SESSION_PACKET_HEADER_RECEIVED,
@@ -187,6 +192,10 @@ void QuicConnectionLogger::OnConnectionCloseFrame(
 
 void QuicConnectionLogger::OnPublicResetPacket(
     const QuicPublicResetPacket& packet) {
+}
+
+void QuicConnectionLogger::OnVersionNegotiationPacket(
+    const QuicVersionNegotiationPacket& packet) {
 }
 
 void QuicConnectionLogger::OnRevivedPacket(

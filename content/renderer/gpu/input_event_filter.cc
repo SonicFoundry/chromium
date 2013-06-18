@@ -6,16 +6,17 @@
 #include "base/debug/trace_event.h"
 #include "base/location.h"
 #include "base/message_loop_proxy.h"
-#include "content/common/view_messages.h"
+#include "content/common/input_messages.h"
 #include "content/renderer/gpu/input_event_filter.h"
 
 using WebKit::WebInputEvent;
 
 namespace content {
 
-InputEventFilter::InputEventFilter(IPC::Listener* main_listener,
-                                   base::MessageLoopProxy* target_loop,
-                                   const Handler& handler)
+InputEventFilter::InputEventFilter(
+    IPC::Listener* main_listener,
+    const scoped_refptr<base::MessageLoopProxy>& target_loop,
+    const Handler& handler)
     : main_loop_(base::MessageLoopProxy::current()),
       main_listener_(main_listener),
       sender_(NULL),
@@ -73,8 +74,17 @@ void InputEventFilter::OnChannelClosing() {
   sender_ = NULL;
 }
 
+// This function returns true if the IPC message is one that the compositor
+// thread can handle *or* one that needs to preserve relative order with
+// messages that the compositor thread can handle. Returning true for a message
+// type means that the message will go through an extra copy and thread hop, so
+// use with care.
+static bool RequiresThreadBounce(const IPC::Message& message) {
+  return IPC_MESSAGE_ID_CLASS(message.type()) == InputMsgStart;
+}
+
 bool InputEventFilter::OnMessageReceived(const IPC::Message& message) {
-  if (message.type() != ViewMsg_HandleInputEvent::ID)
+  if (!RequiresThreadBounce(message))
     return false;
 
   {
@@ -92,7 +102,7 @@ bool InputEventFilter::OnMessageReceived(const IPC::Message& message) {
 // static
 const WebInputEvent* InputEventFilter::CrackMessage(
     const IPC::Message& message) {
-  DCHECK(message.type() == ViewMsg_HandleInputEvent::ID);
+  DCHECK(message.type() == InputMsg_HandleInputEvent::ID);
 
   PickleIterator iter(message);
   const WebInputEvent* event = NULL;
@@ -109,6 +119,14 @@ void InputEventFilter::ForwardToMainListener(const IPC::Message& message) {
 
 void InputEventFilter::ForwardToHandler(const IPC::Message& message) {
   DCHECK(target_loop_->BelongsToCurrentThread());
+
+  if (message.type() != InputMsg_HandleInputEvent::ID) {
+    main_loop_->PostTask(
+        FROM_HERE,
+        base::Bind(&InputEventFilter::ForwardToMainListener,
+                   this, message));
+    return;
+  }
 
   // Save this message for later, in case we need to bounce it back up to the
   // main listener.
@@ -142,7 +160,8 @@ void InputEventFilter::SendACKOnIOThread(
     return;  // Filter was removed.
 
   sender_->Send(
-      new ViewHostMsg_HandleInputEvent_ACK(routing_id, event_type, ack_result));
+      new InputHostMsg_HandleInputEvent_ACK(
+          routing_id, event_type, ack_result));
 }
 
 }  // namespace content

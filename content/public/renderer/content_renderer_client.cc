@@ -71,6 +71,15 @@ WebKit::WebHyphenator* ContentRendererClient::OverrideWebHyphenator() {
   return NULL;
 }
 
+WebKit::WebThemeEngine* ContentRendererClient::OverrideThemeEngine() {
+  return NULL;
+}
+
+WebKit::WebSpeechSynthesizer* ContentRendererClient::OverrideSpeechSynthesizer(
+    WebKit::WebSpeechSynthesizerClient* client) {
+  return NULL;
+}
+
 bool ContentRendererClient::RunIdleHandlerWhenWidgetsHidden() {
   return true;
 }
@@ -109,12 +118,6 @@ bool ContentRendererClient::ShouldPumpEventsDuringCookieMessage() {
   return false;
 }
 
-bool ContentRendererClient::WillSetSecurityToken(
-    WebKit::WebFrame* frame,
-    v8::Handle<v8::Context> context) {
-  return false;
-}
-
 unsigned long long ContentRendererClient::VisitedLinkHash(
     const char* canonical_url, size_t length) {
   return 0LL;
@@ -149,6 +152,14 @@ bool ContentRendererClient::HandleSetCookieRequest(
 bool ContentRendererClient::AllowBrowserPlugin(
     WebKit::WebPluginContainer* container) const {
   return false;
+}
+
+MessageLoop* ContentRendererClient::OverrideCompositorMessageLoop() const {
+  return NULL;
+}
+
+bool ContentRendererClient::ShouldCreateCompositorInputHandler() const {
+  return true;
 }
 
 }  // namespace content

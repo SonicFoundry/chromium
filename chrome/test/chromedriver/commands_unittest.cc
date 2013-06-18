@@ -11,15 +11,15 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/values.h"
+#include "chrome/test/chromedriver/chrome/status.h"
+#include "chrome/test/chromedriver/chrome/stub_chrome.h"
+#include "chrome/test/chromedriver/chrome/stub_web_view.h"
+#include "chrome/test/chromedriver/chrome/web_view.h"
 #include "chrome/test/chromedriver/command_executor_impl.h"
 #include "chrome/test/chromedriver/commands.h"
 #include "chrome/test/chromedriver/element_commands.h"
 #include "chrome/test/chromedriver/fake_session_accessor.h"
 #include "chrome/test/chromedriver/session_commands.h"
-#include "chrome/test/chromedriver/status.h"
-#include "chrome/test/chromedriver/stub_chrome.h"
-#include "chrome/test/chromedriver/stub_web_view.h"
-#include "chrome/test/chromedriver/web_view.h"
 #include "chrome/test/chromedriver/window_commands.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/webdriver/atoms.h"
@@ -28,7 +28,8 @@ TEST(CommandsTest, GetStatus) {
   base::DictionaryValue params;
   scoped_ptr<base::Value> value;
   std::string session_id;
-  ASSERT_EQ(kOk, ExecuteGetStatus(params, "", &value, &session_id).code());
+  ASSERT_EQ(
+      kOk, ExecuteGetStatus(params, std::string(), &value, &session_id).code());
   base::DictionaryValue* dict;
   ASSERT_TRUE(value->GetAsDictionary(&dict));
   base::Value* unused;
@@ -72,7 +73,7 @@ TEST(CommandsTest, QuitAll) {
   scoped_ptr<base::Value> value;
   std::string session_id;
   Status status =
-      ExecuteQuitAll(cmd, &map, params, "", &value, &session_id);
+      ExecuteQuitAll(cmd, &map, params, std::string(), &value, &session_id);
   ASSERT_EQ(kOk, status.code());
   ASSERT_FALSE(value.get());
   ASSERT_EQ(2, count);
@@ -81,12 +82,18 @@ TEST(CommandsTest, QuitAll) {
 TEST(CommandsTest, Quit) {
   SessionMap map;
   Session session("id", scoped_ptr<Chrome>(new StubChrome()));
-  map.Set(session.id,
-          scoped_refptr<SessionAccessor>(new FakeSessionAccessor(&session)));
+  ASSERT_TRUE(session.thread.Start());
+  scoped_refptr<FakeSessionAccessor> session_accessor(
+      new FakeSessionAccessor(&session));
+  map.Set(session.id, session_accessor);
   base::DictionaryValue params;
   scoped_ptr<base::Value> value;
-  ASSERT_EQ(kOk, ExecuteQuit(&map, &session, params, &value).code());
+  std::string out_session_id;
+  ASSERT_EQ(kOk,
+            ExecuteSessionCommand(&map, base::Bind(ExecuteQuit, &map), params,
+                                  session.id, &value, &out_session_id).code());
   ASSERT_FALSE(map.Has(session.id));
+  ASSERT_TRUE(session_accessor->IsSessionDeleted());
   ASSERT_FALSE(value.get());
 }
 
@@ -108,12 +115,18 @@ class FailsToQuitChrome : public StubChrome {
 TEST(CommandsTest, QuitFails) {
   SessionMap map;
   Session session("id", scoped_ptr<Chrome>(new FailsToQuitChrome()));
-  map.Set(session.id,
-          scoped_refptr<SessionAccessor>(new FakeSessionAccessor(&session)));
+  ASSERT_TRUE(session.thread.Start());
+  scoped_refptr<FakeSessionAccessor> session_accessor(
+      new FakeSessionAccessor(&session));
+  map.Set(session.id, session_accessor);
   base::DictionaryValue params;
   scoped_ptr<base::Value> value;
-  ASSERT_EQ(kUnknownError, ExecuteQuit(&map, &session, params, &value).code());
+  std::string out_session_id;
+  ASSERT_EQ(kUnknownError,
+            ExecuteSessionCommand(&map, base::Bind(ExecuteQuit, &map), params,
+                                  session.id, &value, &out_session_id).code());
   ASSERT_FALSE(map.Has(session.id));
+  ASSERT_TRUE(session_accessor->IsSessionDeleted());
   ASSERT_FALSE(value.get());
 }
 
@@ -231,7 +244,7 @@ TEST(CommandsTest, SuccessfulFindElement) {
   FindElementWebView web_view(true, kElementExistsQueryTwice);
   Session session("id");
   session.implicit_wait = 1000;
-  session.frame = "frame_id1";
+  session.SwitchToSubFrame("frame_id1", std::string());
   base::DictionaryValue params;
   params.SetString("using", "id");
   params.SetString("value", "a");
@@ -260,7 +273,7 @@ TEST(CommandsTest, SuccessfulFindElements) {
   FindElementWebView web_view(false, kElementExistsQueryTwice);
   Session session("id");
   session.implicit_wait = 1000;
-  session.frame = "frame_id2";
+  session.SwitchToSubFrame("frame_id2", std::string());
   base::DictionaryValue params;
   params.SetString("using", "name");
   params.SetString("value", "b");
@@ -294,7 +307,7 @@ TEST(CommandsTest, SuccessfulFindChildElement) {
   FindElementWebView web_view(true, kElementExistsQueryTwice);
   Session session("id");
   session.implicit_wait = 1000;
-  session.frame = "frame_id3";
+  session.SwitchToSubFrame("frame_id3", std::string());
   base::DictionaryValue params;
   params.SetString("using", "tag name");
   params.SetString("value", "div");
@@ -332,7 +345,7 @@ TEST(CommandsTest, SuccessfulFindChildElements) {
   FindElementWebView web_view(false, kElementExistsQueryTwice);
   Session session("id");
   session.implicit_wait = 1000;
-  session.frame = "frame_id4";
+  session.SwitchToSubFrame("frame_id4", std::string());
   base::DictionaryValue params;
   params.SetString("using", "class name");
   params.SetString("value", "c");

@@ -16,8 +16,7 @@ namespace media {
 class DataBuffer;
 class DemuxerStream;
 
-class MEDIA_EXPORT AudioDecoder
-    : public base::RefCountedThreadSafe<AudioDecoder> {
+class MEDIA_EXPORT AudioDecoder {
  public:
   // Status codes for read operations.
   enum Status {
@@ -26,10 +25,13 @@ class MEDIA_EXPORT AudioDecoder
     kDecodeError,
   };
 
+  AudioDecoder();
+  virtual ~AudioDecoder();
+
   // Initialize an AudioDecoder with the given DemuxerStream, executing the
   // callback upon completion.
   // statistics_cb is used to update global pipeline statistics.
-  virtual void Initialize(const scoped_refptr<DemuxerStream>& stream,
+  virtual void Initialize(DemuxerStream* stream,
                           const PipelineStatusCB& status_cb,
                           const StatisticsCB& statistics_cb) = 0;
 
@@ -54,11 +56,7 @@ class MEDIA_EXPORT AudioDecoder
   virtual ChannelLayout channel_layout() = 0;
   virtual int samples_per_second() = 0;
 
- protected:
-  friend class base::RefCountedThreadSafe<AudioDecoder>;
-  virtual ~AudioDecoder();
-  AudioDecoder();
-
+ private:
   DISALLOW_COPY_AND_ASSIGN(AudioDecoder);
 };
 

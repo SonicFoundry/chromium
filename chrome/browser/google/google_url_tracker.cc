@@ -8,11 +8,11 @@
 #include "base/command_line.h"
 #include "base/prefs/pref_service.h"
 #include "base/string_util.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
 #include "chrome/browser/google/google_url_tracker_factory.h"
 #include "chrome/browser/google/google_url_tracker_infobar_delegate.h"
 #include "chrome/browser/google/google_url_tracker_navigation_helper.h"
 #include "chrome/browser/google/google_util.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/chrome_switches.h"
@@ -40,7 +40,7 @@ GoogleURLTracker::GoogleURLTracker(
       infobar_creator_(base::Bind(&GoogleURLTrackerInfoBarDelegate::Create)),
       google_url_(mode == UNIT_TEST_MODE ? kDefaultGoogleHomepage :
           profile->GetPrefs()->GetString(prefs::kLastKnownGoogleURL)),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_(this)),
+      weak_ptr_factory_(this),
       fetcher_id_(0),
       in_startup_sleep_(true),
       already_fetched_(false),

@@ -44,8 +44,8 @@
 #include "content/public/test/test_browser_thread.h"
 #include "content/public/test/test_launcher.h"
 #include "content/public/test/test_navigation_observer.h"
-#include "net/base/mock_host_resolver.h"
-#include "net/test/test_server.h"
+#include "net/dns/mock_host_resolver.h"
+#include "net/test/spawned_test_server.h"
 #include "ui/compositor/compositor_switches.h"
 
 #if defined(OS_CHROMEOS)
@@ -70,7 +70,8 @@ base::LazyInstance<chrome::ChromeContentRendererClient>::Leaky
 }  // namespace
 
 InProcessBrowserTest::InProcessBrowserTest()
-    : browser_(NULL)
+    : browser_(NULL),
+      exit_when_last_browser_closes_(true)
 #if defined(OS_MACOSX)
       , autorelease_pool_(NULL)
 #endif  // OS_MACOSX
@@ -118,7 +119,7 @@ void InProcessBrowserTest::SetUp() {
   // Single-process mode is not set in BrowserMain, so process it explicitly,
   // and set up renderer.
   if (command_line->HasSwitch(switches::kSingleProcess)) {
-    content::GetContentClient()->set_renderer_for_testing(
+    content::SetRendererClientForTesting(
         &g_chrome_content_renderer_client.Get());
   }
 
@@ -129,10 +130,6 @@ void InProcessBrowserTest::SetUp() {
 #endif  // defined(OS_CHROMEOS)
 
   host_resolver_ = new net::RuleBasedHostResolverProc(NULL);
-
-  // Something inside the browser does this lookup implicitly. Make it fail
-  // to avoid external dependency. It won't break the tests.
-  host_resolver_->AddSimulatedFailure("*.google.com");
 
   // See http://en.wikipedia.org/wiki/Web_Proxy_Autodiscovery_Protocol
   // We don't want the test code to use it.
@@ -189,7 +186,8 @@ void InProcessBrowserTest::PrepareTestCommandLine(CommandLine* command_line) {
 #endif
 
   // TODO(pkotwicz): Investigate if we can remove this switch.
-  command_line->AppendSwitch(switches::kDisableZeroBrowsersOpenForTests);
+  if (exit_when_last_browser_closes_)
+    command_line->AppendSwitch(switches::kDisableZeroBrowsersOpenForTests);
 
   if (command_line->GetArgs().empty())
     command_line->AppendArg(chrome::kAboutBlankURL);
@@ -223,7 +221,7 @@ void InProcessBrowserTest::AddTabAtIndexToBrowser(
     const GURL& url,
     content::PageTransition transition) {
   content::TestNavigationObserver observer(
-      content::NotificationService::AllSources(), NULL, 1);
+      content::NotificationService::AllSources(), 1);
 
   chrome::NavigateParams params(browser, url, transition);
   params.tabstrip_index = index;

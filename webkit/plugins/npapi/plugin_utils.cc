@@ -6,14 +6,14 @@
 
 #include <algorithm>
 
-#include "base/string_split.h"
 #include "base/string_util.h"
+#include "base/strings/string_split.h"
 #include "base/version.h"
 
 namespace webkit {
 namespace npapi {
 
-void CreateVersionFromString(const string16& version_string,
+void CreateVersionFromString(const base::string16& version_string,
                              Version* parsed_version) {
   // Remove spaces and ')' from the version string,
   // Replace any instances of 'r', ',' or '(' with a dot.

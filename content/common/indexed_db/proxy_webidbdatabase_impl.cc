@@ -7,17 +7,14 @@
 #include <vector>
 
 #include "content/common/child_thread.h"
-#include "content/common/indexed_db/indexed_db_messages.h"
 #include "content/common/indexed_db/indexed_db_dispatcher.h"
+#include "content/common/indexed_db/indexed_db_messages.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebIDBKeyPath.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebIDBMetadata.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebVector.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebIDBKeyPath.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebIDBMetadata.h"
 #include "webkit/glue/worker_task_runner.h"
 
-using WebKit::WebDOMStringList;
-using WebKit::WebExceptionCode;
-using WebKit::WebFrame;
 using WebKit::WebIDBCallbacks;
 using WebKit::WebIDBDatabaseCallbacks;
 using WebKit::WebIDBMetadata;
@@ -28,8 +25,10 @@ using webkit_glue::WorkerTaskRunner;
 
 namespace content {
 
-RendererWebIDBDatabaseImpl::RendererWebIDBDatabaseImpl(int32 ipc_database_id)
-    : ipc_database_id_(ipc_database_id) {
+RendererWebIDBDatabaseImpl::RendererWebIDBDatabaseImpl(
+    int32 ipc_database_id, int32 ipc_database_callbacks_id)
+    : ipc_database_id_(ipc_database_id),
+      ipc_database_callbacks_id_(ipc_database_callbacks_id) {
 }
 
 RendererWebIDBDatabaseImpl::~RendererWebIDBDatabaseImpl() {
@@ -90,7 +89,8 @@ void RendererWebIDBDatabaseImpl::createTransaction(
 void RendererWebIDBDatabaseImpl::close() {
   IndexedDBDispatcher* dispatcher =
       IndexedDBDispatcher::ThreadSpecificInstance();
-  dispatcher->RequestIDBDatabaseClose(ipc_database_id_);
+  dispatcher->RequestIDBDatabaseClose(ipc_database_id_,
+                                      ipc_database_callbacks_id_);
 }
 
 void RendererWebIDBDatabaseImpl::get(

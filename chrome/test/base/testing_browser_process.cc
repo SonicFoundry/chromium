@@ -25,18 +25,16 @@
 #endif
 
 #if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/settings/device_settings_service.h"
-#endif
+#include "chrome/test/base/testing_browser_process_platform_part_chromeos.h"
+#else
+#include "chrome/test/base/testing_browser_process_platform_part.h"
+#endif  // defined(OS_CHROMEOS)
 
 #if defined(ENABLE_CONFIGURATION_POLICY)
 #include "chrome/browser/policy/browser_policy_connector.h"
 #else
 #include "chrome/browser/policy/policy_service_stub.h"
 #endif  // defined(ENABLE_CONFIGURATION_POLICY)
-
-#if defined(ENABLE_MESSAGE_CENTER) && defined(USE_ASH)
-#include "ash/shell.h"
-#endif
 
 #if defined(ENABLE_MESSAGE_CENTER)
 #include "ui/message_center/message_center.h"
@@ -56,7 +54,8 @@ TestingBrowserProcess::TestingBrowserProcess()
 #endif
       local_state_(NULL),
       io_thread_(NULL),
-      system_request_context_(NULL) {
+      system_request_context_(NULL),
+      platform_part_(new TestingBrowserProcessPlatformPart()) {
 }
 
 TestingBrowserProcess::~TestingBrowserProcess() {
@@ -140,6 +139,10 @@ GLStringManager* TestingBrowserProcess::gl_string_manager() {
   return NULL;
 }
 
+GpuModeManager* TestingBrowserProcess::gpu_mode_manager() {
+  return NULL;
+}
+
 RenderWidgetSnapshotTaker*
 TestingBrowserProcess::GetRenderWidgetSnapshotTaker() {
 #if defined(OS_IOS)
@@ -176,11 +179,9 @@ net::URLRequestContextGetter* TestingBrowserProcess::system_request_context() {
   return system_request_context_;
 }
 
-#if defined(OS_CHROMEOS)
-chromeos::OomPriorityManager* TestingBrowserProcess::oom_priority_manager() {
-  return NULL;
+BrowserProcessPlatformPart* TestingBrowserProcess::platform_part() {
+  return platform_part_.get();
 }
-#endif  // defined(OS_CHROMEOS)
 
 extensions::EventRouterForwarder*
 TestingBrowserProcess::extension_event_router_forwarder() {
@@ -201,13 +202,7 @@ NotificationUIManager* TestingBrowserProcess::notification_ui_manager() {
 
 #if defined(ENABLE_MESSAGE_CENTER)
 message_center::MessageCenter* TestingBrowserProcess::message_center() {
-#if defined(USE_ASH)
-    return ash::Shell::GetInstance()->message_center();
-#else
-  if (!message_center_.get())
-    message_center_.reset(new message_center::MessageCenter());
-  return message_center_.get();
-#endif
+  return message_center::MessageCenter::Get();
 }
 #endif
 
@@ -311,6 +306,10 @@ CRLSetFetcher* TestingBrowserProcess::crl_set_fetcher() {
   return NULL;
 }
 
+PnaclComponentInstaller* TestingBrowserProcess::pnacl_component_installer() {
+  return NULL;
+}
+
 BookmarkPromptController* TestingBrowserProcess::bookmark_prompt_controller() {
 #if defined(OS_IOS)
   NOTIMPLEMENTED();
@@ -322,7 +321,7 @@ BookmarkPromptController* TestingBrowserProcess::bookmark_prompt_controller() {
 
 chrome::MediaFileSystemRegistry*
 TestingBrowserProcess::media_file_system_registry() {
-#if defined(OS_IOS)
+#if defined(OS_IOS) || defined (OS_ANDROID)
   NOTIMPLEMENTED();
   return NULL;
 #else
@@ -334,6 +333,10 @@ TestingBrowserProcess::media_file_system_registry() {
 
 void TestingBrowserProcess::PlatformSpecificCommandLineProcessing(
     const CommandLine& command_line) {
+}
+
+bool TestingBrowserProcess::created_local_state() const {
+    return (local_state_ != NULL);
 }
 
 void TestingBrowserProcess::SetBookmarkPromptController(
@@ -378,13 +381,6 @@ void TestingBrowserProcess::SetBrowserPolicyConnector(
 #if defined(ENABLE_CONFIGURATION_POLICY)
   if (browser_policy_connector_) {
     browser_policy_connector_->Shutdown();
-#if defined(OS_CHROMEOS)
-    if (!connector) {
-      // If the connector was created then it accessed this global singleton.
-      // It must also be Shutdown() for a clean teardown.
-      chromeos::DeviceSettingsService::Get()->Shutdown();
-    }
-#endif
   }
   browser_policy_connector_.reset(connector);
 #else

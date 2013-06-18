@@ -4,6 +4,7 @@
 
 #include "ash/wm/custom_frame_view_ash.h"
 
+#include "ash/shell_delegate.h"
 #include "ash/wm/frame_painter.h"
 #include "ash/wm/workspace/frame_maximize_button.h"
 #include "grit/ash_resources.h"
@@ -11,6 +12,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/compositor/layer_animator.h"
+#include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/image/image.h"
@@ -164,21 +166,33 @@ gfx::Size CustomFrameViewAsh::GetMaximumSize() {
 // views::ButtonListener overrides:
 void CustomFrameViewAsh::ButtonPressed(views::Button* sender,
                                        const ui::Event& event) {
-  if (event.IsShiftDown())
-    ui::LayerAnimator::set_slow_animation_mode(true);
+  scoped_ptr<ui::ScopedAnimationDurationScaleMode> slow_duration_mode;
+  if (event.IsShiftDown()) {
+    slow_duration_mode.reset(new ui::ScopedAnimationDurationScaleMode(
+        ui::ScopedAnimationDurationScaleMode::SLOW_DURATION));
+  }
+
+  ash::UserMetricsAction action =
+      ash::UMA_WINDOW_MAXIMIZE_BUTTON_CLICK_MAXIMIZE;
+
   if (sender == maximize_button_) {
     // The maximize button may move out from under the cursor.
     ResetWindowControls();
-    if (frame_->IsMaximized())
+    if (frame_->IsMaximized()) {
+      action = ash::UMA_WINDOW_MAXIMIZE_BUTTON_CLICK_RESTORE;
       frame_->Restore();
-    else
+    } else {
       frame_->Maximize();
+    }
     // |this| may be deleted - some windows delete their frames on maximize.
   } else if (sender == close_button_) {
+    action = ash::UMA_WINDOW_CLOSE_BUTTON_CLICK;
     frame_->Close();
+  } else {
+    return;
   }
-  if (event.IsShiftDown())
-    ui::LayerAnimator::set_slow_animation_mode(false);
+
+  ash::Shell::GetInstance()->delegate()->RecordUserMetricsAction(action);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

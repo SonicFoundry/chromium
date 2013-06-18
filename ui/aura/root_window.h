@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/basictypes.h"
+#include "base/gtest_prod_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -26,6 +27,7 @@
 #include "ui/compositor/layer_animation_observer.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/point.h"
+#include "ui/gfx/transform.h"
 
 class SkCanvas;
 
@@ -46,10 +48,11 @@ class ViewProp;
 }
 
 namespace aura {
-
+class TestScreen;
 class RootWindow;
 class RootWindowHost;
 class RootWindowObserver;
+class RootWindowTransformer;
 
 // RootWindow is responsible for hosting a set of windows.
 class AURA_EXPORT RootWindow : public ui::CompositorDelegate,
@@ -62,7 +65,7 @@ class AURA_EXPORT RootWindow : public ui::CompositorDelegate,
                                public aura::RootWindowHostDelegate {
  public:
   struct AURA_EXPORT CreateParams {
-    // CreateParams with initial_bounds and default host.
+    // CreateParams with initial_bounds and default host in pixel.
     explicit CreateParams(const gfx::Rect& initial_bounds);
     ~CreateParams() {}
 
@@ -96,14 +99,17 @@ class AURA_EXPORT RootWindow : public ui::CompositorDelegate,
   // Stop listening events in preparation for shutdown.
   void PrepareForShutdown();
 
+  // Repost event for re-processing. Used when exiting context menus.
+  void RepostEvent(const ui::LocatedEvent& event);
+
   RootWindowHostDelegate* AsRootWindowHostDelegate();
 
-  // Sets the size of the root window.
+  // Gets/sets the size of the host window.
   void SetHostSize(const gfx::Size& size_in_pixel);
   gfx::Size GetHostSize() const;
 
   // Sets the bounds of the host window.
-  void SetHostBounds(const gfx::Rect& size_in_pixel);
+  void SetHostBounds(const gfx::Rect& size_in_pizel);
 
   // Returns where the RootWindow is on screen.
   gfx::Point GetHostOrigin() const;
@@ -123,6 +129,9 @@ class AURA_EXPORT RootWindow : public ui::CompositorDelegate,
   // Moves the cursor to the specified location relative to the root window.
   virtual void MoveCursorTo(const gfx::Point& location) OVERRIDE;
 
+  // Moves the cursor to the |host_location| given in host coordinates.
+  void MoveCursorToHostLocation(const gfx::Point& host_location);
+
   // Clips the cursor movement to the root_window.
   bool ConfineCursorToWindow();
 
@@ -130,7 +139,10 @@ class AURA_EXPORT RootWindow : public ui::CompositorDelegate,
   void Draw();
 
   // Draw the whole screen.
-  void ScheduleFullDraw();
+  void ScheduleFullRedraw();
+
+  // Draw the damage_rect.
+  void ScheduleRedrawRect(const gfx::Rect& damage_rect);
 
   // Returns a target window for the given gesture event.
   Window* GetGestureTarget(ui::GestureEvent* event);
@@ -179,6 +191,14 @@ class AURA_EXPORT RootWindow : public ui::CompositorDelegate,
   // Converts |point| from native screen coordinate system to the root window's.
   void ConvertPointFromNativeScreen(gfx::Point* point) const;
 
+  // Converts |point| from the root window's coordinate system to the
+  // host window's.
+  void ConvertPointToHost(gfx::Point* point) const;
+
+  // Converts |point| from the host window's coordinate system to the
+  // root window's.
+  void ConvertPointFromHost(gfx::Point* point) const;
+
   // Gesture Recognition -------------------------------------------------------
 
   // When a touch event is dispatched to a Window, it may want to process the
@@ -222,11 +242,6 @@ class AURA_EXPORT RootWindow : public ui::CompositorDelegate,
                           const gfx::Point& dest_offset,
                           SkCanvas* canvas);
 
-  // Grabs a snapshot of the root window using platform-specific APIs, encodes
-  // it in PNG format, and saves it to |png_representation|.
-  bool GrabSnapshot(const gfx::Rect& snapshot_bounds,
-                    std::vector<unsigned char>* png_representation);
-
   // Gets the last location seen in a mouse event in this root window's
   // coordinates. This may return a point outside the root window's bounds.
   gfx::Point GetLastMouseLocationInRoot() const;
@@ -268,8 +283,18 @@ class AURA_EXPORT RootWindow : public ui::CompositorDelegate,
   // Exposes RootWindowHost::QueryMouseLocation() for test purposes.
   bool QueryMouseLocationForTest(gfx::Point* point) const;
 
+  // Clears internal mouse state (such as mouse ups should be sent to the same
+  // window that ate mouse downs).
+  void ClearMouseHandlers();
+
+  void SetRootWindowTransformer(scoped_ptr<RootWindowTransformer> transformer);
+  gfx::Transform GetRootTransform() const;
+
  private:
+  FRIEND_TEST_ALL_PREFIXES(RootWindowTest, KeepTranslatedEventInRoot);
+
   friend class Window;
+  friend class TestScreen;
 
   // The parameter for OnWindowHidden() to specify why window is hidden.
   enum WindowHiddenReason {
@@ -283,8 +308,16 @@ class AURA_EXPORT RootWindow : public ui::CompositorDelegate,
   // factor. The RootWindowHostDelegate dispatches events in the physical pixel
   // coordinate. But the event processing from RootWindow onwards happen in
   // device-independent pixel coordinate. So it is necessary to update the event
-  // received from the host.
-  void TransformEventForDeviceScaleFactor(ui::LocatedEvent* event);
+  // received from the host. When |keep_inside_root| is true and the event's
+  // system location is inside host window's bounds, the location will be
+  // kept inside the root window's bounds.
+  void TransformEventForDeviceScaleFactor(bool keep_inside_root,
+                                          ui::LocatedEvent* event);
+
+  // Moves the cursor to the specified location. This method is internally used
+  // by MoveCursorTo() and MoveCursorToHostLocation().
+  void MoveCursorToInternal(const gfx::Point& root_location,
+                            const gfx::Point& host_location);
 
   // Called whenever the mouse moves, tracks the current |mouse_moved_handler_|,
   // sending exited and entered events as its value changes.
@@ -315,6 +348,10 @@ class AURA_EXPORT RootWindow : public ui::CompositorDelegate,
   // |window| itself).
   void CleanupGestureRecognizerState(Window* window);
 
+  // Updates the root window's size using |host_size|, current
+  // transform and insets.
+  void UpdateWindowSize(const gfx::Size& host_size);
+
   // Overridden from ui::EventDispatcherDelegate.
   virtual bool CanDispatchToTarget(EventTarget* target) OVERRIDE;
 
@@ -339,7 +376,7 @@ class AURA_EXPORT RootWindow : public ui::CompositorDelegate,
   virtual void OnHostActivated() OVERRIDE;
   virtual void OnHostLostWindowCapture() OVERRIDE;
   virtual void OnHostLostMouseGrab() OVERRIDE;
-  virtual void OnHostPaint() OVERRIDE;
+  virtual void OnHostPaint(const gfx::Rect& damage_rect) OVERRIDE;
   virtual void OnHostMoved(const gfx::Point& origin) OVERRIDE;
   virtual void OnHostResized(const gfx::Size& size) OVERRIDE;
   virtual float GetDeviceScaleFactor() OVERRIDE;
@@ -352,8 +389,9 @@ class AURA_EXPORT RootWindow : public ui::CompositorDelegate,
   // NOTE: because these methods dispatch events from RootWindowHost the
   // coordinates are in terms of the root.
   bool DispatchMouseEventImpl(ui::MouseEvent* event);
+  bool DispatchMouseEventRepost(ui::MouseEvent* event);
   bool DispatchMouseEventToTarget(ui::MouseEvent* event, Window* target);
-  void DispatchHeldMouseMove();
+  void DispatchHeldEvents();
 
   // Parses the switch describing the initial size for the host window and
   // returns bounds for the window.
@@ -366,6 +404,8 @@ class AURA_EXPORT RootWindow : public ui::CompositorDelegate,
   // Creates and dispatches synthesized mouse move event using the
   // current mouse location.
   void SynthesizeMouseMoveEvent();
+
+  gfx::Transform GetInverseRootTransform() const;
 
   scoped_ptr<ui::Compositor> compositor_;
 
@@ -406,11 +446,17 @@ class AURA_EXPORT RootWindow : public ui::CompositorDelegate,
   // while the count is > 0.
   int mouse_move_hold_count_;
   scoped_ptr<ui::MouseEvent> held_mouse_move_;
-  // Used to schedule DispatchHeldMouseMove() when |mouse_move_hold_count_| goes
+  // Used to schedule DispatchHeldEvents() when |mouse_move_hold_count_| goes
   // to 0.
-  base::WeakPtrFactory<RootWindow> held_mouse_event_factory_;
+  base::WeakPtrFactory<RootWindow> held_event_factory_;
+
+  // Allowing for reposting of events. Used when exiting context menus.
+  scoped_ptr<ui::LocatedEvent>  held_repostable_event_;
+  base::WeakPtrFactory<RootWindow> repostable_event_factory_;
 
   scoped_ptr<ui::ViewProp> prop_;
+
+  scoped_ptr<RootWindowTransformer> transformer_;
 
   DISALLOW_COPY_AND_ASSIGN(RootWindow);
 };

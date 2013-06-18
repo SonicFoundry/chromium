@@ -28,8 +28,12 @@
       'common/env_vars.h',
       'common/net/test_server_locations.cc',
       'common/net/test_server_locations.h',
+      'common/pref_font_script_names-inl.h',
+      'common/pref_font_webkit_names.h',
       'common/pref_names.cc',
       'common/pref_names.h',
+      'common/widevine_cdm_constants.cc',
+      'common/widevine_cdm_constants.h',
     ],
     'actions': [
       {

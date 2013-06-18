@@ -14,7 +14,6 @@
 #include "build/build_config.h"
 #include "media/audio/audio_io.h"
 #include "media/audio/audio_manager_base.h"
-#include "media/audio/audio_util.h"
 #include "media/base/seekable_buffer.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -85,7 +84,7 @@ class MockAudioManager : public AudioManagerAnyPlatform {
   virtual ~MockAudioManager() {}
 
   virtual scoped_refptr<base::MessageLoopProxy> GetMessageLoop() OVERRIDE {
-    return MessageLoop::current()->message_loop_proxy();
+    return base::MessageLoop::current()->message_loop_proxy();
   }
 
  private:
@@ -100,7 +99,7 @@ class AudioLowLatencyInputOutputTest : public testing::Test {
   virtual ~AudioLowLatencyInputOutputTest() {}
 
   AudioManager* audio_manager() { return &mock_audio_manager_; }
-  MessageLoopForUI* message_loop() { return &message_loop_; }
+  base::MessageLoopForUI* message_loop() { return &message_loop_; }
 
   // Convenience method which ensures that we are not running on the build
   // bots and that at least one valid input and output device can be found.
@@ -113,7 +112,7 @@ class AudioLowLatencyInputOutputTest : public testing::Test {
   }
 
  private:
-  MessageLoopForUI message_loop_;
+  base::MessageLoopForUI message_loop_;
   MockAudioManager mock_audio_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioLowLatencyInputOutputTest);
@@ -210,7 +209,7 @@ class FullDuplexAudioSinkSource
   }
 
   virtual void OnClose(AudioInputStream* stream) OVERRIDE {}
-  virtual void OnError(AudioInputStream* stream, int code) OVERRIDE {}
+  virtual void OnError(AudioInputStream* stream) OVERRIDE {}
 
   // AudioOutputStream::AudioSourceCallback.
   virtual int OnMoreData(AudioBus* audio_bus,
@@ -258,7 +257,7 @@ class FullDuplexAudioSinkSource
     return 0;
   }
 
-  virtual void OnError(AudioOutputStream* stream, int code) OVERRIDE {}
+  virtual void OnError(AudioOutputStream* stream) OVERRIDE {}
   virtual void WaitTillDataReady() OVERRIDE {}
 
  protected:
@@ -276,7 +275,7 @@ class FullDuplexAudioSinkSource
   int channels_;
   int frame_size_;
   double frames_to_ms_;
-  scoped_array<AudioDelayState> delay_states_;
+  scoped_ptr<AudioDelayState[]> delay_states_;
   size_t input_elements_to_write_;
   size_t output_elements_to_write_;
   base::Time previous_write_time_;
@@ -286,14 +285,10 @@ class AudioInputStreamTraits {
  public:
   typedef AudioInputStream StreamType;
 
-  static int HardwareSampleRate() {
-    return static_cast<int>(media::GetAudioInputHardwareSampleRate(
-        AudioManagerBase::kDefaultDeviceId));
-  }
-
-  // TODO(henrika): add support for GetAudioInputHardwareBufferSize in media.
-  static int HardwareBufferSize() {
-    return static_cast<int>(media::GetAudioHardwareBufferSize());
+  static AudioParameters GetDefaultAudioStreamParameters(
+      AudioManager* audio_manager) {
+    return audio_manager->GetInputStreamParameters(
+        AudioManagerBase::kDefaultDeviceId);
   }
 
   static StreamType* CreateStream(AudioManager* audio_manager,
@@ -307,12 +302,9 @@ class AudioOutputStreamTraits {
  public:
   typedef AudioOutputStream StreamType;
 
-  static int HardwareSampleRate() {
-    return static_cast<int>(media::GetAudioHardwareSampleRate());
-  }
-
-  static int HardwareBufferSize() {
-    return static_cast<int>(media::GetAudioHardwareBufferSize());
+  static AudioParameters GetDefaultAudioStreamParameters(
+      AudioManager* audio_manager) {
+    return audio_manager->GetDefaultOutputStreamParameters();
   }
 
   static StreamType* CreateStream(AudioManager* audio_manager,
@@ -339,11 +331,13 @@ class StreamWrapper {
 #endif
         bits_per_sample_(16) {
     // Use the preferred sample rate.
-    sample_rate_ = StreamTraits::HardwareSampleRate();
+    const AudioParameters& params =
+        StreamTraits::GetDefaultAudioStreamParameters(audio_manager_);
+    sample_rate_ = params.sample_rate();
 
     // Use the preferred buffer size. Note that the input side uses the same
     // size as the output side in this implementation.
-    samples_per_packet_ = StreamTraits::HardwareBufferSize();
+    samples_per_packet_ = params.frames_per_buffer();
   }
 
   virtual ~StreamWrapper() {}
@@ -439,7 +433,7 @@ TEST_F(AudioLowLatencyInputOutputTest, DISABLED_FullDuplexDelayMeasurement) {
   // in loop back during this time. At the same time, delay recordings are
   // performed and stored in the output text file.
   message_loop()->PostDelayedTask(FROM_HERE,
-      MessageLoop::QuitClosure(), TestTimeouts::action_timeout());
+      base::MessageLoop::QuitClosure(), TestTimeouts::action_timeout());
   message_loop()->Run();
 
   aos->Stop();

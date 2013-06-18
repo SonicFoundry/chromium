@@ -23,11 +23,11 @@
 class Browser;
 class ExtensionInstallUI;
 class InfoBarDelegate;
-class MessageLoop;
 class Profile;
 
 namespace base {
 class DictionaryValue;
+class MessageLoop;
 }  // namespace base
 
 namespace content {
@@ -216,6 +216,10 @@ class ExtensionInstallPrompt
 
   bool record_oauth2_grant() const { return record_oauth2_grant_; }
 
+  content::WebContents* parent_web_contents() const {
+    return show_params_.parent_web_contents;
+  }
+
   // This is called by the bundle installer to verify whether the bundle
   // should be installed.
   //
@@ -264,8 +268,10 @@ class ExtensionInstallPrompt
   // extension should be enabled (external extensions are installed disabled).
   //
   // We *MUST* eventually call either Proceed() or Abort() on |delegate|.
-  virtual void ConfirmExternalInstall(Delegate* delegate,
-                                      const extensions::Extension* extension);
+  virtual void ConfirmExternalInstall(
+      Delegate* delegate,
+      const extensions::Extension* extension,
+      const ShowDialogCallback& show_dialog_callback);
 
   // This is called by the extension permissions API to verify whether an
   // extension may be granted additional permissions.
@@ -300,7 +306,7 @@ class ExtensionInstallPrompt
  protected:
   friend class extensions::ExtensionWebstorePrivateApiTest;
   friend class extensions::MockGetAuthTokenFunction;
-  friend class WebstoreStandaloneInstallUnpackFailureTest;
+  friend class WebstoreStartupInstallUnpackFailureTest;
 
   // Whether or not we should record the oauth2 grant upon successful install.
   bool record_oauth2_grant_;
@@ -332,7 +338,7 @@ class ExtensionInstallPrompt
   // Shows the actual UI (the icon should already be loaded).
   void ShowConfirmation();
 
-  MessageLoop* ui_loop_;
+  base::MessageLoop* ui_loop_;
 
   // The extensions installation icon.
   SkBitmap icon_;

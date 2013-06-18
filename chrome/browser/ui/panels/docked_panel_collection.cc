@@ -644,13 +644,6 @@ void DockedPanelCollection::OnAutoHidingDesktopBarThicknessChanged(
   RefreshLayout();
 }
 
-void DockedPanelCollection::OnFullScreenModeChanged(bool is_full_screen) {
-  for (Panels::const_iterator iter = panels_.begin();
-       iter != panels_.end(); ++iter) {
-    (*iter)->FullScreenModeChanged(is_full_screen);
-  }
-}
-
 void DockedPanelCollection::RefreshLayout() {
   int total_active_width = 0;
   int total_inactive_width = 0;
@@ -768,6 +761,7 @@ void DockedPanelCollection::CloseAll() {
 void DockedPanelCollection::UpdatePanelOnCollectionChange(Panel* panel) {
   panel->set_attention_mode(Panel::USE_PANEL_ATTENTION);
   panel->SetAlwaysOnTop(true);
+  panel->ShowShadow(true);
   panel->EnableResizeByMouse(true);
   panel->UpdateMinimizeRestoreButtonVisibility();
   panel->SetWindowCornerStyle(panel::TOP_ROUNDED);
@@ -787,6 +781,14 @@ void DockedPanelCollection::OnPanelActiveStateChanged(Panel* panel) {
   // This lets us avoid refreshing too many times when one panel loses
   // focus and another gains it.
   ScheduleLayoutRefresh();
+}
+
+gfx::Rect DockedPanelCollection::GetInitialPanelBounds(
+      const gfx::Rect& requested_bounds) const {
+  gfx::Rect initial_bounds = requested_bounds;
+  initial_bounds.set_origin(
+      GetDefaultPositionForPanel(requested_bounds.size()));
+  return initial_bounds;
 }
 
 bool DockedPanelCollection::HasPanel(Panel* panel) const {

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include "android_webview/common/url_constants.h"
 #include "android_webview/renderer/aw_render_view_ext.h"
 #include "android_webview/renderer/view_renderer.h"
+#include "base/message_loop.h"
 #include "base/utf_string_conversions.h"
 #include "components/visitedlink/renderer/visitedlink_slave.h"
 #include "content/public/renderer/render_thread.h"
@@ -56,6 +57,7 @@ bool AwContentRendererClient::HasErrorPage(int http_status_code,
 }
 
 void AwContentRendererClient::GetNavigationErrorStrings(
+    WebKit::WebFrame* /* frame */,
     const WebKit::WebURLRequest& failed_request,
     const WebKit::WebURLError& error,
     std::string* error_html,

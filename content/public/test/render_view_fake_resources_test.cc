@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "base/process.h"
+#include "base/run_loop.h"
 #include "base/shared_memory.h"
 #include "base/time.h"
 #include "content/common/resource_messages.h"
@@ -59,7 +60,7 @@ void RenderViewFakeResourcesTest::SetUp() {
   // but we use a real RenderThread so that we can use the ResourceDispatcher
   // to fetch network resources.  These are then served canned content
   // in OnRequestResource().
-  GetContentClient()->set_renderer_for_testing(&content_renderer_client_);
+  SetRendererClientForTesting(&content_renderer_client_);
   // Generate a unique channel id so that multiple instances of the test can
   // run in parallel.
   std::string channel_id = IPC::Channel::GenerateVerifiedChannelID(
@@ -94,7 +95,7 @@ void RenderViewFakeResourcesTest::TearDown() {
 
   ASSERT_TRUE(channel_->Send(new ViewMsg_Close(kViewId)));
   do {
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     view_ = NULL;
     RenderView::ForEach(this);
   } while (view_);

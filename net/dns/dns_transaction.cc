@@ -17,7 +17,7 @@
 #include "base/metrics/histogram.h"
 #include "base/rand_util.h"
 #include "base/stl_util.h"
-#include "base/string_piece.h"
+#include "base/strings/string_piece.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/timer.h"
 #include "base/values.h"
@@ -537,7 +537,7 @@ class DnsTransactionImpl : public DnsTransaction,
     if (rv == OK) {
       qnames_initial_size_ = qnames_.size();
       if (qtype_ == dns_protocol::kTypeA)
-        UMA_HISTOGRAM_COUNTS("AsyncDns.SuffixSearchStart", qnames_.size());
+        UMA_HISTOGRAM_COUNTS("AsyncDNS.SuffixSearchStart", qnames_.size());
       AttemptResult result = ProcessAttemptResult(StartQuery());
       if (result.rv == OK) {
         // DnsTransaction must never succeed synchronously.
@@ -624,8 +624,8 @@ class DnsTransactionImpl : public DnsTransaction,
     timer_.Stop();
 
     if (response && qtype_ == dns_protocol::kTypeA) {
-      UMA_HISTOGRAM_COUNTS("AsyncDns.SuffixSearchRemain", qnames_.size());
-      UMA_HISTOGRAM_COUNTS("AsyncDns.SuffixSearchDone",
+      UMA_HISTOGRAM_COUNTS("AsyncDNS.SuffixSearchRemain", qnames_.size());
+      UMA_HISTOGRAM_COUNTS("AsyncDNS.SuffixSearchDone",
                            qnames_initial_size_ - qnames_.size());
     }
 

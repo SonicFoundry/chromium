@@ -11,12 +11,10 @@
 #include "content/common/content_export.h"
 #include "content/common/view_message_enums.h"
 
+struct WebPreferences;
+
 namespace WebKit {
 struct WebScreenInfo;
-}
-
-namespace webkit_glue {
-struct WebPreferences;
 }
 
 namespace content {
@@ -28,7 +26,7 @@ typedef base::RefCountedData<int> SharedRenderViewCounter;
 struct CONTENT_EXPORT RenderViewImplParams {
   RenderViewImplParams(int32 opener_id,
                        const RendererPreferences& renderer_prefs,
-                       const webkit_glue::WebPreferences& webkit_prefs,
+                       const WebPreferences& webkit_prefs,
                        SharedRenderViewCounter* counter,
                        int32 routing_id,
                        int32 surface_id,
@@ -38,12 +36,13 @@ struct CONTENT_EXPORT RenderViewImplParams {
                        bool swapped_out,
                        int32 next_page_id,
                        const WebKit::WebScreenInfo& screen_info,
-                       AccessibilityMode accessibility_mode);
+                       AccessibilityMode accessibility_mode,
+                       bool allow_partial_swap);
   ~RenderViewImplParams();
 
   int32 opener_id;
   const RendererPreferences& renderer_prefs;
-  const webkit_glue::WebPreferences& webkit_prefs;
+  const WebPreferences& webkit_prefs;
   SharedRenderViewCounter* counter;
   int32 routing_id;
   int32 surface_id;
@@ -54,6 +53,7 @@ struct CONTENT_EXPORT RenderViewImplParams {
   int32 next_page_id;
   const WebKit::WebScreenInfo& screen_info;
   AccessibilityMode accessibility_mode;
+  bool allow_partial_swap;
 };
 
 }  // namespace content

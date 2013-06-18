@@ -22,6 +22,11 @@ scoped_ptr<PasswordForm> InitPasswordFormFromWebPasswordForm(
   password_form->submit_element = web_password_form.submitElement;
   password_form->username_element = web_password_form.userNameElement;
   password_form->username_value = web_password_form.userNameValue;
+  password_form->possible_usernames.insert(
+      password_form->possible_usernames.begin(),
+      web_password_form.possibleUserNames.data(),
+      web_password_form.possibleUserNames.data() +
+      web_password_form.possibleUserNames.size());
   password_form->password_element = web_password_form.passwordElement;
   password_form->password_value = web_password_form.passwordValue;
   password_form->password_autocomplete_set =
@@ -42,7 +47,7 @@ scoped_ptr<PasswordForm> CreatePasswordForm(const WebFormElement& webform) {
   WebPasswordFormData web_password_form(webform);
   if (web_password_form.isValid())
     return InitPasswordFormFromWebPasswordForm(web_password_form);
-  return scoped_ptr<PasswordForm>(new PasswordForm());
+  return scoped_ptr<PasswordForm>();
 }
 
 }  // namespace content

@@ -7,239 +7,42 @@
 #include <set>
 
 #include "base/callback.h"
-#include "base/command_line.h"
-#include "base/file_util.h"
-#include "base/format_macros.h"
 #include "base/metrics/histogram.h"
-#include "base/stringprintf.h"
-#include "base/threading/sequenced_worker_pool.h"
-#include "base/values.h"
+#include "base/strings/string_number_conversions.h"
 #include "chrome/browser/chromeos/drive/change_list_loader_observer.h"
 #include "chrome/browser/chromeos/drive/change_list_processor.h"
-#include "chrome/browser/chromeos/drive/drive_cache.h"
-#include "chrome/browser/chromeos/drive/drive_file_system_util.h"
-#include "chrome/browser/chromeos/drive/drive_scheduler.h"
 #include "chrome/browser/chromeos/drive/drive_webapps_registry.h"
+#include "chrome/browser/chromeos/drive/file_system_util.h"
+#include "chrome/browser/chromeos/drive/job_scheduler.h"
+#include "chrome/browser/chromeos/drive/logging.h"
 #include "chrome/browser/google_apis/drive_api_parser.h"
 #include "chrome/browser/google_apis/drive_api_util.h"
-#include "chrome/common/chrome_switches.h"
 #include "content/public/browser/browser_thread.h"
+#include "googleurl/src/gurl.h"
 
 using content::BrowserThread;
 
 namespace drive {
 
-namespace {
-
-const base::FilePath::CharType kFilesystemProtoFile[] =
-    FILE_PATH_LITERAL("file_system.pb");
-const base::FilePath::CharType kResourceMetadataDBFile[] =
-    FILE_PATH_LITERAL("resource_metadata.db");
-
-// Update the fetch progress UI per every this number of feeds.
-const int kFetchUiUpdateStep = 10;
-
-// Schedule for dumping root file system proto buffers to disk depending its
-// total protobuffer size in MB.
-typedef struct {
-  double size;
-  int timeout;
-} SerializationTimetable;
-
-SerializationTimetable kSerializeTimetable[] = {
-#ifndef NDEBUG
-    {0.5, 0},    // Less than 0.5MB, dump immediately.
-    {-1,  1},    // Any size, dump if older than 1 minute.
-#else
-    {0.5, 0},    // Less than 0.5MB, dump immediately.
-    {1.0, 15},   // Less than 1.0MB, dump after 15 minutes.
-    {2.0, 30},
-    {4.0, 60},
-    {-1,  120},  // Any size, dump if older than 120 minutes.
-#endif
-};
-
-// Loads the file at |path| into the string |serialized_proto| on a blocking
-// thread.
-DriveFileError LoadProtoOnBlockingPool(const base::FilePath& path,
-                                       base::Time* last_modified,
-                                       std::string* serialized_proto) {
-  base::PlatformFileInfo info;
-  if (!file_util::GetFileInfo(path, &info))
-    return DRIVE_FILE_ERROR_NOT_FOUND;
-  *last_modified = info.last_modified;
-  if (!file_util::ReadFileToString(path, serialized_proto)) {
-    LOG(WARNING) << "Proto file not found at " << path.value();
-    return DRIVE_FILE_ERROR_NOT_FOUND;
-  }
-  return DRIVE_FILE_OK;
-}
-
-// Returns true if file system is due to be serialized on disk based on it
-// |serialized_size| and |last_serialized| timestamp.
-bool ShouldSerializeFileSystemNow(size_t serialized_size,
-                                  const base::Time& last_serialized) {
-  const double size_in_mb = serialized_size / 1048576.0;
-  const int last_proto_dump_in_min =
-      (base::Time::Now() - last_serialized).InMinutes();
-  for (size_t i = 0; i < arraysize(kSerializeTimetable); i++) {
-    if ((size_in_mb < kSerializeTimetable[i].size ||
-         kSerializeTimetable[i].size == -1) &&
-        last_proto_dump_in_min >= kSerializeTimetable[i].timeout) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// Saves the string |serialized_proto| to a file at |path| on a blocking thread.
-void SaveProtoOnBlockingPool(const base::FilePath& path,
-                             scoped_ptr<std::string> serialized_proto) {
-  const int file_size = static_cast<int>(serialized_proto->length());
-  if (file_util::WriteFile(path, serialized_proto->data(), file_size) !=
-      file_size) {
-    LOG(WARNING) << "Drive proto file can't be stored at "
-                 << path.value();
-    if (!file_util::Delete(path, true)) {
-      LOG(WARNING) << "Drive proto file can't be deleted at "
-                   << path.value();
-    }
-  }
-}
-
-bool UseLevelDB() {
-  // TODO(achuith): Re-enable this.
-  return false;
-}
-
-// Parses a google_apis::ResourceList from |data|.
-scoped_ptr<google_apis::ResourceList> ParseFeedOnBlockingPool(
-    scoped_ptr<base::Value> data) {
-  return google_apis::ResourceList::ExtractAndParse(*data);
-}
-
-}  // namespace
-
-// Set of parameters sent to LoadFromServer.
-//
-// Value of |start_changestamp| determines the type of feed to load - 0 means
-// root feed, every other value would trigger delta feed.
-//
-// Loaded feed may be partial due to size limit on a single feed. In that case,
-// the loaded feed will have next feed url set. Iff |load_subsequent_feeds|
-// parameter is set, feed loader will load all subsequent feeds.
-//
-// If invoked as a part of content search, query will be set in |search_query|.
-// If |feed_to_load| is set, this is feed url that will be used to load feed.
-//
-// When all feeds are loaded, |feed_load_callback| is invoked with the retrieved
-// feeds. |feed_load_callback| must not be null.
-struct ChangeListLoader::LoadFeedParams {
-  explicit LoadFeedParams(const LoadFeedListCallback& feed_load_callback)
-      : start_changestamp(0),
-        shared_with_me(false),
-        load_subsequent_feeds(true),
-        feed_load_callback(feed_load_callback) {}
-
-  // Runs this->feed_load_callback with |error|.
-  void RunFeedLoadCallback(DriveFileError error) {
-    feed_load_callback.Run(feed_list, error);
-  }
-
-  // Changestamps are positive numbers in increasing order. The difference
-  // between two changestamps is proportional equal to number of items in
-  // delta feed between them - bigger the difference, more likely bigger
-  // number of items in delta feeds.
-  int64 start_changestamp;
-  std::string search_query;
-  bool shared_with_me;
-  std::string directory_resource_id;
-  GURL feed_to_load;
-  bool load_subsequent_feeds;
-  const LoadFeedListCallback feed_load_callback;
-  ScopedVector<google_apis::ResourceList> feed_list;
-  scoped_ptr<GetResourceListUiState> ui_state;
-};
-
-// Defines set of parameters sent to callback OnProtoLoaded().
-struct ChangeListLoader::LoadRootFeedParams {
-  explicit LoadRootFeedParams(const FileOperationCallback& callback)
-      : load_start_time(base::Time::Now()),
-        callback(callback) {}
-
-  std::string proto;
-  base::Time last_modified;
-  // Time when filesystem began to be loaded from disk.
-  base::Time load_start_time;
-  const FileOperationCallback callback;
-};
-
-// Defines parameters sent to UpdateMetadataFromFeedAfterLoadFromServer().
-//
-// In the case of loading the root feed we use |root_feed_changestamp| as its
-// initial changestamp value since it does not come with that info.
-//
-// On initial feed load for Drive API, remember root ID for
-// DriveResourceData initialization later in UpdateFromFeed().
-struct ChangeListLoader::UpdateMetadataParams {
-  UpdateMetadataParams(bool is_delta_feed,
-                       int64 feed_changestamp,
-                       const FileOperationCallback& callback)
-      : is_delta_feed(is_delta_feed),
-        feed_changestamp(feed_changestamp),
-        callback(callback) {}
-
-  const bool is_delta_feed;
-  const int64 feed_changestamp;
-  const FileOperationCallback callback;
-};
-
-// Defines set of parameters sent to callback OnNotifyResourceListFetched().
-// This is a trick to update the number of fetched documents frequently on
-// UI. Due to performance reason, we need to fetch a number of files at
-// a time. However, it'll take long time, and a user has no way to know
-// the current update state. In order to make users comfortable,
-// we increment the number of fetched documents with more frequent but smaller
-// steps than actual fetching.
-struct ChangeListLoader::GetResourceListUiState {
-  explicit GetResourceListUiState(base::TimeTicks start_time)
-      : num_fetched_documents(0),
-        num_showing_documents(0),
-        start_time(start_time),
-        ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory(this)) {
-  }
-
-  // The number of fetched documents.
-  int num_fetched_documents;
-
-  // The number documents shown on UI.
-  int num_showing_documents;
-
-  // When the UI update has started.
-  base::TimeTicks start_time;
-
-  // Time elapsed since the feed fetching was started.
-  base::TimeDelta feed_fetching_elapsed_time;
-
-  base::WeakPtrFactory<GetResourceListUiState> weak_ptr_factory;
-};
-
 ChangeListLoader::ChangeListLoader(
-    DriveResourceMetadata* resource_metadata,
-    DriveScheduler* scheduler,
-    DriveWebAppsRegistry* webapps_registry,
-    DriveCache* cache,
-    scoped_refptr<base::SequencedTaskRunner> blocking_task_runner)
+    internal::ResourceMetadata* resource_metadata,
+    JobScheduler* scheduler,
+    DriveWebAppsRegistry* webapps_registry)
     : resource_metadata_(resource_metadata),
       scheduler_(scheduler),
       webapps_registry_(webapps_registry),
-      cache_(cache),
-      blocking_task_runner_(blocking_task_runner),
-      refreshing_(false),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_(this)) {
+      last_known_remote_changestamp_(0),
+      loaded_(false),
+      weak_ptr_factory_(this) {
 }
 
 ChangeListLoader::~ChangeListLoader() {
+}
+
+bool ChangeListLoader::IsRefreshing() const {
+  // Callback for change list loading is stored in pending_load_callback_[""].
+  // It is non-empty if and only if there is an in-flight loading operation.
+  return pending_load_callback_.find("") != pending_load_callback_.end();
 }
 
 void ChangeListLoader::AddObserver(ChangeListLoaderObserver* observer) {
@@ -252,65 +55,269 @@ void ChangeListLoader::RemoveObserver(ChangeListLoaderObserver* observer) {
   observers_.RemoveObserver(observer);
 }
 
-void ChangeListLoader::ReloadFromServerIfNeeded(
+void ChangeListLoader::CheckForUpdates(const FileOperationCallback& callback) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(!callback.is_null());
+
+  if (loaded_ && !IsRefreshing()) {
+    util::Log("Checking for updates");
+    Load(DirectoryFetchInfo(), callback);
+  }
+}
+
+void ChangeListLoader::LoadIfNeeded(
+    const DirectoryFetchInfo& directory_fetch_info,
     const FileOperationCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(!callback.is_null());
 
-  // Sets the refreshing flag, so that the caller does not send refresh requests
-  // in parallel (see DriveFileSystem::CheckForUpdates). Corresponding
-  // "refresh_ = false" is in OnGetAccountMetadata when the cached feed is up to
-  // date, or in OnFeedFromServerLoaded called back from LoadFromServer().
-  refreshing_ = true;
-
-  if (google_apis::util::IsDriveV2ApiEnabled()) {
-    // Drive v2 needs a separate application list fetch operation.
-    // TODO(haruki): Application list rarely changes and is not necessarily
-    // refreshed as often as files.
-    scheduler_->GetAppList(
-        base::Bind(&ChangeListLoader::OnGetAppList,
-                   weak_ptr_factory_.GetWeakPtr()));
+  // If feed has already been loaded, for normal feed fetch (= empty
+  // directory_fetch_info), we have nothing to do. For "fast fetch", we need to
+  // schedule a fetching if a feed refresh is currently running, because we
+  // don't want to wait a possibly large delta feed to arrive.
+  if (loaded_ && (directory_fetch_info.empty() || !IsRefreshing())) {
+    base::MessageLoopProxy::current()->PostTask(
+        FROM_HERE,
+        base::Bind(callback, FILE_ERROR_OK));
+    return;
   }
+  Load(directory_fetch_info, callback);
+}
 
-  // First fetch the latest changestamp to see if there were any new changes
-  // there at all.
-  scheduler_->GetAccountMetadata(
-      base::Bind(&ChangeListLoader::OnGetAccountMetadata,
+void ChangeListLoader::LoadDirectoryFromServer(
+    const std::string& directory_resource_id,
+    const FileOperationCallback& callback) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(!callback.is_null());
+
+  // First fetch the latest changestamp to see if this directory needs to be
+  // updated.
+  scheduler_->GetAboutResource(
+      base::Bind(
+          &ChangeListLoader::LoadDirectoryFromServerAfterGetAbout,
+          weak_ptr_factory_.GetWeakPtr(),
+          directory_resource_id,
+          callback));
+}
+
+void ChangeListLoader::SearchFromServer(
+    const std::string& search_query,
+    const GURL& next_feed,
+    const LoadFeedListCallback& callback) {
+  DCHECK(!callback.is_null());
+
+  if (next_feed.is_empty()) {
+    // This is first request for the |search_query|.
+    scheduler_->Search(
+        search_query,
+        base::Bind(&ChangeListLoader::SearchFromServerAfterGetResourceList,
+                   weak_ptr_factory_.GetWeakPtr(), callback));
+  } else {
+    // There is the remaining result so fetch it.
+    scheduler_->ContinueGetResourceList(
+        next_feed,
+        base::Bind(&ChangeListLoader::SearchFromServerAfterGetResourceList,
+                   weak_ptr_factory_.GetWeakPtr(), callback));
+  }
+}
+
+void ChangeListLoader::UpdateFromFeed(
+    scoped_ptr<google_apis::AboutResource> about_resource,
+    ScopedVector<ChangeList> change_lists,
+    bool is_delta_feed,
+    const base::Closure& callback) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(!callback.is_null());
+
+  change_list_processor_.reset(new ChangeListProcessor(resource_metadata_));
+  // Don't send directory content change notification while performing
+  // the initial content retrieval.
+  const bool should_notify_changed_directories = is_delta_feed;
+
+  util::Log("Apply change lists (is delta: %d)", is_delta_feed);
+  change_list_processor_->ApplyFeeds(
+      about_resource.Pass(),
+      change_lists.Pass(),
+      is_delta_feed,
+      base::Bind(&ChangeListLoader::NotifyDirectoryChangedAfterApplyFeed,
                  weak_ptr_factory_.GetWeakPtr(),
+                 should_notify_changed_directories,
+                 base::Time::Now(),
                  callback));
 }
 
-void ChangeListLoader::OnGetAccountMetadata(
-    const FileOperationCallback& callback,
-    google_apis::GDataErrorCode status,
-    scoped_ptr<google_apis::AccountMetadata> account_metadata) {
+void ChangeListLoader::Load(const DirectoryFetchInfo& directory_fetch_info,
+                            const FileOperationCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(!callback.is_null());
-  DCHECK(refreshing_);
 
-  int64 remote_changestamp = 0;
-  // When account metadata successfully fetched, parse the latest changestamp.
-  if (util::GDataToDriveFileError(status) == DRIVE_FILE_OK) {
-    DCHECK(account_metadata);
-    webapps_registry_->UpdateFromFeed(*account_metadata);
-    remote_changestamp = account_metadata->largest_changestamp();
+  // Check if this is the first time this ChangeListLoader do loading.
+  // Note: IsRefreshing() depends on pending_load_callback_ so check in advance.
+  const bool is_initial_load = (!loaded_ && !IsRefreshing());
+
+  // Register the callback function to be called when it is loaded.
+  const std::string& resource_id = directory_fetch_info.resource_id();
+  pending_load_callback_[resource_id].push_back(callback);
+
+  // If loading task for |resource_id| is already running, do nothing.
+  if (pending_load_callback_[resource_id].size() > 1)
+    return;
+
+  // For initial loading, even for directory fetching, we do load the full
+  // feed from the server to sync up. So we register a dummy callback to
+  // indicate that update for full hierarchy is running.
+  if (is_initial_load && !resource_id.empty()) {
+    pending_load_callback_[""].push_back(
+        base::Bind(&util::EmptyFileOperationCallback));
   }
 
+  // Check the current status of local metadata, and start loading if needed.
   resource_metadata_->GetLargestChangestamp(
-      base::Bind(&ChangeListLoader::CompareChangestampsAndLoadIfNeeded,
+      base::Bind(is_initial_load ? &ChangeListLoader::DoInitialLoad
+                                 : &ChangeListLoader::DoUpdateLoad,
                  weak_ptr_factory_.GetWeakPtr(),
-                 callback,
-                 remote_changestamp));
+                 directory_fetch_info));
 }
 
-void ChangeListLoader::CompareChangestampsAndLoadIfNeeded(
-    const FileOperationCallback& callback,
-    int64 remote_changestamp,
+void ChangeListLoader::DoInitialLoad(
+    const DirectoryFetchInfo& directory_fetch_info,
     int64 local_changestamp) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  DCHECK(!callback.is_null());
-  DCHECK(refreshing_);
 
+  if (local_changestamp > 0) {
+    // The local data is usable. Flush callbacks to tell loading was successful.
+    OnChangeListLoadComplete(FILE_ERROR_OK);
+
+    // Continues to load from server in background.
+    // Put dummy callbacks to indicate that fetching is still continuing.
+    pending_load_callback_[directory_fetch_info.resource_id()].push_back(
+        base::Bind(&util::EmptyFileOperationCallback));
+    if (!directory_fetch_info.empty()) {
+      pending_load_callback_[""].push_back(
+          base::Bind(&util::EmptyFileOperationCallback));
+    }
+  }
+  LoadFromServerIfNeeded(directory_fetch_info, local_changestamp);
+}
+
+void ChangeListLoader::DoUpdateLoad(
+    const DirectoryFetchInfo& directory_fetch_info,
+    int64 local_changestamp) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+
+  if (directory_fetch_info.empty()) {
+    LoadFromServerIfNeeded(directory_fetch_info, local_changestamp);
+  } else {
+    // Note: CheckChangestampAndLoadDirectoryIfNeeded regards
+    // last_know_remote_changestamp_ as the remote changestamp. To be precise,
+    // we need to call GetAboutResource() here, as we do in other places like
+    // LoadFromServerIfNeeded or LoadFromDirectory. However,
+    // - It is costly to do GetAboutResource HTTP request every time.
+    // - The chance using an old value is small; it only happens when
+    //   LoadIfNeeded is called during one GetAboutResource roundtrip time
+    //   of a feed fetching.
+    // - Even if the value is old, it just marks the directory as older. It may
+    //   trigger one future unnecessary re-fetch, but it'll never lose data.
+    CheckChangestampAndLoadDirectoryIfNeeed(
+        directory_fetch_info,
+        local_changestamp,
+        base::Bind(&ChangeListLoader::OnDirectoryLoadComplete,
+                   weak_ptr_factory_.GetWeakPtr(),
+                   directory_fetch_info));
+  }
+}
+
+void ChangeListLoader::OnChangeListLoadComplete(FileError error) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+
+  if (!loaded_ && error == FILE_ERROR_OK) {
+    loaded_ = true;
+    FOR_EACH_OBSERVER(ChangeListLoaderObserver,
+                      observers_,
+                      OnInitialFeedLoaded());
+  }
+
+  for (LoadCallbackMap::iterator it = pending_load_callback_.begin();
+       it != pending_load_callback_.end();  ++it) {
+    const std::vector<FileOperationCallback>& callbacks = it->second;
+    for (size_t i = 0; i < callbacks.size(); ++i) {
+      base::MessageLoopProxy::current()->PostTask(
+          FROM_HERE,
+          base::Bind(callbacks[i], error));
+    }
+  }
+  pending_load_callback_.clear();
+}
+
+void ChangeListLoader::OnDirectoryLoadComplete(
+    const DirectoryFetchInfo& directory_fetch_info,
+    FileError error) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+
+  util::Log("Fast-fetch complete: %s => %s",
+            directory_fetch_info.ToString().c_str(),
+            FileErrorToString(error).c_str());
+  const std::string& resource_id = directory_fetch_info.resource_id();
+  LoadCallbackMap::iterator it = pending_load_callback_.find(resource_id);
+  if (it != pending_load_callback_.end()) {
+    DVLOG(1) << "Running callback for " << resource_id;
+    const std::vector<FileOperationCallback>& callbacks = it->second;
+    for (size_t i = 0; i < callbacks.size(); ++i) {
+      base::MessageLoopProxy::current()->PostTask(
+          FROM_HERE,
+          base::Bind(callbacks[i], error));
+    }
+    pending_load_callback_.erase(it);
+  }
+}
+
+void ChangeListLoader::LoadFromServerIfNeeded(
+    const DirectoryFetchInfo& directory_fetch_info,
+    int64 local_changestamp) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+
+  // Drive v2 needs a separate application list fetch operation.
+  // On GData WAPI, it is not necessary in theory, because the response
+  // of account metadata can include both about account information (such as
+  // quota) and an application list at once.
+  // However, for Drive API v2 migration, we connect to the server twice
+  // (one for about account information and another for an application list)
+  // regardless of underlying API, so that we can simplify the code.
+  // Note that the size of account metadata on GData WAPI seems small enough
+  // and (by controlling the query parameter) the response for GetAboutResource
+  // operation doesn't contain application list. Thus, the effect should be
+  // small cost.
+  // TODO(haruki): Application list rarely changes and is not necessarily
+  // refreshed as often as files.
+  scheduler_->GetAppList(
+      base::Bind(&ChangeListLoader::OnGetAppList,
+                 weak_ptr_factory_.GetWeakPtr()));
+
+  // First fetch the latest changestamp to see if there were any new changes
+  // there at all.
+  scheduler_->GetAboutResource(
+      base::Bind(&ChangeListLoader::LoadFromServerIfNeededAfterGetAbout,
+                 weak_ptr_factory_.GetWeakPtr(),
+                 directory_fetch_info,
+                 local_changestamp));
+}
+
+void ChangeListLoader::LoadFromServerIfNeededAfterGetAbout(
+    const DirectoryFetchInfo& directory_fetch_info,
+    int64 local_changestamp,
+    google_apis::GDataErrorCode status,
+    scoped_ptr<google_apis::AboutResource> about_resource) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK_EQ(util::GDataToFileError(status) == FILE_ERROR_OK,
+            about_resource.get() != NULL);
+
+  if (util::GDataToFileError(status) == FILE_ERROR_OK) {
+    DCHECK(about_resource);
+    last_known_remote_changestamp_ = about_resource->largest_change_id();
+  }
+
+  int64 remote_changestamp =
+      about_resource ? about_resource->largest_change_id() : 0;
   if (remote_changestamp > 0 && local_changestamp >= remote_changestamp) {
     if (local_changestamp > remote_changestamp) {
       LOG(WARNING) << "Cached client feed is fresher than server, client = "
@@ -320,352 +327,416 @@ void ChangeListLoader::CompareChangestampsAndLoadIfNeeded(
     }
 
     // No changes detected, tell the client that the loading was successful.
-    refreshing_ = false;
-    callback.Run(DRIVE_FILE_OK);
+    OnChangeListLoadComplete(FILE_ERROR_OK);
     return;
   }
 
-  // Load changes from the server.
   int64 start_changestamp = local_changestamp > 0 ? local_changestamp + 1 : 0;
-  scoped_ptr<LoadFeedParams> load_params(new LoadFeedParams(
+  if (start_changestamp == 0 && !about_resource.get()) {
+    // Full update needs AboutResource. If this is a full update, we should just
+    // give up. Note that to exit from the feed loading, we always have to flush
+    // the pending callback tasks via OnChangeListLoadComplete.
+    OnChangeListLoadComplete(FILE_ERROR_FAILED);
+    return;
+  }
+
+  if (directory_fetch_info.empty()) {
+    // If the caller is not interested in a particular directory, just start
+    // loading the change list.
+    LoadChangeListFromServer(about_resource.Pass(), start_changestamp);
+  } else {
+    // If the caller is interested in a particular directory, start loading the
+    // directory first.
+    CheckChangestampAndLoadDirectoryIfNeeed(
+        directory_fetch_info,
+        local_changestamp,
+        base::Bind(
+            &ChangeListLoader::LoadChangeListFromServerAfterLoadDirectory,
+            weak_ptr_factory_.GetWeakPtr(),
+            directory_fetch_info,
+            base::Passed(&about_resource),
+            start_changestamp));
+  }
+}
+
+void ChangeListLoader::LoadChangeListFromServerAfterLoadDirectory(
+    const DirectoryFetchInfo& directory_fetch_info,
+    scoped_ptr<google_apis::AboutResource> about_resource,
+    int64 start_changestamp,
+    FileError error) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+
+  if (error == FILE_ERROR_OK) {
+    // The directory fast-fetch succeeded. Runs the callbacks waiting for the
+    // directory loading. If failed, do not flush so they're run after the
+    // change list loading is complete.
+    OnDirectoryLoadComplete(directory_fetch_info, FILE_ERROR_OK);
+  }
+  LoadChangeListFromServer(about_resource.Pass(), start_changestamp);
+}
+
+void ChangeListLoader::LoadChangeListFromServer(
+    scoped_ptr<google_apis::AboutResource> about_resource,
+    int64 start_changestamp) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+
+  bool is_delta_feed = start_changestamp != 0;
+  const LoadFeedListCallback& completion_callback =
       base::Bind(&ChangeListLoader::UpdateMetadataFromFeedAfterLoadFromServer,
                  weak_ptr_factory_.GetWeakPtr(),
-                 UpdateMetadataParams(start_changestamp != 0,  // is_delta_feed
-                                      remote_changestamp,
-                                      callback))));
-  load_params->start_changestamp = start_changestamp;
-  LoadFromServer(load_params.Pass());
-}
-
-void ChangeListLoader::OnGetAppList(google_apis::GDataErrorCode status,
-                                   scoped_ptr<google_apis::AppList> app_list) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-
-  DriveFileError error = util::GDataToDriveFileError(status);
-  if (error != DRIVE_FILE_OK)
-    return;
-
-  if (app_list.get()) {
-    webapps_registry_->UpdateFromAppList(*app_list);
+                 base::Passed(&about_resource),
+                 is_delta_feed);
+  base::TimeTicks start_time = base::TimeTicks::Now();
+  if (is_delta_feed) {
+    scheduler_->GetChangeList(
+        start_changestamp,
+        base::Bind(&ChangeListLoader::OnGetResourceList,
+                   weak_ptr_factory_.GetWeakPtr(),
+                   base::Passed(ScopedVector<ChangeList>()),
+                   completion_callback,
+                   start_time));
+  } else {
+    // This is full feed fetch.
+    scheduler_->GetAllResourceList(
+        base::Bind(&ChangeListLoader::OnGetResourceList,
+                   weak_ptr_factory_.GetWeakPtr(),
+                   base::Passed(ScopedVector<ChangeList>()),
+                   completion_callback,
+                   start_time));
   }
-}
-
-void ChangeListLoader::LoadFromServer(scoped_ptr<LoadFeedParams> params) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-
-  const base::TimeTicks start_time = base::TimeTicks::Now();
-
-  // base::Passed() may get evaluated first, so get a pointer to params.
-  LoadFeedParams* params_ptr = params.get();
-  scheduler_->GetResourceList(
-      params_ptr->feed_to_load,
-      params_ptr->start_changestamp,
-      params_ptr->search_query,
-      params_ptr->shared_with_me,
-      params_ptr->directory_resource_id,
-      base::Bind(&ChangeListLoader::OnGetResourceList,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 base::Passed(&params),
-                 start_time));
-}
-
-void ChangeListLoader::LoadDirectoryFromServer(
-    const std::string& directory_resource_id,
-    const LoadFeedListCallback& feed_load_callback) {
-  DCHECK(!feed_load_callback.is_null());
-
-  scoped_ptr<LoadFeedParams> params(new LoadFeedParams(feed_load_callback));
-  params->directory_resource_id = directory_resource_id;
-  LoadFromServer(params.Pass());
-}
-
-void ChangeListLoader::SearchFromServer(
-    const std::string& search_query,
-    bool shared_with_me,
-    const GURL& next_feed,
-    const LoadFeedListCallback& feed_load_callback) {
-  DCHECK(!feed_load_callback.is_null());
-
-  scoped_ptr<LoadFeedParams> params(new LoadFeedParams(feed_load_callback));
-  params->search_query = search_query;
-  params->shared_with_me = shared_with_me;
-  params->feed_to_load = next_feed;
-  params->load_subsequent_feeds = false;
-  LoadFromServer(params.Pass());
-}
-
-void ChangeListLoader::UpdateMetadataFromFeedAfterLoadFromServer(
-    const UpdateMetadataParams& params,
-    const ScopedVector<google_apis::ResourceList>& feed_list,
-    DriveFileError error) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  DCHECK(!params.callback.is_null());
-  DCHECK(refreshing_);
-
-  if (error != DRIVE_FILE_OK) {
-    refreshing_ = false;
-    params.callback.Run(error);
-    return;
-  }
-
-  UpdateFromFeed(feed_list,
-                 params.is_delta_feed,
-                 params.feed_changestamp,
-                 base::Bind(&ChangeListLoader::OnUpdateFromFeed,
-                            weak_ptr_factory_.GetWeakPtr(),
-                            params.callback));
 }
 
 void ChangeListLoader::OnGetResourceList(
-    scoped_ptr<LoadFeedParams> params,
+    ScopedVector<ChangeList> change_lists,
+    const LoadFeedListCallback& callback,
     base::TimeTicks start_time,
     google_apis::GDataErrorCode status,
     scoped_ptr<google_apis::ResourceList> resource_list) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(!callback.is_null());
 
-  if (params->feed_list.empty()) {
+  // Looks the UMA stats we take here is useless as many methods use this
+  // callback. crbug.com/229407
+  if (change_lists.empty()) {
     UMA_HISTOGRAM_TIMES("Drive.InitialFeedLoadTime",
                         base::TimeTicks::Now() - start_time);
   }
 
-  DriveFileError error = util::GDataToDriveFileError(status);
-  if (error != DRIVE_FILE_OK) {
-    params->RunFeedLoadCallback(error);
+  FileError error = util::GDataToFileError(status);
+  if (error != FILE_ERROR_OK) {
+    callback.Run(ScopedVector<ChangeList>(), error);
     return;
   }
+
+  // Add the current resource list to the list of collected feeds.
   DCHECK(resource_list);
+  change_lists.push_back(new ChangeList(*resource_list));
 
   GURL next_feed_url;
-  const bool has_next_feed_url =
-      params->load_subsequent_feeds &&
-      resource_list->GetNextFeedURL(&next_feed_url);
-
-  // Add the current feed to the list of collected feeds for this directory.
-  params->feed_list.push_back(resource_list.release());
-
-  // Compute and notify the number of entries fetched so far.
-  int num_accumulated_entries = 0;
-  for (size_t i = 0; i < params->feed_list.size(); ++i)
-    num_accumulated_entries += params->feed_list[i]->entries().size();
-
-  // Check if we need to collect more data to complete the directory list.
-  if (has_next_feed_url && !next_feed_url.is_empty()) {
-    // Post an UI update event to make the UI smoother.
-    GetResourceListUiState* ui_state = params->ui_state.get();
-    if (ui_state == NULL) {
-      ui_state = new GetResourceListUiState(base::TimeTicks::Now());
-      params->ui_state.reset(ui_state);
-    }
-    DCHECK(ui_state);
-
-    if ((ui_state->num_fetched_documents - ui_state->num_showing_documents)
-        < kFetchUiUpdateStep) {
-      // Currently the UI update is stopped. Start UI periodic callback.
-      base::MessageLoopProxy::current()->PostTask(
-          FROM_HERE,
-          base::Bind(&ChangeListLoader::OnNotifyResourceListFetched,
-                     weak_ptr_factory_.GetWeakPtr(),
-                     ui_state->weak_ptr_factory.GetWeakPtr()));
-    }
-    ui_state->num_fetched_documents = num_accumulated_entries;
-    ui_state->feed_fetching_elapsed_time = base::TimeTicks::Now() - start_time;
-
-    // |params| will be passed to the callback and thus nulled. Extract the
-    // pointer so we can use it bellow.
-    LoadFeedParams* params_ptr = params.get();
-    // Kick off the remaining part of the feeds.
-    scheduler_->GetResourceList(
+  if (resource_list->GetNextFeedURL(&next_feed_url) &&
+      !next_feed_url.is_empty()) {
+    // There is the remaining result so fetch it.
+    scheduler_->ContinueGetResourceList(
         next_feed_url,
-        params_ptr->start_changestamp,
-        params_ptr->search_query,
-        params_ptr->shared_with_me,
-        params_ptr->directory_resource_id,
         base::Bind(&ChangeListLoader::OnGetResourceList,
                    weak_ptr_factory_.GetWeakPtr(),
-                   base::Passed(&params),
+                   base::Passed(&change_lists),
+                   callback,
                    start_time));
     return;
   }
 
-  // Notify the observers that all document feeds are fetched.
-  FOR_EACH_OBSERVER(ChangeListLoaderObserver, observers_,
-                    OnResourceListFetched(num_accumulated_entries));
-
+  // This UMA stats looks also different from what we want. crbug.com/229407
   UMA_HISTOGRAM_TIMES("Drive.EntireFeedLoadTime",
                       base::TimeTicks::Now() - start_time);
 
   // Run the callback so the client can process the retrieved feeds.
-  params->RunFeedLoadCallback(DRIVE_FILE_OK);
+  callback.Run(change_lists.Pass(), FILE_ERROR_OK);
 }
 
-void ChangeListLoader::OnNotifyResourceListFetched(
-    base::WeakPtr<GetResourceListUiState> ui_state) {
+void ChangeListLoader::UpdateMetadataFromFeedAfterLoadFromServer(
+    scoped_ptr<google_apis::AboutResource> about_resource,
+    bool is_delta_feed,
+    ScopedVector<ChangeList> change_lists,
+    FileError error) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
-  if (!ui_state) {
-    // The ui state instance is already released, which means the fetching
-    // is done and we don't need to update any more.
+  if (error != FILE_ERROR_OK) {
+    OnChangeListLoadComplete(error);
     return;
   }
 
-  base::TimeDelta ui_elapsed_time =
-      base::TimeTicks::Now() - ui_state->start_time;
-
-  if (ui_state->num_showing_documents + kFetchUiUpdateStep <=
-      ui_state->num_fetched_documents) {
-    ui_state->num_showing_documents += kFetchUiUpdateStep;
-    FOR_EACH_OBSERVER(ChangeListLoaderObserver, observers_,
-                      OnResourceListFetched(ui_state->num_showing_documents));
-
-    int num_remaining_ui_updates =
-        (ui_state->num_fetched_documents - ui_state->num_showing_documents)
-        / kFetchUiUpdateStep;
-    if (num_remaining_ui_updates > 0) {
-      // Heuristically, we use fetched time duration to calculate the next
-      // UI update timing.
-      base::TimeDelta remaining_duration =
-          ui_state->feed_fetching_elapsed_time - ui_elapsed_time;
-      base::TimeDelta interval = remaining_duration / num_remaining_ui_updates;
-      // If UI update is slow for some reason, the interval can be
-      // negative, or very small. This rarely happens but should be handled.
-      const int kMinIntervalMs = 10;
-      if (interval.InMilliseconds() < kMinIntervalMs)
-        interval = base::TimeDelta::FromMilliseconds(kMinIntervalMs);
-
-      base::MessageLoopProxy::current()->PostDelayedTask(
-          FROM_HERE,
-          base::Bind(&ChangeListLoader::OnNotifyResourceListFetched,
-                     weak_ptr_factory_.GetWeakPtr(),
-                     ui_state->weak_ptr_factory.GetWeakPtr()),
-          interval);
-    }
-  }
+  UpdateFromFeed(about_resource.Pass(),
+                 change_lists.Pass(),
+                 is_delta_feed,
+                 base::Bind(&ChangeListLoader::OnUpdateFromFeed,
+                            weak_ptr_factory_.GetWeakPtr()));
 }
 
-void ChangeListLoader::LoadFromCache(const FileOperationCallback& callback) {
+void ChangeListLoader::OnUpdateFromFeed() {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+
+  OnChangeListLoadComplete(FILE_ERROR_OK);
+
+  FOR_EACH_OBSERVER(ChangeListLoaderObserver,
+                    observers_,
+                    OnFeedFromServerLoaded());
+}
+
+void ChangeListLoader::LoadDirectoryFromServerAfterGetAbout(
+      const std::string& directory_resource_id,
+      const FileOperationCallback& callback,
+      google_apis::GDataErrorCode status,
+      scoped_ptr<google_apis::AboutResource> about_resource) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(!callback.is_null());
-  DCHECK(!resource_metadata_->loaded());
 
-  // Sets the refreshing flag, so that the caller does not send refresh requests
-  // in parallel (see DriveFileSystem::LoadFeedIfNeeded).
-  //
-  // Corresponding unset is in ContinueWithInitializedResourceMetadata, where
-  // all the control paths reach.
-  refreshing_ = true;
-
-  LoadRootFeedParams* params = new LoadRootFeedParams(callback);
-  base::FilePath path =
-      cache_->GetCacheDirectoryPath(DriveCache::CACHE_TYPE_META);
-  if (UseLevelDB()) {
-    path = path.Append(kResourceMetadataDBFile);
-    resource_metadata_->InitFromDB(path, blocking_task_runner_,
-        base::Bind(
-            &ChangeListLoader::ContinueWithInitializedResourceMetadata,
-            weak_ptr_factory_.GetWeakPtr(),
-            base::Owned(params)));
-  } else {
-    path = path.Append(kFilesystemProtoFile);
-    base::PostTaskAndReplyWithResult(
-        BrowserThread::GetBlockingPool(),
-        FROM_HERE,
-        base::Bind(&LoadProtoOnBlockingPool,
-                   path, &params->last_modified, &params->proto),
-        base::Bind(&ChangeListLoader::OnProtoLoaded,
-                   weak_ptr_factory_.GetWeakPtr(),
-                   base::Owned(params)));
-  }
-}
-
-void ChangeListLoader::OnProtoLoaded(LoadRootFeedParams* params,
-                                    DriveFileError error) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  DCHECK(refreshing_);
-
-  // Update directory structure only if everything is OK and we haven't yet
-  // received the feed from the server yet.
-  if (error == DRIVE_FILE_OK) {
-    DVLOG(1) << "ParseFromString";
-    if (resource_metadata_->ParseFromString(params->proto)) {
-      resource_metadata_->set_last_serialized(params->last_modified);
-      resource_metadata_->set_serialized_size(params->proto.size());
-    } else {
-      error = DRIVE_FILE_ERROR_FAILED;
-      LOG(WARNING) << "Parse of cached proto file failed";
-    }
+  if (util::GDataToFileError(status) == FILE_ERROR_OK) {
+    DCHECK(about_resource);
+    last_known_remote_changestamp_ = about_resource->largest_change_id();
   }
 
-  ContinueWithInitializedResourceMetadata(params, error);
+  const DirectoryFetchInfo directory_fetch_info(
+      directory_resource_id,
+      last_known_remote_changestamp_);
+  DoLoadDirectoryFromServer(directory_fetch_info, callback);
 }
 
-void ChangeListLoader::ContinueWithInitializedResourceMetadata(
-    LoadRootFeedParams* params,
-    DriveFileError error) {
+void ChangeListLoader::CheckChangestampAndLoadDirectoryIfNeeed(
+    const DirectoryFetchInfo& directory_fetch_info,
+    int64 local_changestamp,
+    const FileOperationCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  DCHECK(!params->callback.is_null());
-  refreshing_ = false;
+  DCHECK(!directory_fetch_info.empty());
 
-  DVLOG(1) << "Time elapsed to load resource metadata from disk="
-           << (base::Time::Now() - params->load_start_time).InMilliseconds()
-           << " milliseconds";
+  int64 directory_changestamp = std::max(directory_fetch_info.changestamp(),
+                                         local_changestamp);
 
-  params->callback.Run(error);
-}
+  // We may not fetch from the server at all if the local metadata is new
+  // enough, but we log this message here, so "Fast-fetch start" and
+  // "Fast-fetch complete" always match.
+  // TODO(satorux): Distinguish the "not fetching at all" case.
+  util::Log("Fast-fetch start: %s; Server changestamp: %s",
+            directory_fetch_info.ToString().c_str(),
+            base::Int64ToString(last_known_remote_changestamp_).c_str());
 
-void ChangeListLoader::SaveFileSystem() {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-
-  if (!ShouldSerializeFileSystemNow(resource_metadata_->serialized_size(),
-                                    resource_metadata_->last_serialized())) {
+  // If the directory's changestamp is up-to-date, just schedule to run the
+  // callback, as there is no need to fetch the directory.
+  // Note that |last_known_remote_changestamp_| is 0 when it is not received
+  // yet. In that case we conservatively assume that we need to fetch.
+  if (last_known_remote_changestamp_ > 0 &&
+      directory_changestamp >= last_known_remote_changestamp_) {
+    callback.Run(FILE_ERROR_OK);
     return;
   }
 
-  if (UseLevelDB()) {
-    resource_metadata_->SaveToDB();
-  } else {
-    const base::FilePath path =
-        cache_->GetCacheDirectoryPath(DriveCache::CACHE_TYPE_META).Append(
-            kFilesystemProtoFile);
-    scoped_ptr<std::string> serialized_proto(new std::string());
-    resource_metadata_->SerializeToString(serialized_proto.get());
-    resource_metadata_->set_last_serialized(base::Time::Now());
-    resource_metadata_->set_serialized_size(serialized_proto->size());
-    blocking_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&SaveProtoOnBlockingPool, path,
-                   base::Passed(&serialized_proto)));
+  // Start fetching the directory content, and mark it with the changestamp
+  // |last_known_remote_changestamp_|.
+  DirectoryFetchInfo new_directory_fetch_info(
+      directory_fetch_info.resource_id(),
+      std::max(directory_changestamp, last_known_remote_changestamp_));
+  DoLoadDirectoryFromServer(new_directory_fetch_info, callback);
+}
+
+void ChangeListLoader::DoLoadDirectoryFromServer(
+    const DirectoryFetchInfo& directory_fetch_info,
+    const FileOperationCallback& callback) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(!callback.is_null());
+  DCHECK(!directory_fetch_info.empty());
+  DVLOG(1) << "Start loading directory: " << directory_fetch_info.ToString();
+
+  if (directory_fetch_info.resource_id() ==
+          util::kDriveOtherDirSpecialResourceId) {
+    // Load for a <other> directory is meaningless in the server.
+    // Let it succeed and use what we have locally.
+    callback.Run(FILE_ERROR_OK);
+    return;
+  }
+
+  if (directory_fetch_info.resource_id() ==
+          util::kDriveGrandRootSpecialResourceId) {
+    // Load for a grand root directory means slightly different from other
+    // directories. It should have two directories; <other> and mydrive root.
+    // <other> directory should always exist, but mydrive root should be
+    // created by root resource id retrieved from the server.
+    // Here, we check if mydrive root exists, and if not, create it.
+    resource_metadata_->GetEntryInfoByPath(
+        base::FilePath(util::kDriveMyDriveRootPath),
+        base::Bind(
+            &ChangeListLoader
+                ::DoLoadGrandRootDirectoryFromServerAfterGetEntryInfoByPath,
+            weak_ptr_factory_.GetWeakPtr(),
+            directory_fetch_info,
+            callback));
+    return;
+  }
+
+  const LoadFeedListCallback& completion_callback =
+      base::Bind(&ChangeListLoader::DoLoadDirectoryFromServerAfterLoad,
+                 weak_ptr_factory_.GetWeakPtr(),
+                 directory_fetch_info,
+                 callback);
+  base::TimeTicks start_time = base::TimeTicks::Now();
+  scheduler_->GetResourceListInDirectory(
+      directory_fetch_info.resource_id(),
+      base::Bind(&ChangeListLoader::OnGetResourceList,
+                 weak_ptr_factory_.GetWeakPtr(),
+                 base::Passed(ScopedVector<ChangeList>()),
+                 completion_callback,
+                 start_time));
+}
+
+void
+ChangeListLoader::DoLoadGrandRootDirectoryFromServerAfterGetEntryInfoByPath(
+    const DirectoryFetchInfo& directory_fetch_info,
+    const FileOperationCallback& callback,
+    FileError error,
+    scoped_ptr<ResourceEntry> entry) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(!callback.is_null());
+  DCHECK_EQ(directory_fetch_info.resource_id(),
+            util::kDriveGrandRootSpecialResourceId);
+
+  if (error == FILE_ERROR_OK) {
+    // MyDrive root already exists. Just return success.
+    callback.Run(FILE_ERROR_OK);
+    return;
+  }
+
+  // Fetch root resource id from the server.
+  scheduler_->GetAboutResource(
+      base::Bind(
+          &ChangeListLoader
+              ::DoLoadGrandRootDirectoryFromServerAfterGetAboutResource,
+          weak_ptr_factory_.GetWeakPtr(),
+          directory_fetch_info,
+          callback));
+}
+
+void ChangeListLoader::DoLoadGrandRootDirectoryFromServerAfterGetAboutResource(
+    const DirectoryFetchInfo& directory_fetch_info,
+    const FileOperationCallback& callback,
+    google_apis::GDataErrorCode status,
+    scoped_ptr<google_apis::AboutResource> about_resource) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(!callback.is_null());
+  DCHECK_EQ(directory_fetch_info.resource_id(),
+            util::kDriveGrandRootSpecialResourceId);
+
+  FileError error = util::GDataToFileError(status);
+  if (error != FILE_ERROR_OK) {
+    callback.Run(error);
+    return;
+  }
+
+  // Build entry proto map for grand root directory, which has two entries;
+  // "/drive/root" and "/drive/other".
+  ResourceEntryMap grand_root_entry_map;
+  const std::string& root_resource_id = about_resource->root_folder_id();
+  grand_root_entry_map[root_resource_id] =
+      util::CreateMyDriveRootEntry(root_resource_id);
+  grand_root_entry_map[util::kDriveOtherDirSpecialResourceId] =
+      util::CreateOtherDirEntry();
+  resource_metadata_->RefreshDirectory(
+      directory_fetch_info,
+      grand_root_entry_map,
+      base::Bind(&ChangeListLoader::DoLoadDirectoryFromServerAfterRefresh,
+                 weak_ptr_factory_.GetWeakPtr(),
+                 directory_fetch_info,
+                 callback));
+}
+
+void ChangeListLoader::DoLoadDirectoryFromServerAfterLoad(
+    const DirectoryFetchInfo& directory_fetch_info,
+    const FileOperationCallback& callback,
+    ScopedVector<ChangeList> change_lists,
+    FileError error) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(!callback.is_null());
+  DCHECK(!directory_fetch_info.empty());
+
+  if (error != FILE_ERROR_OK) {
+    LOG(ERROR) << "Failed to load directory: "
+               << directory_fetch_info.resource_id()
+               << ": " << FileErrorToString(error);
+    callback.Run(error);
+    return;
+  }
+
+  // Do not use |change_list_processor_| as it may be in use for other
+  // purposes.
+  ChangeListProcessor change_list_processor(resource_metadata_);
+  change_list_processor.FeedToEntryProtoMap(change_lists.Pass(), NULL, NULL);
+  resource_metadata_->RefreshDirectory(
+      directory_fetch_info,
+      change_list_processor.entry_map(),
+      base::Bind(&ChangeListLoader::DoLoadDirectoryFromServerAfterRefresh,
+                 weak_ptr_factory_.GetWeakPtr(),
+                 directory_fetch_info,
+                 callback));
+}
+
+void ChangeListLoader::DoLoadDirectoryFromServerAfterRefresh(
+    const DirectoryFetchInfo& directory_fetch_info,
+    const FileOperationCallback& callback,
+    FileError error,
+    const base::FilePath& directory_path) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(!callback.is_null());
+
+  DVLOG(1) << "Directory loaded: " << directory_fetch_info.ToString();
+  callback.Run(error);
+  // Also notify the observers.
+  if (error == FILE_ERROR_OK) {
+    FOR_EACH_OBSERVER(ChangeListLoaderObserver, observers_,
+                      OnDirectoryChanged(directory_path));
   }
 }
 
-void ChangeListLoader::UpdateFromFeed(
-    const ScopedVector<google_apis::ResourceList>& feed_list,
-    bool is_delta_feed,
-    int64 root_feed_changestamp,
-    const base::Closure& update_finished_callback) {
+void ChangeListLoader::OnGetAppList(google_apis::GDataErrorCode status,
+                                    scoped_ptr<google_apis::AppList> app_list) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  DCHECK(!update_finished_callback.is_null());
-  DVLOG(1) << "Updating directory with a feed";
 
-  change_list_processor_.reset(new ChangeListProcessor(resource_metadata_));
-  // Don't send directory content change notification while performing
-  // the initial content retrieval.
-  const bool should_notify_changed_directories = is_delta_feed;
+  FileError error = util::GDataToFileError(status);
+  if (error != FILE_ERROR_OK)
+    return;
 
-  change_list_processor_->ApplyFeeds(
-      feed_list,
-      is_delta_feed,
-      root_feed_changestamp,
-      base::Bind(&ChangeListLoader::NotifyDirectoryChanged,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 should_notify_changed_directories,
-                 update_finished_callback));
+  if (app_list.get())
+    webapps_registry_->UpdateFromAppList(*app_list);
 }
 
-void ChangeListLoader::NotifyDirectoryChanged(
+void ChangeListLoader::SearchFromServerAfterGetResourceList(
+    const LoadFeedListCallback& callback,
+    google_apis::GDataErrorCode status,
+    scoped_ptr<google_apis::ResourceList> resource_list) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(!callback.is_null());
+
+  FileError error = util::GDataToFileError(status);
+  if (error != FILE_ERROR_OK) {
+    callback.Run(ScopedVector<ChangeList>(), error);
+    return;
+  }
+
+  DCHECK(resource_list);
+
+  ScopedVector<ChangeList> change_lists;
+  change_lists.push_back(new ChangeList(*resource_list));
+  callback.Run(change_lists.Pass(), FILE_ERROR_OK);
+}
+
+void ChangeListLoader::NotifyDirectoryChangedAfterApplyFeed(
     bool should_notify_changed_directories,
-    const base::Closure& update_finished_callback) {
+    base::Time start_time,
+    const base::Closure& callback) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(change_list_processor_.get());
-  DCHECK(!update_finished_callback.is_null());
+  DCHECK(!callback.is_null());
+
+  const base::TimeDelta elapsed = base::Time::Now() - start_time;
+  util::Log("Change lists applied (elapsed time: %sms)",
+            base::Int64ToString(elapsed.InMilliseconds()).c_str());
 
   if (should_notify_changed_directories) {
     for (std::set<base::FilePath>::iterator dir_iter =
@@ -677,27 +748,10 @@ void ChangeListLoader::NotifyDirectoryChanged(
     }
   }
 
-  update_finished_callback.Run();
+  callback.Run();
 
   // Cannot delete change_list_processor_ yet because we are in
   // on_complete_callback_, which is owned by change_list_processor_.
-}
-
-void ChangeListLoader::OnUpdateFromFeed(
-    const FileOperationCallback& load_finished_callback) {
-  DCHECK(!load_finished_callback.is_null());
-
-  refreshing_ = false;
-
-  // Save file system metadata to disk.
-  SaveFileSystem();
-
-  // Run the callback now that the filesystem is ready.
-  load_finished_callback.Run(DRIVE_FILE_OK);
-
-  FOR_EACH_OBSERVER(ChangeListLoaderObserver,
-                    observers_,
-                    OnFeedFromServerLoaded());
 }
 
 }  // namespace drive

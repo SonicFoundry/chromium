@@ -19,6 +19,12 @@ class Event;
 }
 
 namespace ash {
+class Launcher;
+
+// When passed to LauncherDelegate::ItemSelected, the browser item will be
+// addressed for switching.
+// TODO(skuhne): Remove this constant once CL 11596003 has landed.
+const LauncherID kAppIdForBrowserSwitching = -1;
 
 // A special menu model which keeps track of an "active" menu item.
 class ASH_EXPORT LauncherMenuModel : public ui::SimpleMenuModel {
@@ -48,16 +54,18 @@ class ASH_EXPORT LauncherDelegate {
   // Invoked when the user clicks on a window entry in the launcher.
   // |event| is the click event. The |event| is dispatched by a view
   // and has an instance of |views::View| as the event target
-  // but not |aura::Window|.
-  virtual void ItemClicked(const LauncherItem& item,
-                           const ui::Event& event) = 0;
+  // but not |aura::Window|. If the |event| is of type KeyEvent, it is assumed
+  // that this was triggered by keyboard action (Alt+<number>) and special
+  // handling might happen (PerApp launcher).
+  virtual void ItemSelected(const LauncherItem& item,
+                            const ui::Event& event) = 0;
 
   // Returns the resource id of the image to show on the browser shortcut
   // button.
   virtual int GetBrowserShortcutResourceId() = 0;
 
   // Returns the title to display for the specified launcher item.
-  virtual string16 GetTitle(const LauncherItem& item) = 0;
+  virtual base::string16 GetTitle(const LauncherItem& item) = 0;
 
   // Returns the context menumodel for the specified item on
   // |root_window|.  Return NULL if there should be no context
@@ -73,8 +81,10 @@ class ASH_EXPORT LauncherDelegate {
   //    Note: This is useful for hover menus which also show context help.
   //  - A list containing the title and the active list of items.
   // The caller takes ownership of the returned model.
+  // |event_flags| specifies the flags of the event which triggered this menu.
   virtual LauncherMenuModel* CreateApplicationMenu(
-      const LauncherItem& item) = 0;
+      const LauncherItem& item,
+      int event_flags) = 0;
 
   // Returns the id of the item associated with the specified window, or 0 if
   // there isn't one.
@@ -82,6 +92,20 @@ class ASH_EXPORT LauncherDelegate {
 
   // Whether the given launcher item is draggable.
   virtual bool IsDraggable(const LauncherItem& item) = 0;
+
+  // Returns true if a tooltip should be shown for the item.
+  virtual bool ShouldShowTooltip(const LauncherItem& item) = 0;
+
+  // Callback used to allow delegate to perform initialization actions that
+  // depend on the Launcher being in a known state.
+  virtual void OnLauncherCreated(Launcher* launcher) = 0;
+
+  // Callback used to inform the delegate that a specific launcher no longer
+  // exists.
+  virtual void OnLauncherDestroyed(Launcher* launcher) = 0;
+
+  // True if the running launcher is the per application launcher.
+  virtual bool IsPerAppLauncher() = 0;
 };
 
 }  // namespace ash

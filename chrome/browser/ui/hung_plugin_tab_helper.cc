@@ -5,14 +5,16 @@
 #include "chrome/browser/ui/hung_plugin_tab_helper.h"
 
 #include "base/bind.h"
+#include "base/files/file_path.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/process.h"
 #include "base/process_util.h"
 #include "base/rand_util.h"
 #include "build/build_config.h"
-#include "chrome/browser/api/infobars/confirm_infobar_delegate.h"
-#include "chrome/browser/api/infobars/infobar_service.h"
+#include "chrome/browser/infobars/confirm_infobar_delegate.h"
 #include "chrome/browser/infobars/infobar.h"
+#include "chrome/browser/infobars/infobar_service.h"
+#include "chrome/common/chrome_process_type.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/chrome_version_info.h"
 #include "content/public/browser/browser_child_process_host_iterator.h"
@@ -35,28 +37,17 @@
 #include "chrome/browser/hang_monitor/hang_crash_dump_win.h"
 #endif
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(HungPluginTabHelper);
 
 namespace {
 
-// Delay in seconds before re-showing the hung plugin message. This will be
-// increased each time.
-const int kInitialReshowDelaySec = 10;
-
 #if defined(OS_WIN)
 
-const char kDumpChildProcessesSequenceName[] = "DumpChildProcesses";
+// OwnedHandleVector ----------------------------------------------------------
 
 class OwnedHandleVector {
  public:
-  OwnedHandleVector() {}
-
-  ~OwnedHandleVector() {
-    for (std::vector<HANDLE>::const_iterator iter = data_.begin();
-         iter != data_.end(); ++iter) {
-      ::CloseHandle(*iter);
-    }
-  }
+  OwnedHandleVector();
+  ~OwnedHandleVector();
 
   std::vector<HANDLE>& data() { return data_; }
 
@@ -65,6 +56,21 @@ class OwnedHandleVector {
 
   DISALLOW_COPY_AND_ASSIGN(OwnedHandleVector);
 };
+
+OwnedHandleVector::OwnedHandleVector() {
+}
+
+OwnedHandleVector::~OwnedHandleVector() {
+  for (std::vector<HANDLE>::const_iterator iter = data_.begin();
+       iter != data_.end(); ++iter) {
+    ::CloseHandle(*iter);
+  }
+}
+
+
+// Helpers --------------------------------------------------------------------
+
+const char kDumpChildProcessesSequenceName[] = "DumpChildProcesses";
 
 void DumpBrowserInBlockingPool() {
   CrashDumpForHangDebugging(::GetCurrentProcess());
@@ -122,6 +128,9 @@ void KillPluginOnIOThread(int child_id) {
 
 }  // namespace
 
+
+// HungPluginInfoBarDelegate --------------------------------------------------
+
 class HungPluginInfoBarDelegate : public ConfirmInfoBarDelegate {
  public:
   // Creates a hung plugin delegate and adds it to |infobar_service|.  Returns
@@ -131,19 +140,19 @@ class HungPluginInfoBarDelegate : public ConfirmInfoBarDelegate {
                                            int plugin_child_id,
                                            const string16& plugin_name);
 
-  // ConfirmInfoBarDelegate:
-  virtual gfx::Image* GetIcon() const OVERRIDE;
-  virtual string16 GetMessageText() const OVERRIDE;
-  virtual int GetButtons() const OVERRIDE;
-  virtual string16 GetButtonLabel(InfoBarButton button) const OVERRIDE;
-  virtual bool Accept() OVERRIDE;
-
  private:
   HungPluginInfoBarDelegate(HungPluginTabHelper* helper,
                             InfoBarService* infobar_service,
                             int plugin_child_id,
                             const string16& plugin_name);
   virtual ~HungPluginInfoBarDelegate();
+
+  // ConfirmInfoBarDelegate:
+  virtual gfx::Image* GetIcon() const OVERRIDE;
+  virtual string16 GetMessageText() const OVERRIDE;
+  virtual int GetButtons() const OVERRIDE;
+  virtual string16 GetButtonLabel(InfoBarButton button) const OVERRIDE;
+  virtual bool Accept() OVERRIDE;
 
   HungPluginTabHelper* helper_;
   int plugin_child_id_;
@@ -204,7 +213,43 @@ bool HungPluginInfoBarDelegate::Accept() {
   return true;
 }
 
-// -----------------------------------------------------------------------------
+
+// HungPluginTabHelper::PluginState -------------------------------------------
+
+// Per-plugin state (since there could be more than one plugin hung).  The
+// integer key is the child process ID of the plugin process.  This maintains
+// the state for all plugins on this page that are currently hung, whether or
+// not we're currently showing the infobar.
+struct HungPluginTabHelper::PluginState {
+  // Initializes the plugin state to be a hung plugin.
+  PluginState(const base::FilePath& p, const string16& n);
+  ~PluginState();
+
+  base::FilePath path;
+  string16 name;
+
+  // Possibly-null if we're not showing an infobar right now.
+  InfoBarDelegate* info_bar;
+
+  // Time to delay before re-showing the infobar for a hung plugin. This is
+  // increased each time the user cancels it.
+  base::TimeDelta next_reshow_delay;
+
+  // Handles calling the helper when the infobar should be re-shown.
+  base::Timer timer;
+
+ private:
+  // Delay in seconds before re-showing the hung plugin message. This will be
+  // increased each time.
+  static const int kInitialReshowDelaySec;
+
+  // Since the scope of the timer manages our callback, this struct should
+  // not be copied.
+  DISALLOW_COPY_AND_ASSIGN(PluginState);
+};
+
+// static
+const int HungPluginTabHelper::PluginState::kInitialReshowDelaySec = 10;
 
 HungPluginTabHelper::PluginState::PluginState(const base::FilePath& p,
                                               const string16& n)
@@ -218,7 +263,10 @@ HungPluginTabHelper::PluginState::PluginState(const base::FilePath& p,
 HungPluginTabHelper::PluginState::~PluginState() {
 }
 
-// -----------------------------------------------------------------------------
+
+// HungPluginTabHelper --------------------------------------------------------
+
+DEFINE_WEB_CONTENTS_USER_DATA_KEY(HungPluginTabHelper);
 
 HungPluginTabHelper::HungPluginTabHelper(content::WebContents* contents)
     : content::WebContentsObserver(contents) {

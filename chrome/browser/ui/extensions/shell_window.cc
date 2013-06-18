@@ -25,13 +25,11 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/extensions/native_app_window.h"
 #include "chrome/browser/ui/web_contents_modal_dialog_manager.h"
-#include "chrome/browser/view_type_utils.h"
 #include "chrome/common/chrome_notification_types.h"
-#include "chrome/common/extensions/api/icons/icons_handler.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_messages.h"
-#include "chrome/common/extensions/request_media_access_permission_helper.h"
+#include "chrome/common/extensions/manifest_handlers/icons_handler.h"
 #include "content/public/browser/invalidate_type.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_details.h"
@@ -42,6 +40,7 @@
 #include "content/public/browser/resource_dispatcher_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/media_stream_request.h"
+#include "extensions/browser/view_type_utils.h"
 #include "skia/ext/image_operations.h"
 #include "third_party/skia/include/core/SkRegion.h"
 #include "ui/gfx/image/image_skia.h"
@@ -53,7 +52,6 @@
 using content::ConsoleMessageLevel;
 using content::WebContents;
 using extensions::APIPermission;
-using extensions::RequestMediaAccessPermissionHelper;
 
 namespace {
 const int kDefaultWidth = 512;
@@ -73,7 +71,11 @@ ShellWindow::CreateParams::CreateParams()
     frame(ShellWindow::FRAME_CHROME),
     transparent_background(false),
     bounds(INT_MIN, INT_MIN, 0, 0),
-    creator_process_id(0), hidden(false), resizable(true) {
+    creator_process_id(0),
+    state(STATE_NORMAL),
+    hidden(false),
+    resizable(true),
+    focused(true) {
 }
 
 ShellWindow::CreateParams::~CreateParams() {
@@ -95,8 +97,9 @@ ShellWindow::ShellWindow(Profile* profile,
     : profile_(profile),
       extension_(extension),
       window_type_(WINDOW_TYPE_DEFAULT),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_(this)),
-      ALLOW_THIS_IN_INITIALIZER_LIST(image_loader_ptr_factory_(this)) {
+      image_loader_ptr_factory_(this),
+      fullscreen_for_window_api_(false),
+      fullscreen_for_tab_(false) {
 }
 
 void ShellWindow::Init(const GURL& url,
@@ -110,7 +113,9 @@ void ShellWindow::Init(const GURL& url,
   FaviconTabHelper::CreateForWebContents(web_contents);
 
   web_contents->SetDelegate(this);
-  chrome::SetViewType(web_contents, chrome::VIEW_TYPE_APP_SHELL);
+  WebContentsModalDialogManager::FromWebContents(web_contents)->
+      set_delegate(this);
+  extensions::SetViewType(web_contents, extensions::VIEW_TYPE_APP_SHELL);
 
   // Initialize the window
   window_type_ = params.window_type;
@@ -164,6 +169,20 @@ void ShellWindow::Init(const GURL& url,
   native_app_window_.reset(NativeAppWindow::Create(this, new_params));
   OnNativeWindowChanged();
 
+  switch (params.state) {
+    case CreateParams::STATE_NORMAL:
+      break;
+    case CreateParams::STATE_FULLSCREEN:
+      Fullscreen();
+      break;
+    case CreateParams::STATE_MAXIMIZED:
+      Maximize();
+      break;
+    case CreateParams::STATE_MINIMIZED:
+      Minimize();
+      break;
+  }
+
   if (!params.hidden) {
     if (window_type_is_panel())
       GetBaseWindow()->ShowInactive();  // Panels are not activated by default.
@@ -207,16 +226,8 @@ void ShellWindow::RequestMediaAccessPermission(
     content::WebContents* web_contents,
     const content::MediaStreamRequest& request,
     const content::MediaResponseCallback& callback) {
-  // Get the preferred default devices for the request.
-  content::MediaStreamDevices devices;
-  MediaCaptureDevicesDispatcher::GetInstance()->GetDefaultDevicesForProfile(
-      profile_,
-      content::IsAudioMediaType(request.audio_type),
-      content::IsVideoMediaType(request.video_type),
-      &devices);
-
-  RequestMediaAccessPermissionHelper::AuthorizeRequest(
-      devices, request, callback, extension(), true);
+  MediaCaptureDevicesDispatcher::GetInstance()->ProcessMediaAccessRequest(
+      web_contents, request, callback, extension());
 }
 
 WebContents* ShellWindow::OpenURLFromTab(WebContents* source,
@@ -310,19 +321,20 @@ void ShellWindow::OnNativeWindowChanged() {
     shell_window_contents_->NativeWindowChanged(native_app_window_.get());
 }
 
-gfx::Image* ShellWindow::GetAppListIcon() {
+scoped_ptr<gfx::Image> ShellWindow::GetAppListIcon() {
   // TODO(skuhne): We might want to use LoadImages in UpdateExtensionAppIcon
   // instead to let the extension give us pre-defined icons in the launcher
   // and the launcher list sizes. Since there is no mock yet, doing this now
   // seems a bit premature and we scale for the time being.
   if (app_icon_.IsEmpty())
-    return new gfx::Image();
+    return make_scoped_ptr(new gfx::Image());
 
   SkBitmap bmp = skia::ImageOperations::Resize(
         *app_icon_.ToSkBitmap(), skia::ImageOperations::RESIZE_BEST,
         extension_misc::EXTENSION_ICON_SMALLISH,
         extension_misc::EXTENSION_ICON_SMALLISH);
-  return new gfx::Image(gfx::ImageSkia::CreateFrom1xBitmap(bmp));
+  return make_scoped_ptr(
+      new gfx::Image(gfx::ImageSkia::CreateFrom1xBitmap(bmp)));
 }
 
 content::WebContents* ShellWindow::web_contents() const {
@@ -357,10 +369,14 @@ string16 ShellWindow::GetTitle() const {
 }
 
 void ShellWindow::SetAppIconUrl(const GURL& url) {
+  // Avoid using any previous app icons were are being downloaded.
+  image_loader_ptr_factory_.InvalidateWeakPtrs();
+
   app_icon_url_ = url;
-  web_contents()->DownloadFavicon(url, kPreferredIconSize,
-                                  base::Bind(&ShellWindow::DidDownloadFavicon,
-                                             weak_ptr_factory_.GetWeakPtr()));
+  web_contents()->DownloadImage(
+      url, true, kPreferredIconSize,
+      base::Bind(&ShellWindow::DidDownloadFavicon,
+                 image_loader_ptr_factory_.GetWeakPtr()));
 }
 
 void ShellWindow::UpdateDraggableRegions(
@@ -374,6 +390,29 @@ void ShellWindow::UpdateAppIcon(const gfx::Image& image) {
   app_icon_ = image;
   native_app_window_->UpdateWindowIcon();
   extensions::ShellWindowRegistry::Get(profile_)->ShellWindowIconChanged(this);
+}
+
+void ShellWindow::Fullscreen() {
+  fullscreen_for_window_api_ = true;
+  GetBaseWindow()->SetFullscreen(true);
+}
+
+void ShellWindow::Maximize() {
+  GetBaseWindow()->Maximize();
+}
+
+void ShellWindow::Minimize() {
+  GetBaseWindow()->Minimize();
+}
+
+void ShellWindow::Restore() {
+  fullscreen_for_window_api_ = false;
+  fullscreen_for_tab_ = false;
+  if (GetBaseWindow()->IsFullscreenOrPending()) {
+    GetBaseWindow()->SetFullscreen(false);
+  } else {
+    GetBaseWindow()->Restore();
+  }
 }
 
 //------------------------------------------------------------------------------
@@ -403,7 +442,7 @@ void ShellWindow::DidDownloadFavicon(int id,
 }
 
 void ShellWindow::UpdateExtensionAppIcon() {
-  // Ensure previously enqueued callbacks are ignored.
+  // Avoid using any previous app icons were are being downloaded.
   image_loader_ptr_factory_.InvalidateWeakPtrs();
 
   // Enqueue OnImageLoaded callback.
@@ -428,6 +467,13 @@ bool ShellWindow::ShouldSuppressDialogs() {
 
 void ShellWindow::RunFileChooser(WebContents* tab,
                                  const content::FileChooserParams& params) {
+  if (window_type_is_panel()) {
+    // Panels can't host a file dialog, abort. TODO(stevenjb): allow file
+    // dialogs to be unhosted but still close with the owning web contents.
+    // crbug.com/172502.
+    LOG(WARNING) << "File dialog opened by panel.";
+    return;
+  }
   FileSelectHelper::RunFileChooser(tab, params);
 }
 
@@ -449,18 +495,25 @@ void ShellWindow::NavigationStateChanged(
 
 void ShellWindow::ToggleFullscreenModeForTab(content::WebContents* source,
                                              bool enter_fullscreen) {
-  bool has_permission = IsExtensionWithPermissionOrSuggestInConsole(
+  if (!IsExtensionWithPermissionOrSuggestInConsole(
       APIPermission::kFullscreen,
       extension_,
-      source->GetRenderViewHost());
+      source->GetRenderViewHost())) {
+    return;
+  }
 
-  if (has_permission)
-    native_app_window_->SetFullscreen(enter_fullscreen);
+  fullscreen_for_tab_ = enter_fullscreen;
+
+  if (enter_fullscreen) {
+    native_app_window_->SetFullscreen(true);
+  } else if (!fullscreen_for_window_api_) {
+    native_app_window_->SetFullscreen(false);
+  }
 }
 
 bool ShellWindow::IsFullscreenForTabOrPending(
     const content::WebContents* source) const {
-  return native_app_window_->IsFullscreenOrPending();
+  return fullscreen_for_tab_;
 }
 
 void ShellWindow::Observe(int type,
@@ -494,6 +547,14 @@ extensions::ActiveTabPermissionGranter*
     ShellWindow::GetActiveTabPermissionGranter() {
   // Shell windows don't support the activeTab permission.
   return NULL;
+}
+
+void ShellWindow::SetWebContentsBlocked(content::WebContents* web_contents,
+                                        bool blocked) {
+}
+
+WebContentsModalDialogHost* ShellWindow::GetWebContentsModalDialogHost() {
+  return native_app_window_.get();
 }
 
 void ShellWindow::AddMessageToDevToolsConsole(ConsoleMessageLevel level,

@@ -10,6 +10,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
+#include "base/cpu.h"
 #include "base/logging.h"
 #include "base/string_number_conversions.h"
 #include "base/strings/stringize_macros.h"
@@ -59,7 +60,7 @@ TEST(SincResamplerTest, ChunkedResample) {
 
   static const int kChunks = 2;
   int max_chunk_size = resampler.ChunkSize() * kChunks;
-  scoped_array<float> resampled_destination(new float[max_chunk_size]);
+  scoped_ptr<float[]> resampled_destination(new float[max_chunk_size]);
 
   // Verify requesting ChunkSize() frames causes a single callback.
   EXPECT_CALL(mock_source, ProvideInput(_, _))
@@ -79,7 +80,7 @@ TEST(SincResamplerTest, Flush) {
   SincResampler resampler(
       kSampleRateRatio,
       base::Bind(&MockSource::ProvideInput, base::Unretained(&mock_source)));
-  scoped_array<float> resampled_destination(new float[resampler.ChunkSize()]);
+  scoped_ptr<float[]> resampled_destination(new float[resampler.ChunkSize()]);
 
   // Fill the resampler with junk data.
   EXPECT_CALL(mock_source, ProvideInput(_, _))
@@ -97,8 +98,24 @@ TEST(SincResamplerTest, Flush) {
     ASSERT_FLOAT_EQ(resampled_destination[i], 0);
 }
 
+// Test flush resets the internal state properly.
+TEST(SincResamplerTest, DISABLED_SetRatioBench) {
+  MockSource mock_source;
+  SincResampler resampler(
+      kSampleRateRatio,
+      base::Bind(&MockSource::ProvideInput, base::Unretained(&mock_source)));
+
+  base::TimeTicks start = base::TimeTicks::HighResNow();
+  for (int i = 1; i < 10000; ++i)
+    resampler.SetRatio(1.0 / i);
+  double total_time_c_ms =
+      (base::TimeTicks::HighResNow() - start).InMillisecondsF();
+  printf("SetRatio() took %.2fms.\n", total_time_c_ms);
+}
+
+
 // Define platform independent function name for Convolve* tests.
-#if defined(ARCH_CPU_X86_FAMILY) && defined(__SSE__)
+#if defined(ARCH_CPU_X86_FAMILY)
 #define CONVOLVE_FUNC Convolve_SSE
 #elif defined(ARCH_CPU_ARM_FAMILY) && defined(USE_NEON)
 #define CONVOLVE_FUNC Convolve_NEON
@@ -109,6 +126,10 @@ TEST(SincResamplerTest, Flush) {
 // will be tested by the parameterized SincResampler tests below.
 #if defined(CONVOLVE_FUNC)
 TEST(SincResamplerTest, Convolve) {
+#if defined(ARCH_CPU_X86_FAMILY)
+  ASSERT_TRUE(base::CPU().has_sse());
+#endif
+
   // Initialize a dummy resampler.
   MockSource mock_source;
   SincResampler resampler(
@@ -171,6 +192,10 @@ TEST(SincResamplerTest, ConvolveBenchmark) {
   printf("Convolve_C took %.2fms.\n", total_time_c_ms);
 
 #if defined(CONVOLVE_FUNC)
+#if defined(ARCH_CPU_X86_FAMILY)
+  ASSERT_TRUE(base::CPU().has_sse());
+#endif
+
   // Benchmark with unaligned input pointer.
   start = base::TimeTicks::HighResNow();
   for (int j = 0; j < convolve_iterations; ++j) {
@@ -180,7 +205,7 @@ TEST(SincResamplerTest, ConvolveBenchmark) {
   }
   double total_time_optimized_unaligned_ms =
       (base::TimeTicks::HighResNow() - start).InMillisecondsF();
-  printf(STRINGIZE(CONVOLVE_FUNC) "(unaligned) took %.2fms; which is %.2fx "
+  printf(STRINGIZE(CONVOLVE_FUNC) " (unaligned) took %.2fms; which is %.2fx "
          "faster than Convolve_C.\n", total_time_optimized_unaligned_ms,
          total_time_c_ms / total_time_optimized_unaligned_ms);
 
@@ -290,15 +315,28 @@ TEST_P(SincResamplerTest, Resample) {
   SinusoidalLinearChirpSource resampler_source(
       input_rate_, input_samples, input_nyquist_freq);
 
+  const double io_ratio = input_rate_ / static_cast<double>(output_rate_);
   SincResampler resampler(
-      input_rate_ / static_cast<double>(output_rate_),
+      io_ratio,
       base::Bind(&SinusoidalLinearChirpSource::ProvideInput,
                  base::Unretained(&resampler_source)));
 
+  // Force an update to the sample rate ratio to ensure dyanmic sample rate
+  // changes are working correctly.
+  scoped_ptr<float[]> kernel(new float[SincResampler::kKernelStorageSize]);
+  memcpy(kernel.get(), resampler.get_kernel_for_testing(),
+         SincResampler::kKernelStorageSize);
+  resampler.SetRatio(M_PI);
+  ASSERT_NE(0, memcmp(kernel.get(), resampler.get_kernel_for_testing(),
+                      SincResampler::kKernelStorageSize));
+  resampler.SetRatio(io_ratio);
+  ASSERT_EQ(0, memcmp(kernel.get(), resampler.get_kernel_for_testing(),
+                      SincResampler::kKernelStorageSize));
+
   // TODO(dalecurtis): If we switch to AVX/SSE optimization, we'll need to
   // allocate these on 32-byte boundaries and ensure they're sized % 32 bytes.
-  scoped_array<float> resampled_destination(new float[output_samples]);
-  scoped_array<float> pure_destination(new float[output_samples]);
+  scoped_ptr<float[]> resampled_destination(new float[output_samples]);
+  scoped_ptr<float[]> pure_destination(new float[output_samples]);
 
   // Generate resampled signal.
   resampler.Resample(resampled_destination.get(), output_samples);

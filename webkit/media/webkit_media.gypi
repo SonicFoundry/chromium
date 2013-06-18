@@ -29,29 +29,25 @@
       'type': 'static_library',
       'variables': { 'enable_wexit_time_destructors': 1, },
       'include_dirs': [
-        '<(SHARED_INTERMEDIATE_DIR)',  # Needed by key_systems.cc.
+        '<(SHARED_INTERMEDIATE_DIR)',  # Needed by key_systems_info.cc.
       ],
       'dependencies': [
         '<(DEPTH)/base/base.gyp:base',
         '<(DEPTH)/base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations',
+        '<(DEPTH)/cc/cc.gyp:cc',
         '<(DEPTH)/media/media.gyp:media',
         '<(DEPTH)/media/media.gyp:shared_memory_support',
         '<(DEPTH)/media/media.gyp:yuv_convert',
         '<(DEPTH)/skia/skia.gyp:skia',
         '<(DEPTH)/third_party/widevine/cdm/widevine_cdm.gyp:widevine_cdm_version_h',
+        '<(DEPTH)/webkit/compositor_bindings/compositor_bindings.gyp:webkit_compositor_bindings',
         '<(webkit_src_dir)/Source/WebKit/chromium/WebKit.gyp:webkit',
       ],
       'sources': [
         'android/audio_decoder_android.cc',
-        'android/media_player_bridge_manager_impl.cc',
-        'android/media_player_bridge_manager_impl.h',
         'android/stream_texture_factory_android.h',
         'android/webmediaplayer_android.cc',
         'android/webmediaplayer_android.h',
-        'android/webmediaplayer_impl_android.cc',
-        'android/webmediaplayer_impl_android.h',
-        'android/webmediaplayer_in_process_android.cc',
-        'android/webmediaplayer_in_process_android.h',
         'android/webmediaplayer_manager_android.cc',
         'android/webmediaplayer_manager_android.h',
         'android/webmediaplayer_proxy_android.cc',
@@ -68,15 +64,17 @@
         'cache_util.h',
         'crypto/key_systems.cc',
         'crypto/key_systems.h',
+        'crypto/key_systems_info.cc',
+        'crypto/key_systems_info.h',
         'crypto/ppapi_decryptor.cc',
         'crypto/ppapi_decryptor.h',
         'crypto/proxy_decryptor.cc',
         'crypto/proxy_decryptor.h',
-        'filter_helpers.cc',
-        'filter_helpers.h',
         'media_stream_audio_renderer.cc',
         'media_stream_audio_renderer.h',
         'media_stream_client.h',
+        'media_switches.cc',
+        'media_switches.h',
         'preload.h',
         'simple_video_frame_provider.cc',
         'simple_video_frame_provider.h',
@@ -93,8 +91,10 @@
         'webmediaplayer_params.h',
         'webmediaplayer_util.cc',
         'webmediaplayer_util.h',
-        'webvideoframe_impl.cc',
-        'webvideoframe_impl.h',
+        'webmediasourceclient_impl.cc',
+        'webmediasourceclient_impl.h',
+        'websourcebuffer_impl.cc',
+        'websourcebuffer_impl.h',
       ],
       'conditions': [
         ['inside_chromium_build == 0', {
@@ -119,6 +119,15 @@
         }, { # OS != "android"'
           'sources/': [
             ['exclude', '^android/'],
+          ],
+        }],
+        ['google_tv == 1', {
+          'sources': [
+            'android/media_source_delegate.cc',
+            'android/media_source_delegate.h',
+          ],
+          'sources!': [
+            'crypto/key_systems_info.cc',
           ],
         }],
       ],
@@ -195,6 +204,8 @@
     {
       'target_name': 'clearkeycdmadapter',
       'type': 'none',
+      # Check whether the plugin's origin URL is valid.
+      'defines': ['CHECK_ORIGIN_URL'],
       'dependencies': [
         '<(DEPTH)/ppapi/ppapi.gyp:ppapi_cpp',
         'clearkeycdm',
@@ -222,7 +233,6 @@
         }],
         ['OS == "mac"', {
           'type': 'loadable_module',
-          'mac_bundle': 1,
           'product_extension': 'plugin',
           'xcode_settings': {
             'OTHER_LDFLAGS': [
@@ -230,16 +240,9 @@
               '-Wl,-exported_symbol,_PPP_GetInterface',
               '-Wl,-exported_symbol,_PPP_InitializeModule',
               '-Wl,-exported_symbol,_PPP_ShutdownModule'
-            ]},
-          'copies': [
-            {
-              'destination': '<(PRODUCT_DIR)/clearkeycdmadapter.plugin/Contents/MacOS/',
-              'files': [
-                '<(PRODUCT_DIR)/libclearkeycdm.dylib',
-                '<(PRODUCT_DIR)/ffmpegsumo.so'
-              ]
-            }
-          ]
+            ],
+            'DYLIB_INSTALL_NAME_BASE': '@loader_path',
+          },
         }],
       ],
     }

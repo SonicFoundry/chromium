@@ -12,7 +12,6 @@
 #include "third_party/WebKit/Source/Platform/chromium/public/WebTransformOperations.h"
 
 namespace WebKit {
-class WebCompositorOutputSurface;
 class WebGraphicsContext3D;
 }
 
@@ -23,22 +22,16 @@ class WebCompositorSupportImpl : public WebKit::WebCompositorSupport {
   WebCompositorSupportImpl();
   virtual ~WebCompositorSupportImpl();
 
-  virtual void initialize(WebKit::WebThread* compositor_thread);
-  virtual bool isThreadingEnabled();
-  virtual void shutdown();
-  virtual WebKit::WebCompositorOutputSurface* createOutputSurfaceFor3D(
-      WebKit::WebGraphicsContext3D* context);
-  virtual WebKit::WebCompositorOutputSurface* createOutputSurfaceForSoftware();
   virtual WebKit::WebLayer* createLayer();
   virtual WebKit::WebContentLayer* createContentLayer(
       WebKit::WebContentLayerClient* client);
   virtual WebKit::WebExternalTextureLayer* createExternalTextureLayer(
       WebKit::WebExternalTextureLayerClient* client);
-  virtual WebKit::WebIOSurfaceLayer* createIOSurfaceLayer();
+  virtual WebKit::WebExternalTextureLayer*
+      createExternalTextureLayerForMailbox(
+          WebKit::WebExternalTextureLayerClient* client);
   virtual WebKit::WebImageLayer* createImageLayer();
   virtual WebKit::WebSolidColorLayer* createSolidColorLayer();
-  virtual WebKit::WebVideoLayer* createVideoLayer(
-      WebKit::WebVideoFrameProvider*);
   virtual WebKit::WebScrollbarLayer* createScrollbarLayer(
       WebKit::WebScrollbar* scrollbar,
       WebKit::WebScrollbarThemePainter painter,
@@ -51,12 +44,8 @@ class WebCompositorSupportImpl : public WebKit::WebCompositorSupport {
   virtual WebKit::WebTransformAnimationCurve* createTransformAnimationCurve();
   virtual WebKit::WebTransformOperations* createTransformOperations();
 
-  scoped_refptr<base::MessageLoopProxy> compositor_thread_message_loop_proxy() {
-    return compositor_thread_message_loop_proxy_;
-  }
  private:
-  scoped_refptr<base::MessageLoopProxy> compositor_thread_message_loop_proxy_;
-  bool initialized_;
+  DISALLOW_COPY_AND_ASSIGN(WebCompositorSupportImpl);
 };
 
 }  // namespace webkit

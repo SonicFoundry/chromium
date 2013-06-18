@@ -290,7 +290,7 @@ PP_Var InternalCallDeprecated(ObjectAccessorTryCatch* accessor,
     return PP_MakeUndefined();
   }
 
-  scoped_array<NPVariant> args;
+  scoped_ptr<NPVariant[]> args;
   if (argc) {
     args.reset(new NPVariant[argc]);
     for (uint32_t i = 0; i < argc; ++i) {
@@ -334,7 +334,8 @@ PP_Var CallDeprecated(PP_Var var,
     return PP_MakeUndefined();
   PluginInstance* plugin = accessor.GetPluginInstance();
   if (plugin && plugin->IsProcessingUserGesture()) {
-    WebKit::WebScopedUserGesture user_gesture;
+    WebKit::WebScopedUserGesture user_gesture(
+        plugin->CurrentUserGestureToken());
     return InternalCallDeprecated(&accessor, method_name, argc, argv,
                                   exception);
   }
@@ -349,7 +350,7 @@ PP_Var Construct(PP_Var var,
   if (accessor.has_exception())
     return PP_MakeUndefined();
 
-  scoped_array<NPVariant> args;
+  scoped_ptr<NPVariant[]> args;
   if (argc) {
     args.reset(new NPVariant[argc]);
     for (uint32_t i = 0; i < argc; ++i) {

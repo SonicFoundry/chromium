@@ -12,6 +12,7 @@
 #include "chrome/browser/chromeos/login/authenticator.h"
 #include "chrome/browser/chromeos/login/login_status_consumer.h"
 #include "chrome/browser/chromeos/login/online_attempt_host.h"
+#include "chrome/browser/chromeos/login/user.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -82,30 +83,23 @@ class LoginPerformer : public LoginStatusConsumer,
 
   // LoginStatusConsumer implementation:
   virtual void OnLoginFailure(const LoginFailure& error) OVERRIDE;
-  virtual void OnRetailModeLoginSuccess() OVERRIDE;
+  virtual void OnRetailModeLoginSuccess(
+      const UserContext& user_context) OVERRIDE;
   virtual void OnLoginSuccess(
-      const std::string& username,
-      const std::string& password,
+      const UserContext& user_context,
       bool pending_requests,
       bool using_oauth) OVERRIDE;
   virtual void OnOffTheRecordLoginSuccess() OVERRIDE;
   virtual void OnPasswordChangeDetected() OVERRIDE;
 
-  // Performs a login for |username| and |password|. If auth_mode is
-  // AUTH_MODE_EXTENSION, there are no further auth checks, AUTH_MODE_INTERNAL
-  // will perform auth checks.
-  void PerformLogin(const std::string& username,
-                    const std::string& password,
+  // Performs a login for |user_context|.
+  // If auth_mode is AUTH_MODE_EXTENSION, there are no further auth checks,
+  // AUTH_MODE_INTERNAL will perform auth checks.
+  void PerformLogin(const UserContext& user_context,
                     AuthorizationMode auth_mode);
 
-  // Performs locally managed user creation and login.
-  void CreateLocallyManagedUser(const string16& display_name,
-                                const std::string& password);
-
-  // Performs locally managed user login with a given |username| and |password|.
-  // Managed user creation should be done with CreateLocallyManagedUser().
-  void LoginAsLocallyManagedUser(const std::string& username,
-                                 const std::string& password);
+  // Performs locally managed user login with a given |user_context|.
+  void LoginAsLocallyManagedUser(const UserContext& user_context);
 
   // Performs retail mode login.
   void LoginRetailMode();
@@ -195,12 +189,11 @@ class LoginPerformer : public LoginStatusConsumer,
   OnlineAttemptHost online_attempt_host_;
 
   // Represents last login failure that was encountered when communicating to
-  // sign-in server. LoginFailure.None() by default.
+  // sign-in server. LoginFailure.LoginFailureNone() by default.
   LoginFailure last_login_failure_;
 
-  // Username and password for the current login attempt.
-  std::string username_;
-  std::string password_;
+  // User credentials for the current login attempt.
+  UserContext user_context_;
 
   // Notifications receiver.
   Delegate* delegate_;

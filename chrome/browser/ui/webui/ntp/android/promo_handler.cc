@@ -12,7 +12,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/browser/android/intent_helper.h"
-#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/signin_manager.h"
@@ -25,6 +24,7 @@
 #include "chrome/browser/web_resource/promo_resource_service.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/pref_names.h"
+#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
@@ -123,10 +123,12 @@ void PromoHandler::RegisterMessages() {
 }
 
 // static
-void PromoHandler::RegisterUserPrefs(PrefRegistrySyncable* registry) {
-  registry->RegisterBooleanPref(prefs::kNtpPromoDesktopSessionFound,
-                                false,
-                                PrefRegistrySyncable::UNSYNCABLE_PREF);
+void PromoHandler::RegisterUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterBooleanPref(
+      prefs::kNtpPromoDesktopSessionFound,
+      false,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 void PromoHandler::Observe(int type,

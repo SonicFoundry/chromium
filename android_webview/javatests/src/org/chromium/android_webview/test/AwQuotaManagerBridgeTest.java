@@ -4,16 +4,14 @@
 
 package org.chromium.android_webview.test;
 
-import android.test.suitebuilder.annotation.SmallTest;
 import android.test.suitebuilder.annotation.LargeTest;
 import android.util.Pair;
 import android.webkit.ValueCallback;
 
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwQuotaManagerBridge;
-import org.chromium.base.test.util.DisabledTest;
+import org.chromium.android_webview.AwSettings;
 import org.chromium.base.test.util.Feature;
-import org.chromium.content.browser.ContentSettings;
 import org.chromium.content.browser.test.util.CallbackHelper;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
@@ -23,7 +21,7 @@ import java.util.ArrayList;
 import java.util.concurrent.Callable;
 import java.util.List;
 
-public class AwQuotaManagerBridgeTest extends AndroidWebViewTestBase {
+public class AwQuotaManagerBridgeTest extends AwTestBase {
     private TestAwContentsClient mContentsClient;
     private AwTestContainerView mTestView;
     private AwContents mAwContents;
@@ -39,7 +37,7 @@ public class AwQuotaManagerBridgeTest extends AndroidWebViewTestBase {
         mWebServer = new TestWebServer(false);
         mOrigin = mWebServer.getBaseUrl();
 
-        ContentSettings settings = getContentSettingsOnUiThread(mAwContents);
+        AwSettings settings = getAwSettingsOnUiThread(mAwContents);
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setAppCacheEnabled(true);
@@ -93,7 +91,7 @@ public class AwQuotaManagerBridgeTest extends AndroidWebViewTestBase {
         }
 
         public AwQuotaManagerBridge.Origins getOrigins() {
-            assert mCallCount > 0;
+            assert getCallCount() > 0;
             return mOrigins;
         }
     }
@@ -130,7 +128,7 @@ public class AwQuotaManagerBridgeTest extends AndroidWebViewTestBase {
         }
 
         public long getValue() {
-            assert mCallCount > 0;
+            assert getCallCount() > 0;
             return mValue;
         }
     }
@@ -202,12 +200,8 @@ public class AwQuotaManagerBridgeTest extends AndroidWebViewTestBase {
               "window.applicationCache.update();");
     }
 
-    /*
     @LargeTest
     @Feature({"AndroidWebView", "WebStore"})
-    crbug.com/180061
-    */
-    @DisabledTest
     public void testDeleteAllWithAppCache() throws Exception {
         long currentUsage = getUsageForOrigin(mOrigin);
         assertEquals(0, currentUsage);
@@ -237,12 +231,8 @@ public class AwQuotaManagerBridgeTest extends AndroidWebViewTestBase {
         }));
     }
 
-    /*
     @LargeTest
     @Feature({"AndroidWebView", "WebStore"})
-    crbug.com/180061
-    */
-    @DisabledTest
     public void testDeleteOriginWithAppCache() throws Exception {
         long currentUsage = getUsageForOrigin(mOrigin);
         assertEquals(0, currentUsage);

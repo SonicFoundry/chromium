@@ -48,23 +48,65 @@ namespace chromeos {
 
 BluetoothDeviceChromeOS::BluetoothDeviceChromeOS(
     BluetoothAdapterChromeOS* adapter)
-  : BluetoothDevice(),
-    adapter_(adapter),
-    pairing_delegate_(NULL),
-    connecting_applications_counter_(0),
-    connecting_calls_(0),
-    service_records_loaded_(false),
-    weak_ptr_factory_(this) {
+    : BluetoothDevice(),
+      adapter_(adapter),
+      bluetooth_class_(0),
+      paired_(false),
+      trusted_(false),
+      connected_(false),
+      connectable_(true),
+      connecting_(false),
+      pairing_delegate_(NULL),
+      connecting_applications_counter_(0),
+      connecting_calls_(0),
+      service_records_loaded_(false),
+      weak_ptr_factory_(this) {
 }
 
 BluetoothDeviceChromeOS::~BluetoothDeviceChromeOS() {
 }
 
-bool BluetoothDeviceChromeOS::IsPaired() const {
-  return !object_path_.value().empty();
+uint32 BluetoothDeviceChromeOS::GetBluetoothClass() const {
+  return bluetooth_class_;
 }
 
-const BluetoothDevice::ServiceList&
+std::string BluetoothDeviceChromeOS::GetDeviceName() const {
+  return name_;
+}
+
+std::string BluetoothDeviceChromeOS::GetAddress() const {
+  return address_;
+}
+
+uint16 BluetoothDeviceChromeOS::GetVendorID() const {
+  return 0;
+}
+
+uint16 BluetoothDeviceChromeOS::GetProductID() const {
+  return 0;
+}
+
+uint16 BluetoothDeviceChromeOS::GetDeviceID() const {
+  return 0;
+}
+
+bool BluetoothDeviceChromeOS::IsPaired() const {
+  return paired_ || trusted_;
+}
+
+bool BluetoothDeviceChromeOS::IsConnected() const {
+  return connected_;
+}
+
+bool BluetoothDeviceChromeOS::IsConnectable() const {
+  return connectable_;
+}
+
+bool BluetoothDeviceChromeOS::IsConnecting() const {
+  return connecting_;
+}
+
+BluetoothDeviceChromeOS::ServiceList
 BluetoothDeviceChromeOS::GetServices() const {
   return service_uuids_;
 }
@@ -118,6 +160,10 @@ void BluetoothDeviceChromeOS::Connect(
   // This is safe because Connect() and its callbacks are called in the same
   // thread.
   connecting_calls_++;
+  if (!connecting_) {
+    connecting_ = true;
+    adapter_->NotifyDeviceChanged(this);
+  }
   connecting_ = !!connecting_calls_;
   // Set the decrement to be issued when either callback is called.
   base::Closure wrapped_callback = base::Bind(
@@ -129,12 +175,13 @@ void BluetoothDeviceChromeOS::Connect(
       weak_ptr_factory_.GetWeakPtr(),
       error_callback);
 
-  if (IsPaired() || IsBonded() || IsConnected()) {
-    // Connection to already paired or connected device.
+  if (IsPaired()) {
+    // Connection to already paired device.
     ConnectApplications(wrapped_callback, wrapped_error_callback);
 
-  } else if (!pairing_delegate) {
-    // No pairing delegate supplied, initiate low-security connection only.
+  } else if (!pairing_delegate || !IsPairable()) {
+    // No pairing delegate supplied, or unpairable device; initiate
+    // low-security connection only.
     DBusThreadManager::Get()->GetBluetoothAdapterClient()->
         CreateDevice(adapter_->object_path_,
                      address_,
@@ -169,7 +216,7 @@ void BluetoothDeviceChromeOS::Connect(
       agent_.reset(NULL);
     }
 
-    DVLOG(1) << "Pairing: " << address_;
+    VLOG(1) << "Pairing: " << address_;
     DBusThreadManager::Get()->GetBluetoothAdapterClient()->
         CreatePairedDevice(
             adapter_->object_path_,
@@ -294,6 +341,13 @@ void BluetoothDeviceChromeOS::ConnectToService(const std::string& service_uuid,
           callback));
 }
 
+void BluetoothDeviceChromeOS::ConnectToProfile(
+    device::BluetoothProfile* profile,
+    const base::Closure& callback,
+    const ErrorCallback& error_callback) {
+  // TODO(keybuk): implement
+}
+
 void BluetoothDeviceChromeOS::SetOutOfBandPairingData(
     const BluetoothOutOfBandPairingData& data,
     const base::Closure& callback,
@@ -301,7 +355,7 @@ void BluetoothDeviceChromeOS::SetOutOfBandPairingData(
   DBusThreadManager::Get()->GetBluetoothOutOfBandClient()->
       AddRemoteData(
           object_path_,
-          address(),
+          address_,
           data,
           base::Bind(&BluetoothDeviceChromeOS::OnRemoteDataCallback,
                      weak_ptr_factory_.GetWeakPtr(),
@@ -315,7 +369,7 @@ void BluetoothDeviceChromeOS::ClearOutOfBandPairingData(
   DBusThreadManager::Get()->GetBluetoothOutOfBandClient()->
       RemoveRemoteData(
           object_path_,
-          address(),
+          address_,
           base::Bind(&BluetoothDeviceChromeOS::OnRemoteDataCallback,
                      weak_ptr_factory_.GetWeakPtr(),
                      callback,
@@ -360,9 +414,8 @@ void BluetoothDeviceChromeOS::Update(
       GetServiceRecords(base::Bind(&DoNothingServiceRecordList),
                         base::Bind(&base::DoNothing));
 
-    // BlueZ uses paired to mean link keys exchanged, whereas the Bluetooth
-    // spec refers to this as bonded. Use the spec name for our interface.
-    bonded_ = properties->paired.value();
+    paired_ = properties->paired.value();
+    trusted_ = properties->trusted.value();
     connected_ = properties->connected.value();
   }
 }
@@ -371,7 +424,7 @@ void BluetoothDeviceChromeOS::OnCreateDevice(
     const base::Closure& callback,
     const ConnectErrorCallback& error_callback,
     const dbus::ObjectPath& device_path) {
-  DVLOG(1) << "Connection successful: " << device_path.value();
+  VLOG(1) << "Connection successful: " << device_path.value();
   if (object_path_.value().empty()) {
     object_path_ = device_path;
   } else {
@@ -381,16 +434,7 @@ void BluetoothDeviceChromeOS::OnCreateDevice(
         << object_path_.value();
   }
 
-  // Mark the device trusted so it can connect to us automatically, and
-  // we can connect after rebooting. This information is part of the
-  // pairing information of the device, and is unique to the combination
-  // of our bluetooth address and the device's bluetooth address. A
-  // different host needs a new pairing, so it's not useful to sync.
-  DBusThreadManager::Get()->GetBluetoothDeviceClient()->
-      GetProperties(object_path_)->trusted.Set(
-          true,
-          base::Bind(&BluetoothDeviceChromeOS::OnSetTrusted,
-                     weak_ptr_factory_.GetWeakPtr()));
+  SetTrusted();
 
   // In parallel with the |trusted| property change, call GetServiceRecords to
   // retrieve the SDP from the device and then, either on success or failure,
@@ -454,37 +498,24 @@ void BluetoothDeviceChromeOS::CollectServiceRecordsCallback(
   for (BluetoothDeviceClient::ServiceMap::const_iterator i =
       service_map.begin(); i != service_map.end(); ++i) {
     service_records_.push_back(
-        new BluetoothServiceRecordChromeOS(address(), i->second));
+        new BluetoothServiceRecordChromeOS(address_, i->second));
   }
   service_records_loaded_ = true;
-  OnServiceRecordsChanged();
 
   callback.Run(service_records_);
 }
 
-void BluetoothDeviceChromeOS::OnServiceRecordsChanged(void) {
-  // Update the BluetoothDevice::connectable_ property.
-  bool hid_normally_connectable = true;
-  bool hid_reconnect_initiate = true;
-  for (ServiceRecordList::const_iterator it = service_records_.begin();
-      it != service_records_.end(); ++it) {
-    if ((*it)->SupportsHid()) {
-      // If there are several HID profiles, we assume the device is connectable
-      // if all them are connectable.
-      hid_normally_connectable =
-          hid_normally_connectable && (*it)->hid_normally_connectable();
-      hid_reconnect_initiate =
-          hid_reconnect_initiate && (*it)->hid_reconnect_initiate();
-    }
-  }
-  // The Bluetooth HID spec states that if HIDNormallyConnectable or
-  // HIDReconnectInitiate are not present in a HID profile, the value is false.
-  // Nevertheless, a device with both properties in false can't reconnect to the
-  // adapter and can't be reconnected from the adapter. To avoid problems with
-  // devices that don't export this properties we asume they are connectable.
-  connectable_ = hid_normally_connectable || !hid_reconnect_initiate;
-  DVLOG(1) << "ServiceRecordsChanged for " << address_
-           << ": connectable = " << connectable_;
+void BluetoothDeviceChromeOS::SetTrusted() {
+  // Unconditionally send the property change, rather than checking the value
+  // first; there's no harm in doing this and it solves any race conditions
+  // with the property becoming true or false and this call happening before
+  // we get the D-Bus signal about the earlier change.
+  DBusThreadManager::Get()->GetBluetoothDeviceClient()->
+      GetProperties(object_path_)->trusted.Set(
+          true,
+          base::Bind(
+              &BluetoothDeviceChromeOS::OnSetTrusted,
+              weak_ptr_factory_.GetWeakPtr()));
 }
 
 void BluetoothDeviceChromeOS::OnSetTrusted(bool success) {
@@ -521,18 +552,22 @@ void BluetoothDeviceChromeOS::OnGetServiceRecordsError(
 void BluetoothDeviceChromeOS::OnConnectCallbackCalled(
     const base::Closure& callback) {
   // Update the connecting status.
+  bool prev_connecting = connecting_;
   connecting_calls_--;
   connecting_ = !!connecting_calls_;
   callback.Run();
+  if (prev_connecting != connecting_) adapter_->NotifyDeviceChanged(this);
 }
 
 void BluetoothDeviceChromeOS::OnConnectErrorCallbackCalled(
     const ConnectErrorCallback& error_callback,
     enum ConnectErrorCode error_code) {
   // Update the connecting status.
+  bool prev_connecting = connecting_;
   connecting_calls_--;
   connecting_ = !!connecting_calls_;
   error_callback.Run(error_code);
+  if (prev_connecting != connecting_) adapter_->NotifyDeviceChanged(this);
 }
 
 void BluetoothDeviceChromeOS::ConnectApplications(
@@ -599,8 +634,8 @@ void BluetoothDeviceChromeOS::OnIntrospect(
 void BluetoothDeviceChromeOS::OnConnect(const base::Closure& callback,
                                         const std::string& interface_name,
                                         const dbus::ObjectPath& device_path) {
-  DVLOG(1) << "Application connection successful: " << device_path.value()
-           << ": " << interface_name;
+  VLOG(1) << "Application connection successful: " << device_path.value()
+          << ": " << interface_name;
 
   connecting_applications_counter_--;
   // |callback| should only be called once, meaning it cannot be called before
@@ -610,6 +645,7 @@ void BluetoothDeviceChromeOS::OnConnect(const base::Closure& callback,
   // run on the same thread, which is true).
   if (connecting_applications_counter_ == -1) {
     connecting_applications_counter_ = 0;
+    SetTrusted();
     callback.Run();
   }
 }
@@ -649,15 +685,15 @@ void BluetoothDeviceChromeOS::DisconnectCallback(
     bool success) {
   DCHECK(device_path == object_path_);
   if (success) {
-    DVLOG(1) << "Disconnection successful: " << address_;
+    VLOG(1) << "Disconnection successful: " << address_;
     callback.Run();
   } else {
     if (connected_)  {
       LOG(WARNING) << "Disconnection failed: " << address_;
       error_callback.Run();
     } else {
-      DVLOG(1) << "Disconnection failed on a already disconnected device: "
-               << address_;
+      VLOG(1) << "Disconnection failed on a already disconnected device: "
+              << address_;
       callback.Run();
     }
   }
@@ -745,7 +781,7 @@ void BluetoothDeviceChromeOS::DisconnectRequested(
 
 void BluetoothDeviceChromeOS::Release() {
   DCHECK(agent_.get());
-  DVLOG(1) << "Release: " << address_;
+  VLOG(1) << "Release: " << address_;
 
   DCHECK(pairing_delegate_);
   pairing_delegate_->DismissDisplayOrConfirm();
@@ -762,7 +798,7 @@ void BluetoothDeviceChromeOS::RequestPinCode(
     const dbus::ObjectPath& device_path,
     const PinCodeCallback& callback) {
   DCHECK(agent_.get());
-  DVLOG(1) << "RequestPinCode: " << device_path.value();
+  VLOG(1) << "RequestPinCode: " << device_path.value();
 
   DCHECK(pairing_delegate_);
   DCHECK(pincode_callback_.is_null());
@@ -775,7 +811,7 @@ void BluetoothDeviceChromeOS::RequestPasskey(
     const PasskeyCallback& callback) {
   DCHECK(agent_.get());
   DCHECK(device_path == object_path_);
-  DVLOG(1) << "RequestPasskey: " << device_path.value();
+  VLOG(1) << "RequestPasskey: " << device_path.value();
 
   DCHECK(pairing_delegate_);
   DCHECK(passkey_callback_.is_null());
@@ -788,7 +824,7 @@ void BluetoothDeviceChromeOS::DisplayPinCode(
     const std::string& pincode) {
   DCHECK(agent_.get());
   DCHECK(device_path == object_path_);
-  DVLOG(1) << "DisplayPinCode: " << device_path.value() << " " << pincode;
+  VLOG(1) << "DisplayPinCode: " << device_path.value() << " " << pincode;
 
   DCHECK(pairing_delegate_);
   pairing_delegate_->DisplayPinCode(this, pincode);
@@ -799,7 +835,7 @@ void BluetoothDeviceChromeOS::DisplayPasskey(
     uint32 passkey) {
   DCHECK(agent_.get());
   DCHECK(device_path == object_path_);
-  DVLOG(1) << "DisplayPasskey: " << device_path.value() << " " << passkey;
+  VLOG(1) << "DisplayPasskey: " << device_path.value() << " " << passkey;
 
   DCHECK(pairing_delegate_);
   pairing_delegate_->DisplayPasskey(this, passkey);
@@ -811,7 +847,7 @@ void BluetoothDeviceChromeOS::RequestConfirmation(
     const ConfirmationCallback& callback) {
   DCHECK(agent_.get());
   DCHECK(device_path == object_path_);
-  DVLOG(1) << "RequestConfirmation: " << device_path.value() << " " << passkey;
+  VLOG(1) << "RequestConfirmation: " << device_path.value() << " " << passkey;
 
   DCHECK(pairing_delegate_);
   DCHECK(confirmation_callback_.is_null());
@@ -840,7 +876,7 @@ void BluetoothDeviceChromeOS::ConfirmModeChange(
 
 void BluetoothDeviceChromeOS::Cancel() {
   DCHECK(agent_.get());
-  DVLOG(1) << "Cancel: " << address_;
+  VLOG(1) << "Cancel: " << address_;
 
   DCHECK(pairing_delegate_);
   pairing_delegate_->DismissDisplayOrConfirm();

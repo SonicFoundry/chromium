@@ -211,6 +211,9 @@ be available for now. -->
       <message name="IDS_SHORT_PRODUCT_NAME" desc="The Chrome application short name.">
         Chromium
       </message>
+      <message name="IDS_SHORT_PRODUCT_NAME_LOWER" desc="The Chrome application short name all lowercase">
+        chromium
+      </message>
       <message name="IDS_SXS_SHORTCUT_NAME" desc="The Chrome short cut name for SxS channel">
         Chromium
       </message>
@@ -235,9 +238,17 @@ be available for now. -->
         <message name="IDS_PRODUCT_APP_LAUNCHER_NAME" desc="The Chrome App Launcher application name">
           Chromium App Launcher
         </message>
-        <message name="IDS_WIN8_INFOBAR_DESKTOP_RESTART_TO_LAUNCH_APPS"
-                 desc="Infobar message to restart chrome in desktop mode to launch Chrome Apps. Aplies to Windows 8 only">
-          You need to switch Chromium to desktop mode to use the App Launcher.
+        <message name="IDS_WIN8_INFOBAR_DESKTOP_RESTART_FOR_APP_LIST"
+                 desc="Infobar message to restart chrome in desktop mode to display the App Launcher. Aplies to Windows 8 only">
+          To use the app launcher, you must relaunch Chromium on the desktop.
+        </message>
+        <message name="IDS_WIN8_INFOBAR_DESKTOP_RESTART_FOR_PACKAGED_APP"
+                 desc="Infobar message to restart chrome in desktop mode to launch a Chrome Packaged App. Aplies to Windows 8 only">
+          To use Chrome apps, you must relaunch Chromium on the desktop.
+        </message>
+        <message name="IDS_WIN8_INFOBAR_DESKTOP_RESTART_TO_LAUNCH_APPS_YES_BUTTON"
+             desc="Infobar button 'yes' text to confirm that the user does wish to switch to desktop mode to use Chrome Apps">
+          Relaunch Chromium
         </message>
         <message name="IDS_PRODUCT_BINARIES_NAME" desc="The Chrome Binaries application name">
           Chromium Binaries
@@ -257,9 +268,6 @@ be available for now. -->
         <message name="IDS_CHROME_FRAME_READY_MODE_LEARN_MORE_URL" desc="Link to knowledge-base article about Chromium Frame Ready Mode">
           http://www.google.com/support/chrome/bin/answer.py?hl=[GRITLANGCODE]&amp;answer=161796
         </message>
-        <message name="IDS_CHROME_FRAME_READY_MODE_PROMPT" desc="Ready Mode prompt message">
-          This site recommends Chromium Frame (already installed).
-        </message>
         <message name="IDS_SHORTCUT_NEW_WINDOW" desc="The text label of the New window shortcut context menu entry as of Windows 8">
           New window
         </message>
@@ -270,9 +278,6 @@ be available for now. -->
           Your computer is missing some important Windows system files, so Chromium will be unable to function correctly.
         </message>
       </if>
-      <message name="IDS_INSTANT_OPT_IN_TITLE" desc="Title of the instant confirm dialog">
-        Instant
-      </message>
       <message name="IDS_CERT_ERROR_COMMON_NAME_INVALID_EXTRA_INFO_2" desc="2nd paragraph of extra information for an unsafe common name in an X509 certificate">
         In this case, the address listed in the certificate does not match the address of the website your browser tried to go to. One possible reason for this is that your communications are being intercepted by an attacker who is presenting a certificate for a different website, which would cause a mismatch. Another possible reason is that the server is set up to return the same certificate for multiple websites, including the one you are attempting to visit, even though that certificate is not valid for all of those websites. Chromium can say for sure that you reached &lt;strong&gt;<ph name="DOMAIN2">$1<ex>paypal.com</ex></ph>&lt;/strong&gt;, but cannot verify that that is the same site as &lt;strong&gt;<ph name="DOMAIN">$2<ex>www.paypal.com</ex></ph>&lt;/strong&gt; which you intended to reach. If you proceed, Chromium will not check for any further name mismatches.
       </message>
@@ -282,9 +287,17 @@ be available for now. -->
       <message name="IDS_CERT_ERROR_NOT_YET_VALID_DETAILS" desc="Details for an X509 certificate that is not yet valid">
         You attempted to reach &lt;strong&gt;<ph name="DOMAIN">$1<ex>paypal.com</ex></ph>&lt;/strong&gt;, but the server presented a certificate that is not yet valid. No information is available to indicate whether that certificate can be trusted. Chromium cannot reliably guarantee that you are communicating with &lt;strong&gt;<ph name="DOMAIN2">$2<ex>paypal.com</ex></ph>&lt;/strong&gt; and not an attacker. Your computer's clock is currently set to <ph name="CURRENT_TIME">$3<ex>Monday, July 18th, 2012 12:31PM</ex></ph>. Does that look right? If not, you should correct your system's clock and then refresh this page.
       </message>
-      <message name="IDS_CERT_ERROR_AUTHORITY_INVALID_DETAILS" desc="Details for an X509 certificate with an invalid authority">
-        You attempted to reach &lt;strong&gt;<ph name="DOMAIN">$1<ex>paypal.com</ex></ph>&lt;/strong&gt;, but the server presented a certificate issued by an entity that is not trusted by your computer's operating system. This may mean that the server has generated its own security credentials, which Chromium cannot rely on for identity information, or an attacker may be trying to intercept your communications.
-      </message>
+      <if expr="pp_ifdef('ios')">
+        <message name="IDS_CERT_ERROR_AUTHORITY_INVALID_DETAILS" desc="Details for an X509 certificate with an invalid authority">
+          You attempted to reach &lt;strong&gt;<ph
+name="DOMAIN">$1<ex>paypal.com</ex></ph>&lt;/strong&gt;, but the server presented a certificate issued by an entity that is not trusted by Chromium. This may mean that the server has generated its own security credentials, which Chromium cannot rely on for identity information, or an attacker may be trying to intercept your communications.
+        </message>
+      </if>
+      <if expr="not pp_ifdef('ios')">
+        <message name="IDS_CERT_ERROR_AUTHORITY_INVALID_DETAILS" desc="Details for an X509 certificate with an invalid authority">
+          You attempted to reach &lt;strong&gt;<ph name="DOMAIN">$1<ex>paypal.com</ex></ph>&lt;/strong&gt;, but the server presented a certificate issued by an entity that is not trusted by your computer's operating system. This may mean that the server has generated its own security credentials, which Chromium cannot rely on for identity information, or an attacker may be trying to intercept your communications.
+        </message>
+      </if>
       <message name="IDS_CERT_ERROR_CONTAINS_ERRORS_DETAILS" desc="Details of the error page for an X509 certificate that contains errors">
         You attempted to reach &lt;strong&gt;<ph name="DOMAIN">$1<ex>paypal.com</ex></ph>&lt;/strong&gt;, but the certificate that the server presented contains errors. Chromium cannot use a certificate with errors and cannot validate the identity of the site that you have attempted to connect to.
       </message>
@@ -389,9 +402,6 @@ be available for now. -->
           Welcome to Chromium
         </message>
       </if>
-      <message name="IDS_NTP4_INTRO_MESSAGE" desc="Message explaning the navigation bar at the bottom of the new NTP.">
-        Chromium's New Tab page has been remodeled. Switch between sections by clicking these labels. Chromium will remember your preference for next time.
-      </message>
       <if expr="not pp_ifdef('chromeos')">
         <message name="IDS_EXTERNAL_PROTOCOL_INFORMATION" desc="General information about what Chrome is trying to do when opening this external protocol">
           Chromium needs to launch an external application to handle <ph name="SCHEME">$1<ex>acrobat:</ex></ph> links. The link requested is <ph name="PROTOLINK">$2<ex>acrobat:yourpdf</ex></ph>.
@@ -429,8 +439,14 @@ be available for now. -->
           Let Chromium run in the background
         </message>
       </if>
-      <message name="IDS_OPTIONS_BACKGROUND_ENABLE_BACKGROUND_MODE" desc="The label of the check-box that enables background mode">
+      <message name="IDS_OPTIONS_SYSTEM_ENABLE_BACKGROUND_MODE" desc="The label of the check-box that enables background mode">
         Continue running background apps when Chromium is closed
+      </message>
+      <message name="IDS_OPTIONS_SYSTEM_ENABLE_HARDWARE_ACCELERATION_MODE" desc="The label of the check-box that enables hardware acceleration mode">
+        Use hardware acceleration when available
+      </message>
+      <message name="IDS_OPTIONS_SYSTEM_ENABLE_HARDWARE_ACCELERATION_MODE_RESTART" desc="The restart string after changing hardware acceleration mode">
+        (requires Chromium <ph name="BEGIN_BUTTON">&lt;button id="gpu-mode-reset-restart-button" type="button" class="link-button standalone-link-button"&gt;</ph>restart<ph name="END_BUTTON">&lt;/button&gt;</ph>)
       </message>
       <message name="IDS_CANT_WRITE_USER_DIRECTORY_SUMMARY" desc="Summary of problem displayed in dialog when we can't create a directory for this user.">
 Chromium cannot read and write to its data directory:
@@ -472,9 +488,6 @@ Chromium is unable to recover your settings.
           Do you want Chromium to save your password for this site?
         </message>
       </if>
-      <message name="IDS_FR_BUBBLE_QUESTION" desc="Main text for the bubble">
-        Chromium uses your default search engine, which is currently set to <ph name="PAGE_TITLE">$1<ex>Google</ex></ph>. Do you want to keep your default search engine?
-      </message>
       <message name="IDS_CANT_WRITE_USER_DIRECTORY_EXIT_BUTTON" desc="Text on button of dialog that closes Chrome if we can't create a directory for this user.">
         Exit Chromium
       </message>
@@ -528,9 +541,6 @@ Chromium is unable to recover your settings.
       </message>
       <message name="IDS_INSTALL_NO_PRODUCTS_TO_UPDATE" desc="Error displayed if the installer is not provided one or more products to install/update.">
         No installation of Chromium or Chromium Frame found to update.
-      </message>
-      <message name="IDS_INSTALL_APP_CONFLICT" desc="Error displayed if installation fails due to another existing application.">
-        A conflict with another installed application has been detected.
       </message>
       <message name="IDS_UNINSTALL_COMPLETE" desc="Text displayed on dialog that is shown when uninstall is complete and no reboot is required.">
         Uninstallation complete.
@@ -678,12 +688,6 @@ Chromium is unable to recover your settings.
           Chromium Captive Portal detector
         </message>
       </if>
-      <message name="IDS_FLAGS_SHOW_APP_LIST_SHORTCUT_NAME" desc="Name for the flag to show the Chromium app list shortcut in the taskbar.">
-        Show Chromium App Launcher.
-      </message>
-      <message name="IDS_FLAGS_SHOW_APP_LIST_SHORTCUT_DESCRIPTION" desc="Description for the flag to show the Chromium app list shortcut in the taskbar.">
-        Show a shortcut to the Chromium App Launcher in the Windows TaskBar.
-      </message>
 
       <!-- Obsolete System info bar -->
       <message name="IDS_SYSTEM_OBSOLETE_MESSAGE" desc="Message shown when your OS is no longer supported. This messages is followed by a 'Learn more' link.">
@@ -767,6 +771,10 @@ For Chromium, processes used to display diagnostics information (such as this "a
       </message>
 
       <!-- Main Chrome menu -->
+      <message name="IDS_APPMENU_TOOLTIP" desc="The tooltip to show for the browser menu">
+        Customize and control Chromium
+      </message>
+
       <if expr="pp_ifdef('use_titlecase') and not pp_ifdef('chromeos')">
         <message name="IDS_ABOUT" desc="In Title Case: The text label of the About Chrome menu item">
           About &amp;Chromium
@@ -807,9 +815,6 @@ For Chromium, processes used to display diagnostics information (such as this "a
         <message name="IDS_RENDERER_APP_NAME" desc="The renderer application's name.  Should contain the Chrome application name (IDS_PRODUCT_NAME). Example: Google Chrome Renderer.">
           Chromium Renderer
         </message>
-        <message name="IDS_SHORT_RENDERER_APP_NAME" desc="The renderer application's short name, used for the Mac's application menu, activity monitor, etc. Example: Chrome Renderer, not Google Chrome Renderer.">
-          Chromium Renderer
-        </message>
         <message name="IDS_PLUGIN_APP_NAME" desc="The plug-in host application's name.  Should contain the Chrome application name (IDS_PRODUCT_NAME). Example: Google Chrome Plug-In Host.">
           Chromium Plug-In Host
         </message>
@@ -819,38 +824,34 @@ For Chromium, processes used to display diagnostics information (such as this "a
         <message name="IDS_WORKER_APP_NAME" desc="The worker application's name.  Should contain the Chrome application name (IDS_PRODUCT_NAME). Example: Google Chrome Worker.">
           Chromium Worker
         </message>
-        <message name="IDS_SHORT_WORKER_APP_NAME" desc="The worker application's short name, used for the Mac's application menu, activity monitor, etc. Example: Chrome Worker, not Google Chrome Worker.">
-          Chromium Worker
-        </message>
         <message name="IDS_UTILITY_APP_NAME" desc="The utility application's name.  Should contain the Chrome application name (IDS_PRODUCT_NAME). Example: Google Chrome Utility.">
-          Chromium Utility
-        </message>
-        <message name="IDS_SHORT_UTILITY_APP_NAME" desc="The utility application's short name, used for the Mac's application menu, activity monitor, etc. Example: Chrome Utility, not Google Chrome Utility.">
           Chromium Utility
         </message>
       </if>
 
       <!-- Sync promo page chrome://signin -->
-      <message name="IDS_SYNC_PROMO_V_LEARN_MORE" desc="Learn more link at the bottom of the sync promo.">
-        See <ph name="BEGIN_LINK">&lt;a target="_blank" href="$1"&gt;</ph>more benefits<ph name="END_LINK">&lt;/a&gt;</ph> of signing in to Chromium.
-      </message>
       <message name="IDS_SYNC_DIFFERENT_EMAIL" desc="Error message to display when setting up sync for a second time and the user name is different from the previous user name.">
         You were previously signed in with a different account, signing in will merge your data. Consider creating a new Chromium user via the <ph name="BEGIN_LINK">&lt;a href="chrome://settings/search#Users" target="_parent"&gt;</ph>settings page<ph name="END_LINK">&lt;/a&gt;</ph> for your Chromium stuff.
       </message>
 
       <!-- One click sign in infobar -->
       <if expr="not pp_ifdef('chromeos')">
+        <!-- New one-click signin dialog contents for SAML support -->
+        <message name="IDS_ONE_CLICK_SIGNIN_DIALOG_TITLE_NEW" desc="The title of the modal dialog window that opens when the user chooses to use one click sign in.">
+          Sign in to Chromium with <ph name="USER_EMAIL_ADDRESS">$1<ex>foo@gmail.com</ex></ph>?
+        </message>
+        <message name="IDS_ONE_CLICK_SIGNIN_DIALOG_MESSAGE_NEW" desc="The message of the one click sign in dialog.">
+          You're signing in to Chromium using your <ph name="USER_EMAIL_ADDRESS">$1<ex>foo@gmail.com</ex></ph> account. You will be able to access your bookmarks, history, and other settings on all of your signed in devices.
+        </message>
+        <!-- Delete DIALOG_TITLE/MESSAGE when we switch to the _NEW versions -->
         <message name="IDS_ONE_CLICK_SIGNIN_DIALOG_TITLE" desc="The title of the modal dialog window that opens when the user chooses to use one click sign in.">
           You're signed in to Chromium!
-        </message>
-        <message name="IDS_ONE_CLICK_SIGNIN_INFOBAR_MESSAGE" desc="The string shown in the infobar explaining that the user can connect his profile to a Google account instead of logging in only here.">
-          Use this Google Account to sync all your Chromium stuff?
         </message>
         <message name="IDS_ONE_CLICK_SIGNIN_BUBBLE_MESSAGE" desc="The body of the sync promo NTP bubble.">
           You're now signed in to Chromium! Your bookmarks, history, and other settings will be synced to your Google Account.
         </message>
-        <message name="IDS_ONE_CLICK_SIGNIN_DIALOG_HEADING" desc="The heading of the reverse auto-login dialog.">
-          Sign in to Chromium
+        <message name="IDS_ONE_CLICK_SIGNIN_BUBBLE_SYNC_DISABLED_MESSAGE" desc="The body of the signin bubble, when sync has been disabled.">
+          You're now signed in to Chromium! Sync is disabled by your administrator.
         </message>
         <message name="IDS_SYNC_WRONG_EMAIL" desc="Message shown when sync setup failed due to the user entering the wrong email address for sign in.">
           You were signed in to Chromium as <ph name="USER_EMAIL_ADDRESS">$1<ex>foo@gmail.com</ex></ph>. Please use the same account to sign in again.
@@ -883,54 +884,26 @@ Signing in anyway will merge Chromium information like bookmarks, history, and o
         Save details in Chromium
       </message>
 
-      <!-- Web Intents -->
-      <message name="IDS_INTENT_PICKER_INSTALL_EXTENSION" desc="Text on the button in the web intent picker that installs an extension then uses the extension as an intent service.">
-        Add to Chromium
-      </message>
-
       <!-- Network Error Pages -->
-      <message name="IDS_ERRORPAGES_SUGGESTION_NETWORK_PREDICTION" desc="When a page fails to load, sometimes we suggest disabling network prediction.">
-        Try disabling network prediction by following these steps:
+      <message name="IDS_ERRORPAGES_SUGGESTION_NETWORK_PREDICTION_BODY" desc="When a page fails to load, sometimes we suggest disabling predicting network actions.  These are details below a header.">
         Go to
-        <ph name="BEGIN_BOLD">&lt;strong&gt;</ph>
         the Chromium menu &gt;
         <ph name="SETTINGS_TITLE">&lt;span jscontent="settingsTitle"&gt;&lt;/span&gt;<ex>Settings</ex></ph>
         &gt;
         <ph name="ADVANCED_TITLE">&lt;span jscontent="advancedTitle"&gt;&lt;/span&gt;<ex>Under the Hood</ex></ph>
-        <ph name="END_BOLD">&lt;/strong&gt;</ph>
         and deselect &quot;<ph name="NO_PREFETCH_DESCRIPTION">&lt;span jscontent="noNetworkPredictionTitle"&gt;&lt;/span&gt;<ex>Predict network actions to improve page load performance</ex></ph>.&quot;
         If this does not resolve the issue, we recommend selecting this option
         again for improved performance.
       </message>
+      <message name="IDS_ERRORPAGES_SUGGESTION_FIREWALL_CONFIG_HEADER" desc="When a webpage fails to load, in some cases we suggest reconfiguring the firewall.  This is a header above some details.">
+        Allow Chromium to access the network in your firewall or antivirus
+        settings.
+      </message>
       <if expr="is_macosx and not pp_ifdef('ios')">
         <message name="IDS_ERRORPAGES_SUGGESTION_PROXY_DISABLE_PLATFORM" desc="Mac OSX instructions for disabling use of a proxy server.">
           Go to
-          <ph name="BEGIN_BOLD">&lt;strong&gt;</ph>
           Applications &gt; System Preferences &gt; Network &gt; Advanced &gt; Proxies
-          <ph name="END_BOLD">&lt;/strong&gt;</ph>
           and deselect any proxies that have been selected.
-        </message>
-      </if>
-      <if expr="pp_ifdef('chromeos')">
-        <message name="IDS_ERRORPAGES_SUGGESTION_PROXY_DISABLE_PLATFORM" desc="ChromeOS instructions for disabling use of a proxy server.">
-          Go to
-          <ph name="BEGIN_BOLD">&lt;strong&gt;</ph>
-          the Chromium menu &gt;
-          <ph name="SETTINGS_TITLE">&lt;span jscontent="settingsTitle"&gt;&lt;/span&gt;<ex>Settings</ex></ph>
-          &gt;
-          <ph name="INTERNET_TITLE">&lt;span jscontent="internetTitle"&gt;&lt;/span&gt;<ex>Internet</ex></ph>
-          &gt;
-          &quot;<ph name="OPTIONS_BUTTON">&lt;span jscontent="optionsButton"&gt;&lt;/span&gt;<ex>Options...</ex></ph>&quot;
-          <ph name="END_BOLD">&lt;/strong&gt;</ph>
-          (for the current Network). If the
-          <ph name="BEGIN_BOLD">&lt;strong&gt;</ph>
-          &quot;<ph name="PROXY_BUTTON">&lt;span jscontent="proxyButton"&gt;&lt;/span&gt;<ex>Change proxy settings...</ex></ph>&quot;
-          <ph name="END_BOLD">&lt;/strong&gt;</ph>button (in the
-          <ph name="BEGIN_BOLD">&lt;strong&gt;</ph>
-          <ph name="NETWORK_TAB">&lt;span jscontent="networkTab"&gt;&lt;/span&gt;<ex>Network</ex></ph>
-          <ph name="END_BOLD">&lt;/strong&gt;</ph>
-          tab) is present, click on that and make sure your configuration
-          is set to &quot;Direct&quot;.
         </message>
       </if>
       <if expr="pp_ifdef('android') or pp_ifdef('ios')">
@@ -940,21 +913,18 @@ Signing in anyway will merge Chromium information like bookmarks, history, and o
       <if expr="not pp_ifdef('chromeos') and is_posix and not is_macosx and not pp_ifdef('android') and not pp_ifdef('ios')">
         <message name="IDS_ERRORPAGES_SUGGESTION_PROXY_DISABLE_PLATFORM" desc="Linux instructions for disabling use of a proxy server.">
           Go to
-          <ph name="BEGIN_BOLD">&lt;strong&gt;</ph>
           the Chromium menu &gt;
           <ph name="SETTINGS_TITLE">&lt;span jscontent="settingsTitle"&gt;&lt;/span&gt;<ex>Settings</ex></ph>
           &gt;
           <ph name="ADVANCED_TITLE">&lt;span jscontent="advancedTitle"&gt;&lt;/span&gt;<ex>Under the Hood</ex></ph>
           &gt;
           <ph name="PROXIES_TITLE">&lt;span jscontent="proxyTitle"&gt;&lt;/span&gt;<ex>Change proxy settings...</ex></ph>
-          <ph name="END_BOLD">&lt;/strong&gt;</ph>
           and make sure your configuration is set to &quot;no proxy&quot; or &quot;direct.&quot;
         </message>
       </if>
       <if expr="is_win">
         <message name="IDS_ERRORPAGES_SUGGESTION_PROXY_DISABLE_PLATFORM" desc="Windows instructions for disabling use of a proxy server.">
           Go to
-          <ph name="BEGIN_BOLD">&lt;strong&gt;</ph>
           the Chromium menu &gt;
           <ph name="SETTINGS_TITLE">&lt;span jscontent="settingsTitle"&gt;&lt;/span&gt;<ex>Settings</ex></ph>
           &gt;
@@ -963,7 +933,6 @@ Signing in anyway will merge Chromium information like bookmarks, history, and o
           <ph name="PROXIES_TITLE">&lt;span jscontent="proxyTitle"&gt;&lt;/span&gt;<ex>Change proxy settings...</ex></ph>
           &gt;
           LAN Settings
-          <ph name="END_BOLD">&lt;/strong&gt;</ph>
           and deselect the &quot;Use a proxy server for your LAN&quot; checkbox.
         </message>
       </if>
@@ -979,14 +948,22 @@ Signing in anyway will merge Chromium information like bookmarks, history, and o
       <message name="IDS_APP_LIST_SHORTCUT_NAME" desc="Name for the Chromium App List to appear in the taskbar and in any shortcuts to it.">
         Chromium App Launcher
       </message>
-      <message name="IDS_APP_LIST_OPT_IN_TEXT" desc="Text to appear in the prompt to use the Chrome app list.">
-        Use the Chromium App Launcher to launch your apps.
+      <message name="IDS_APP_LIST_SHORTCUT_NAME_CANARY" desc="Name for the Chromium App List to appear in the taskbar and in any shortcuts to it.">
+        Chromium App Launcher
       </message>
       <message name="IDS_APP_LIST_SIGNIN_HEADING" desc="Heading for when the launcher needs to sign in.">
         Sign in to Chromium
       </message>
       <message name="IDS_APP_LIST_SIGNIN_TEXT" desc="Text for when the launcher needs to sign in.">
         You need to be signed into Chromium to use apps. This allows Chromium to sync your apps, bookmarks, history, passwords and other settings across devices.
+      </message>
+
+      <!-- App shortcuts -->
+      <message name="IDS_APP_SHORTCUTS_SUBDIR_NAME" desc="Name for the Chromium Apps Start Menu folder name.">
+        Chromium Apps
+      </message>
+      <message name="IDS_APP_SHORTCUTS_SUBDIR_NAME_CANARY" desc="Name for the Chrome Apps Start Menu folder name.">
+        Chromium Apps
       </message>
 
       <!-- Chrome OS OOBE Terms of Service screen-->

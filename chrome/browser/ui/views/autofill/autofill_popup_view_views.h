@@ -15,12 +15,18 @@ namespace content {
 class WebContents;
 }
 
+namespace autofill {
+
 // Views toolkit implementation for AutofillPopupView.
 class AutofillPopupViewViews : public AutofillPopupView,
                                public views::WidgetDelegateView,
                                public views::WidgetObserver {
  public:
-  explicit AutofillPopupViewViews(AutofillPopupController* controller);
+  // The observing widget should be the top level widget for the native
+  // view, which we need to listen to for several signals that indicate the
+  // popup should be closed.
+  AutofillPopupViewViews(AutofillPopupController* controller,
+                         views::Widget* observing_widget);
 
  private:
   virtual ~AutofillPopupViewViews();
@@ -33,16 +39,20 @@ class AutofillPopupViewViews : public AutofillPopupView,
 
   // views:Views implementation.
   virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE;
-
-  // views::WidgetObserver implementation.
   virtual void OnMouseCaptureLost() OVERRIDE;
   virtual bool OnMouseDragged(const ui::MouseEvent& event) OVERRIDE;
   virtual void OnMouseExited(const ui::MouseEvent& event) OVERRIDE;
   virtual void OnMouseMoved(const ui::MouseEvent& event) OVERRIDE;
   virtual bool OnMousePressed(const ui::MouseEvent& event) OVERRIDE;
   virtual void OnMouseReleased(const ui::MouseEvent& event) OVERRIDE;
+
+  // views::WidgetObserver implementation.
   virtual void OnWidgetBoundsChanged(views::Widget* widget,
                                      const gfx::Rect& new_bounds) OVERRIDE;
+
+  // Hide the popup (Since either Hide or ~AutofillPopupViewViews can need to
+  // hide the popup, the actually hiding code must be placed here).
+  void HideInternal();
 
   // Draw the given autofill entry in |entry_rect|.
   void DrawAutofillEntry(gfx::Canvas* canvas,
@@ -56,5 +66,7 @@ class AutofillPopupViewViews : public AutofillPopupView,
 
   DISALLOW_COPY_AND_ASSIGN(AutofillPopupViewViews);
 };
+
+}  // namespace autofill
 
 #endif  // CHROME_BROWSER_UI_VIEWS_AUTOFILL_AUTOFILL_POPUP_VIEW_VIEWS_H_
