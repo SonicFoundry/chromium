@@ -1434,6 +1434,7 @@ LRESULT RenderWidgetHostViewWin::OnTimer(UINT message, WPARAM wparam, LPARAM lpa
     if (!UpdateLayeredWindow(layered_parent_, dc, &ptDest, &sizeDest, backing_store->hdc(), &ptSrc, 0, &ftn, ULW_ALPHA)) {
       LOG(ERROR) << "Unable to update layered window. GLE=" << std::hex << GetLastError();
     }
+    DeleteObject(dc);
     update_layered_window_ = false;
   }
 
