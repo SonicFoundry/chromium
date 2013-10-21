@@ -7,7 +7,7 @@
 
 #include <map>
 #include "base/basictypes.h"
-#include "base/hash_tables.h"
+#include "base/containers/hash_tables.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
@@ -219,8 +219,12 @@ class GPU_EXPORT BufferManager {
     return memory_tracker_->GetMemRepresented();
   }
 
-  // Tell's for a given usage if this would be a client side array.
+  // Tells for a given usage if this would be a client side array.
   bool IsUsageClientSideArray(GLenum usage);
+
+  // Tells whether a buffer that is emulated using client-side arrays should be
+  // set to a non-zero size.
+  bool UseNonZeroSizeForClientSideArrayBuffer();
 
  private:
   friend class Buffer;

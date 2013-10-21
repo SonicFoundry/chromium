@@ -25,6 +25,7 @@ function FileSelection(fileManager, indexes) {
   this.allDriveFilesPresent = false,
   this.iconType = null;
   this.bytesKnown = false;
+  this.mustBeHidden_ = false;
 
   // Synchronously compute what we can.
   for (var i = 0; i < this.indexes.length; i++) {
@@ -89,6 +90,7 @@ FileSelection.prototype.createTasks = function(callback) {
 FileSelection.prototype.computeBytes = function(callback) {
   if (this.entries.length == 0) {
     this.bytesKnown = true;
+    this.showBytes = false;
     this.bytes = 0;
     return;
   }
@@ -146,6 +148,7 @@ FileSelection.prototype.cancelComputing_ = function() {
  * This object encapsulates everything related to current selection.
  *
  * @param {FileManager} fileManager File manager instance.
+ * @extends {cr.EventTarget}
  * @constructor
  */
 function FileSelectionHandler(fileManager) {
@@ -168,6 +171,11 @@ function FileSelectionHandler(fileManager) {
 
   this.animationTimeout_ = null;
 }
+
+/**
+ * FileSelectionHandler extends cr.EventTarget.
+ */
+FileSelectionHandler.prototype.__proto__ = cr.EventTarget.prototype;
 
 /**
  * Maximum amount of thumbnails in the preview pane.
@@ -213,13 +221,6 @@ FileSelectionHandler.prototype.onFileSelectionChanged = function(event) {
   if (this.selectionUpdateTimer_) {
     clearTimeout(this.selectionUpdateTimer_);
     this.selectionUpdateTimer_ = null;
-  }
-
-  if (!indexes.length) {
-    this.updatePreviewPanelVisibility_();
-    this.updatePreviewPanelText_();
-    this.fileManager_.updateContextMenuActionItems(null, false);
-    return;
   }
 
   this.hideCalculating_();
@@ -308,6 +309,15 @@ FileSelectionHandler.prototype.isFileSelectionAvailable = function() {
 };
 
 /**
+ * Sets the flag to force the preview panel hidden.
+ * @param {boolean} hidden True to force hidden.
+ */
+FileSelectionHandler.prototype.setPreviewPanelMustBeHidden = function(hidden) {
+  this.previewPanelMustBeHidden_ = hidden;
+  this.updatePreviewPanelVisibility_();
+};
+
+/**
  * Animates preview panel show/hide transitions.
  *
  * @private
@@ -315,30 +325,29 @@ FileSelectionHandler.prototype.isFileSelectionAvailable = function() {
 FileSelectionHandler.prototype.updatePreviewPanelVisibility_ = function() {
   var panel = this.previewPanel_;
   var state = panel.getAttribute('visibility');
-  var mustBeVisible = (this.selection.totalCount > 0);
-  var self = this;
-  var fm = this.fileManager_;
+  var mustBeVisible = (this.selection.totalCount > 0 ||
+      !PathUtil.isRootPath(this.fileManager_.getCurrentDirectory()));
 
   var stopHidingAndShow = function() {
-    clearTimeout(self.hidingTimeout_);
-    self.hidingTimeout_ = 0;
+    clearTimeout(this.hidingTimeout_);
+    this.hidingTimeout_ = 0;
     setVisibility('visible');
-  };
+  }.bind(this);
 
   var startHiding = function() {
     setVisibility('hiding');
-    self.hidingTimeout_ = setTimeout(function() {
-        self.hidingTimeout_ = 0;
+    this.hidingTimeout_ = setTimeout(function() {
+        this.hidingTimeout_ = 0;
         setVisibility('hidden');
-        fm.onResize_();
-      }, 250);
-  };
+        cr.dispatchSimpleEvent(this, 'hide-preview-panel');
+      }.bind(this), 250);
+  }.bind(this);
 
   var show = function() {
     setVisibility('visible');
-    self.previewThumbnails_.textContent = '';
-    fm.onResize_();
-  };
+    this.previewThumbnails_.textContent = '';
+    cr.dispatchSimpleEvent(this, 'show-preview-panel');
+  }.bind(this);
 
   var setVisibility = function(visibility) {
     panel.setAttribute('visibility', visibility);
@@ -346,17 +355,17 @@ FileSelectionHandler.prototype.updatePreviewPanelVisibility_ = function() {
 
   switch (state) {
     case 'visible':
-      if (!mustBeVisible)
+      if (!mustBeVisible || this.previewPanelMustBeHidden_)
         startHiding();
       break;
 
     case 'hiding':
-      if (mustBeVisible)
+      if (mustBeVisible && !this.previewPanelMustBeHidden_)
         stopHidingAndShow();
       break;
 
     case 'hidden':
-      if (mustBeVisible)
+      if (mustBeVisible && !this.previewPanelMustBeHidden_)
         show();
   }
 };
@@ -376,8 +385,11 @@ FileSelectionHandler.prototype.isPreviewPanelVisibile_ = function() {
  */
 FileSelectionHandler.prototype.updatePreviewPanelText_ = function() {
   var selection = this.selection;
-  if (selection.totalCount == 0) {
-    // We dont want to change the string during preview panel animating away.
+  if (selection.totalCount <= 1) {
+    // Hides the preview text if zero or one file is selected. We shows a
+    // breadcrumb list instead on the preview panel.
+    this.hideCalculating_();
+    this.previewText_.textContent = '';
     return;
   }
 
@@ -461,56 +473,82 @@ FileSelectionHandler.prototype.updateFileSelectionAsync = function(selection) {
   if (this.selection != selection) return;
 
   // Update the file tasks.
-  var onTasks = function() {
-    if (this.selection != selection) return;
-    selection.tasks.display(this.taskItems_);
-    selection.tasks.updateMenuItem();
-  }.bind(this);
-
   if (this.fileManager_.dialogType == DialogType.FULL_PAGE &&
       selection.directoryCount == 0 && selection.fileCount > 0) {
-    selection.createTasks(onTasks);
+    selection.createTasks(function() {
+      if (this.selection != selection)
+        return;
+      selection.tasks.display(this.taskItems_);
+      selection.tasks.updateMenuItem();
+    }.bind(this));
   } else {
     this.taskItems_.hidden = true;
   }
 
-  // Update the UI.
+  // Update preview panels.
   var wasVisible = this.isPreviewPanelVisibile_();
+  var thumbnailEntries;
+  if (selection.totalCount == 0) {
+    thumbnailEntries = [
+      this.fileManager_.getCurrentDirectoryEntry()
+    ];
+  } else {
+    thumbnailEntries = selection.entries;
+    if (selection.totalCount != 1) {
+      selection.computeBytes(function() {
+        if (this.selection != selection)
+          return;
+        this.updatePreviewPanelText_();
+      }.bind(this));
+    }
+  }
   this.updatePreviewPanelVisibility_();
-  this.updateSearchBreadcrumbs_();
-  this.fileManager_.updateContextMenuActionItems(null, false);
+  this.updatePreviewPanelText_();
+  this.showPreviewThumbnails_(thumbnailEntries);
+
+  // Update breadcrums.
+  var updateTarget = null;
+  var path = this.fileManager_.getCurrentDirectory();
+  if (selection.totalCount == 1) {
+    // Shows the breadcrumb list when a file is selected.
+    updateTarget = selection.entries[0].fullPath;
+  } else if (selection.totalCount == 0 && !PathUtil.isRootPath(path)) {
+    // Shows the breadcrumb list when no file is selected and the current
+    // directory is non-root path.
+    updateTarget = path;
+  }
+  this.updatePreviewPanelBreadcrumbs_(updateTarget);
+
+  // Scroll to item
   if (!wasVisible && this.selection.totalCount == 1) {
     var list = this.fileManager_.getCurrentList();
     list.scrollIndexIntoView(list.selectionModel.selectedIndex);
   }
 
   // Sync the commands availability.
-  var commands = this.fileManager_.dialogDom_.querySelectorAll('command');
-  for (var i = 0; i < commands.length; i++)
-    commands[i].canExecuteChange();
+  if (selection.totalCount != 0) {
+    var commands = this.fileManager_.dialogDom_.querySelectorAll('command');
+    for (var i = 0; i < commands.length; i++)
+      commands[i].canExecuteChange();
+  }
 
-  // Update the summary information.
-  var onBytes = function() {
-    if (this.selection != selection) return;
-    this.updatePreviewPanelText_();
-  }.bind(this);
-  selection.computeBytes(onBytes);
-  this.updatePreviewPanelText_();
+  // Update context menu.
+  this.fileManager_.updateContextMenuActionItems(null, false);
 
   // Inform tests it's OK to click buttons now.
-  chrome.test.sendMessage('selection-change-complete');
-
-  // Show thumbnails.
-  this.showPreviewThumbnails_(selection);
+  if (selection.totalCount > 0) {
+    chrome.test.sendMessage('selection-change-complete');
+  }
 };
 
 /**
  * Renders preview thumbnails in preview panel.
  *
- * @param {FileSelection} selection The selection object.
+ * @param {Array.<FileEntry>} entries The entries of selected object.
  * @private
  */
-FileSelectionHandler.prototype.showPreviewThumbnails_ = function(selection) {
+FileSelectionHandler.prototype.showPreviewThumbnails_ = function(entries) {
+  var selection = this.selection;
   var thumbnails = [];
   var thumbnailCount = 0;
   var thumbnailLoaded = -1;
@@ -554,8 +592,8 @@ FileSelectionHandler.prototype.showPreviewThumbnails_ = function(selection) {
   };
 
   var doc = this.fileManager_.document_;
-  for (var i = 0; i < selection.entries.length; i++) {
-    var entry = selection.entries[i];
+  for (var i = 0; i < entries.length; i++) {
+    var entry = entries[i];
 
     if (thumbnailCount < FileSelectionHandler.MAX_PREVIEW_THUMBNAIL_COUNT) {
       var box = doc.createElement('div');
@@ -611,7 +649,20 @@ FileSelectionHandler.prototype.renderThumbnail_ = function(entry, callback) {
 };
 
 /**
- * Updates the search breadcrumbs.
+ * Updates the breadcrumbs in the preview panel.
+ *
+ * @param {?string} path Path to be shown in the breadcrumbs list
+ * @private
+ */
+FileSelectionHandler.prototype.updatePreviewPanelBreadcrumbs_ = function(path) {
+  if (!path)
+    this.searchBreadcrumbs_.hide();
+  else
+    this.searchBreadcrumbs_.show(PathUtil.getRootPath(path), path);
+};
+
+/**
+ * Updates the search breadcrumbs. This method should not be used in the new ui.
  *
  * @private
  */

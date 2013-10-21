@@ -12,8 +12,8 @@
 #include "base/android/jni_string.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/time.h"
-#include "base/utf_string_conversions.h"
 #include "chrome/browser/android/provider/blocking_ui_thread_async_request.h"
 #include "chrome/browser/android/provider/bookmark_model_observer_task.h"
 #include "chrome/browser/android/provider/run_on_ui_thread_blocking.h"
@@ -667,14 +667,14 @@ class BookmarkIconFetchTask : public FaviconServiceTask {
       : FaviconServiceTask(favicon_service, profile,
                            cancelable_consumer, cancelable_tracker) {}
 
-  history::FaviconBitmapResult Run(const GURL& url) {
+  chrome::FaviconBitmapResult Run(const GURL& url) {
     RunAsyncRequestOnUIThreadBlocking(
         base::Bind(&FaviconService::GetRawFaviconForURL,
                    base::Unretained(service()),
                    FaviconService::FaviconForURLParams(
                        profile(),
                        url,
-                       history::FAVICON | history::TOUCH_ICON,
+                       chrome::FAVICON | chrome::TOUCH_ICON,
                        gfx::kFaviconSize),
                    ui::GetMaxScaleFactor(),
                    base::Bind(
@@ -685,12 +685,12 @@ class BookmarkIconFetchTask : public FaviconServiceTask {
   }
 
  private:
-  void OnFaviconRetrieved(const history::FaviconBitmapResult& bitmap_result) {
+  void OnFaviconRetrieved(const chrome::FaviconBitmapResult& bitmap_result) {
     result_ = bitmap_result;
     RequestCompleted();
   }
 
-  history::FaviconBitmapResult result_;
+  chrome::FaviconBitmapResult result_;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkIconFetchTask);
 };
@@ -1153,7 +1153,7 @@ bool ChromeBrowserProvider::RegisterChromeBrowserProvider(JNIEnv* env) {
 
 ChromeBrowserProvider::ChromeBrowserProvider(JNIEnv* env, jobject obj)
     : weak_java_provider_(env, obj),
-      template_loaded_event_(true, false) {
+      handling_extensive_changes_(false) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   profile_ = g_browser_process->profile_manager()->GetLastUsedProfile();
   bookmark_model_ = BookmarkModelFactory::GetForProfile(profile_);
@@ -1171,14 +1171,9 @@ ChromeBrowserProvider::ChromeBrowserProvider(JNIEnv* env, jobject obj)
   notification_registrar_.Add(this,
       chrome::NOTIFICATION_HISTORY_KEYWORD_SEARCH_TERM_UPDATED,
       content::NotificationService::AllSources());
-  notification_registrar_.Add(this,
-      chrome::NOTIFICATION_TEMPLATE_URL_SERVICE_LOADED,
-      content::NotificationService::AllSources());
   TemplateURLService* template_service =
         TemplateURLServiceFactory::GetForProfile(profile_);
-  if (template_service->loaded())
-    template_loaded_event_.Signal();
-  else
+  if (!template_service->loaded())
     template_service->Load();
 }
 
@@ -1549,7 +1544,7 @@ ScopedJavaLocalRef<jbyteArray> ChromeBrowserProvider::GetFaviconOrTouchIcon(
                                      profile_,
                                      &favicon_consumer_,
                                      &cancelable_task_tracker_);
-  history::FaviconBitmapResult bitmap_result = favicon_task.Run(url);
+  chrome::FaviconBitmapResult bitmap_result = favicon_task.Run(url);
 
   if (!bitmap_result.is_valid() || !bitmap_result.bitmap_data.get())
     return ScopedJavaLocalRef<jbyteArray>();
@@ -1579,7 +1574,21 @@ ScopedJavaLocalRef<jbyteArray> ChromeBrowserProvider::GetThumbnail(
 
 // ------------- Observer-related methods ------------- //
 
+void ChromeBrowserProvider::ExtensiveBookmarkChangesBeginning(
+    BookmarkModel* model) {
+  handling_extensive_changes_ = true;
+}
+
+void ChromeBrowserProvider::ExtensiveBookmarkChangesEnded(
+    BookmarkModel* model) {
+  handling_extensive_changes_ = false;
+  BookmarkModelChanged();
+}
+
 void ChromeBrowserProvider::BookmarkModelChanged() {
+  if (handling_extensive_changes_)
+    return;
+
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = weak_java_provider_.get(env);
   if (obj.is_null())
@@ -1606,7 +1615,5 @@ void ChromeBrowserProvider::Observe(
     if (obj.is_null())
       return;
     Java_ChromeBrowserProvider_onSearchTermChanged(env, obj.obj());
-  } else if (type == chrome::NOTIFICATION_TEMPLATE_URL_SERVICE_LOADED) {
-    template_loaded_event_.Signal();
   }
 }

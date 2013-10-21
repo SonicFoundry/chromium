@@ -10,7 +10,7 @@
 #include "ash/test/ash_test_base.h"
 #include "base/command_line.h"
 #include "base/location.h"
-#include "base/utf_string_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/root_window.h"
 #include "ui/aura/test/event_generator.h"
@@ -284,6 +284,32 @@ void DispatchGesture(ui::EventType gesture_type, gfx::Point location) {
       ui::GestureEventDetails(gesture_type, 0, 0),
       1);
   Shell::GetPrimaryRootWindow()->DispatchGestureEvent(&gesture_event);
+}
+
+bool IsGestureEventType(ui::EventType type) {
+  switch (type) {
+    case ui::ET_GESTURE_SCROLL_BEGIN:
+    case ui::ET_GESTURE_SCROLL_END:
+    case ui::ET_GESTURE_SCROLL_UPDATE:
+    case ui::ET_GESTURE_TAP:
+    case ui::ET_GESTURE_TAP_CANCEL:
+    case ui::ET_GESTURE_TAP_DOWN:
+    case ui::ET_GESTURE_BEGIN:
+    case ui::ET_GESTURE_END:
+    case ui::ET_GESTURE_TWO_FINGER_TAP:
+    case ui::ET_GESTURE_PINCH_BEGIN:
+    case ui::ET_GESTURE_PINCH_END:
+    case ui::ET_GESTURE_PINCH_UPDATE:
+    case ui::ET_GESTURE_LONG_PRESS:
+    case ui::ET_GESTURE_LONG_TAP:
+    case ui::ET_GESTURE_MULTIFINGER_SWIPE:
+    case ui::ET_SCROLL_FLING_CANCEL:
+    case ui::ET_SCROLL_FLING_START:
+      return true;
+    default:
+      break;
+  }
+  return false;
 }
 
 }  // namespace
@@ -986,16 +1012,12 @@ class DragImageWindowObserver : public aura::WindowObserver {
 
 }
 
-#if defined(OS_WIN)
-// Multiple displays are not supported on Windows Ash. http://crbug.com/165962
-#define MAYBE_DragCancelAcrossDisplays DISABLED_DragCancelAcrossDisplays
-#else
-#define MAYBE_DragCancelAcrossDisplays DragCancelAcrossDisplays
-#endif
-
 // Verifies the drag image moves back to the position where drag is started
 // across displays when drag is cancelled.
-TEST_F(DragDropControllerTest, MAYBE_DragCancelAcrossDisplays) {
+TEST_F(DragDropControllerTest, DragCancelAcrossDisplays) {
+  if (!SupportsMultipleDisplays())
+    return;
+
   UpdateDisplay("400x400,400x400");
   Shell::RootWindowList root_windows =
       Shell::GetInstance()->GetAllRootWindows();
@@ -1080,84 +1102,6 @@ TEST_F(DragDropControllerTest, MAYBE_DragCancelAcrossDisplays) {
        iter != root_windows.end(); ++iter) {
     aura::client::SetDragDropClient(*iter, NULL);
   }
-}
-
-class SimpleEventHandler : public ui::EventHandler {
- public:
-  SimpleEventHandler()
-      : handled_event_received_(false),
-        unhandled_event_received_(false) {
-    ash::Shell::GetInstance()->PrependPreTargetHandler(this);
-  }
-
-  virtual ~SimpleEventHandler() {
-    ash::Shell::GetInstance()->RemovePreTargetHandler(this);
-  }
-
-  bool handled_event_received() { return handled_event_received_; }
-  bool unhandled_event_received() { return unhandled_event_received_; }
-
-  void Reset() {
-    handled_event_received_ = false;
-    unhandled_event_received_ = false;
-  }
-
- private:
-  // Overridden from ui::EventHandler.
-  virtual void OnGestureEvent(ui::GestureEvent* event) OVERRIDE {
-    if (event->handled())
-      handled_event_received_ = true;
-    else
-      unhandled_event_received_ = true;
-  }
-
-  bool handled_event_received_;
-  bool unhandled_event_received_;
-
-  DISALLOW_COPY_AND_ASSIGN(SimpleEventHandler);
-};
-
-TEST_F(DragDropControllerTest,
-       DragDropControllerReceivesAllEventsDuringDragDrop) {
-  CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kEnableTouchDragDrop);
-  scoped_ptr<views::Widget> widget(CreateNewWidget());
-  DragTestView* drag_view = new DragTestView;
-  AddViewToWidgetAndResize(widget.get(), drag_view);
-  aura::test::EventGenerator generator(Shell::GetPrimaryRootWindow(),
-                                       widget->GetNativeView());
-  ui::OSExchangeData data;
-  data.SetString(UTF8ToUTF16("I am being dragged"));
-  SimpleEventHandler handler;
-
-  // Since we are not in drag/drop, |handler| should receive unhandled events.
-  generator.PressTouch();
-  gfx::Point point = gfx::Rect(drag_view->bounds()).CenterPoint();
-  handler.Reset();
-  DispatchGesture(ui::ET_GESTURE_LONG_PRESS, point);
-  EXPECT_TRUE(handler.unhandled_event_received());
-  EXPECT_FALSE(handler.handled_event_received());
-
-  EXPECT_TRUE(drag_drop_controller_->drag_start_received_);
-
-  // Since dragging has started, |handler| should not receive unhandled events.
-  UpdateDragData(&data);
-  gfx::Point gesture_location = point;
-  int num_drags = drag_view->width();
-  for (int i = 0; i < num_drags; ++i) {
-    gesture_location.Offset(1, 0);
-    handler.Reset();
-    DispatchGesture(ui::ET_GESTURE_SCROLL_UPDATE, gesture_location);
-    EXPECT_TRUE(handler.handled_event_received());
-    EXPECT_FALSE(handler.unhandled_event_received());
-
-    // Execute any scheduled draws to process deferred mouse events.
-    RunAllPendingInMessageLoop();
-  }
-
-  // End dragging.
-  DispatchGesture(ui::ET_GESTURE_SCROLL_END, gesture_location);
-  EXPECT_TRUE(drag_drop_controller_->drop_received_);
 }
 
 }  // namespace test

@@ -7,6 +7,8 @@
 #include <algorithm>   // For max().
 #include <set>
 
+#include "apps/app_load_service.h"
+#include "apps/switches.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
@@ -21,8 +23,8 @@
 #include "base/prefs/pref_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_restrictions.h"
-#include "base/utf_string_conversions.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/auto_launch_trial.h"
 #include "chrome/browser/automation/automation_provider.h"
@@ -61,6 +63,7 @@
 #include "chrome/installer/util/browser_distribution.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_security_policy.h"
+#include "content/public/browser/navigation_controller.h"
 #include "grit/locale_settings.h"
 #include "net/base/net_util.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -174,10 +177,10 @@ class ProfileLaunchObserver : public content::NotificationObserver {
         BrowserThread::UI, FROM_HERE,
         base::Bind(&ProfileLaunchObserver::ActivateProfile,
                    base::Unretained(this)));
-    // Stop reacting to new windows being opened to avoid posting more than
-    // once before ActivateProfile gets called and set |profile_to_activate_|
-    // to NULL.
+    // Avoid posting more than once before ActivateProfile gets called.
     registrar_.Remove(this, chrome::NOTIFICATION_BROWSER_WINDOW_READY,
+                      content::NotificationService::AllSources());
+    registrar_.Remove(this, chrome::NOTIFICATION_PROFILE_DESTROYED,
                       content::NotificationService::AllSources());
   }
 
@@ -252,6 +255,7 @@ bool StartupBrowserCreator::LaunchBrowser(
     chrome::startup::IsProcessStartup process_startup,
     chrome::startup::IsFirstRun is_first_run,
     int* return_code) {
+
   in_synchronous_profile_launch_ =
       process_startup == chrome::startup::IS_PROCESS_STARTUP;
   DCHECK(profile);
@@ -266,19 +270,30 @@ bool StartupBrowserCreator::LaunchBrowser(
                  << "browser session.";
   }
 
-  StartupBrowserCreatorImpl lwp(cur_dir, command_line, this, is_first_run);
-  std::vector<GURL> urls_to_launch =
-      GetURLsFromCommandLine(command_line, cur_dir, profile);
-  bool launched = lwp.Launch(profile, urls_to_launch,
-                             in_synchronous_profile_launch_);
-  in_synchronous_profile_launch_ = false;
+  // Note: This check should have been done in ProcessCmdLineImpl()
+  // before calling this function. However chromeos/login/login_utils.cc
+  // calls this function directly (see comments there) so it has to be checked
+  // again.
+  const bool silent_launch = command_line.HasSwitch(switches::kSilentLaunch);
 
-  if (!launched) {
-    LOG(ERROR) << "launch error";
-    if (return_code)
-      *return_code = chrome::RESULT_CODE_INVALID_CMDLINE_URL;
-    return false;
+  if (!silent_launch) {
+    StartupBrowserCreatorImpl lwp(cur_dir, command_line, this, is_first_run);
+    const std::vector<GURL> urls_to_launch =
+        GetURLsFromCommandLine(command_line, cur_dir, profile);
+    const bool launched = lwp.Launch(profile, urls_to_launch,
+                               in_synchronous_profile_launch_,
+                               chrome::HOST_DESKTOP_TYPE_NATIVE);
+    in_synchronous_profile_launch_ = false;
+    if (!launched) {
+      LOG(ERROR) << "launch error";
+      if (return_code)
+        *return_code = chrome::RESULT_CODE_INVALID_CMDLINE_URL;
+      return false;
+    }
+  } else {
+    in_synchronous_profile_launch_ = false;
   }
+
   profile_launch_observer.Get().AddLaunched(profile);
 
 #if defined(OS_CHROMEOS)
@@ -327,8 +342,14 @@ SessionStartupPref StartupBrowserCreator::GetSessionStartupPref(
   if (is_first_run && SessionStartupPref::TypeIsDefault(prefs))
     pref.type = SessionStartupPref::DEFAULT;
 
-  if (command_line.HasSwitch(switches::kRestoreLastSession) ||
-      StartupBrowserCreator::WasRestarted()) {
+  // The switches::kRestoreLastSession command line switch is used to restore
+  // sessions after a browser self restart (e.g. after a Chrome upgrade).
+  // However, new profiles can be created from a browser process that has this
+  // switch so do not set the session pref to SessionStartupPref::LAST for
+  // those as there is nothing to restore.
+  if ((command_line.HasSwitch(switches::kRestoreLastSession) ||
+       StartupBrowserCreator::WasRestarted()) &&
+      !profile->IsNewProfile()) {
     pref.type = SessionStartupPref::LAST;
   }
   if (pref.type == SessionStartupPref::LAST &&
@@ -405,7 +426,7 @@ std::vector<GURL> StartupBrowserCreator::GetURLsFromCommandLine(
           // command line. See ExistingUserController::OnLoginSuccess.
           (url.spec().find(chrome::kChromeUISettingsURL) == 0) ||
 #endif
-          (url.spec().compare(chrome::kAboutBlankURL) == 0)) {
+          (url.spec().compare(content::kAboutBlankURL) == 0)) {
         urls.push_back(url);
       }
     }
@@ -596,14 +617,17 @@ bool StartupBrowserCreator::ProcessCmdLineImpl(
     return true;
 
   // Check for --load-and-launch-app.
-  if (command_line.HasSwitch(switches::kLoadAndLaunchApp) &&
+  if (command_line.HasSwitch(apps::kLoadAndLaunchApp) &&
       !IncognitoModePrefs::ShouldLaunchIncognito(
           command_line, last_used_profile->GetPrefs())) {
     CommandLine::StringType path = command_line.GetSwitchValueNative(
-        switches::kLoadAndLaunchApp);
-    extensions::UnpackedInstaller::Create(
-        last_used_profile->GetExtensionService())->
-            LoadFromCommandLine(base::FilePath(path), true);
+        apps::kLoadAndLaunchApp);
+
+    if (!apps::AppLoadService::Get(last_used_profile)->LoadAndLaunch(
+            base::FilePath(path), command_line, cur_dir)) {
+      return false;
+    }
+
     // Return early here since we don't want to open a browser window.
     // The exception is when there are no browser windows, since we don't want
     // chrome to shut down.
@@ -682,7 +706,7 @@ bool StartupBrowserCreator::CreateAutomationProvider(
 
   AutomationProviderList* list = g_browser_process->GetAutomationProviderList();
   DCHECK(list);
-  list->AddProvider(automation);
+  list->AddProvider(automation.get());
 #endif  // defined(ENABLE_AUTOMATION)
 
   return true;

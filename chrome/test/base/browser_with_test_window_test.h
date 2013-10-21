@@ -97,7 +97,13 @@ class BrowserWithTestWindowTest : public testing::Test {
 
   TestingProfile* profile() const { return profile_.get(); }
 
-  MessageLoopForUI* message_loop() { return &ui_loop_; }
+  TestingProfile* GetProfile() { return profile_.get(); }
+
+  base::MessageLoop* message_loop() { return &ui_loop_; }
+
+  BrowserWindow* release_browser_window() WARN_UNUSED_RESULT {
+    return window_.release();
+  }
 
   // Adds a tab to |browser| with the given URL and commits the load.
   // This is a convenience function. The new tab will be added at index 0.
@@ -136,7 +142,7 @@ class BrowserWithTestWindowTest : public testing::Test {
 
  private:
   // We need to create a MessageLoop, otherwise a bunch of things fails.
-  MessageLoopForUI ui_loop_;
+  base::MessageLoopForUI ui_loop_;
   base::ShadowingAtExitManager at_exit_manager_;
   content::TestBrowserThread ui_thread_;
   content::TestBrowserThread db_thread_;

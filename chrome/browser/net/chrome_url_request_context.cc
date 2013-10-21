@@ -7,7 +7,7 @@
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/message_loop.h"
-#include "base/message_loop_proxy.h"
+#include "base/message_loop/message_loop_proxy.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/io_thread.h"
 #include "chrome/browser/net/load_time_stats.h"
@@ -174,7 +174,7 @@ ChromeURLRequestContext*
 ChromeURLRequestContextGetter::GetURLRequestContext() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
 
-  if (!url_request_context_) {
+  if (!url_request_context_.get()) {
     DCHECK(factory_.get());
     url_request_context_ = factory_->Create()->GetWeakPtr();
     factory_.reset();

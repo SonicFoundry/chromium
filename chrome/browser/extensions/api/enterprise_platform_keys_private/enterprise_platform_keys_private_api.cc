@@ -10,7 +10,7 @@
 #include "base/callback.h"
 #include "base/message_loop.h"
 #include "base/prefs/pref_service.h"
-#include "base/stringprintf.h"
+#include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/attestation/attestation_ca_client.h"
@@ -39,6 +39,19 @@ namespace api_epkp = api::enterprise_platform_keys_private;
 
 // Base class
 
+const char EPKPChallengeKeyBase::kChallengeBadBase64Error[] =
+    "Challenge is not base64 encoded.";
+const char EPKPChallengeKeyBase::kDevicePolicyDisabledError[] =
+    "Remote attestation is not enabled for your device.";
+const char EPKPChallengeKeyBase::kExtensionNotWhitelistedError[] =
+    "The extension does not have permission to call this function.";
+const char EPKPChallengeKeyBase::kResponseBadBase64Error[] =
+    "Response cannot be encoded in base64.";
+const char EPKPChallengeKeyBase::kSignChallengeFailedError[] =
+    "Failed to sign the challenge.";
+const char EPKPChallengeKeyBase::kUserNotManaged[] =
+    "The user account is not enterprise managed.";
+
 EPKPChallengeKeyBase::EPKPChallengeKeyBase()
     : cryptohome_client_(
           chromeos::DBusThreadManager::Get()->GetCryptohomeClient()),
@@ -47,9 +60,21 @@ EPKPChallengeKeyBase::EPKPChallengeKeyBase()
                           GetInstallAttributes()) {
   scoped_ptr<chromeos::attestation::ServerProxy> ca_client(
       new chromeos::attestation::AttestationCAClient());
-  attestation_flow_.reset(
+  default_attestation_flow_.reset(
       new chromeos::attestation::AttestationFlow(
           async_caller_, cryptohome_client_, ca_client.Pass()));
+  attestation_flow_ = default_attestation_flow_.get();
+}
+
+EPKPChallengeKeyBase::EPKPChallengeKeyBase(
+    chromeos::CryptohomeClient* cryptohome_client,
+    cryptohome::AsyncMethodCaller* async_caller,
+    chromeos::attestation::AttestationFlow* attestation_flow,
+    policy::EnterpriseInstallAttributes* install_attributes) :
+    cryptohome_client_(cryptohome_client),
+    async_caller_(async_caller),
+    attestation_flow_(attestation_flow),
+    install_attributes_(install_attributes) {
 }
 
 EPKPChallengeKeyBase::~EPKPChallengeKeyBase() {
@@ -86,8 +111,33 @@ bool EPKPChallengeKeyBase::IsEnterpriseDevice() const {
   return install_attributes_->IsEnterpriseDevice();
 }
 
+bool EPKPChallengeKeyBase::IsExtensionWhitelisted() const {
+  const base::ListValue* list =
+      profile()->GetPrefs()->GetList(prefs::kAttestationExtensionWhitelist);
+  StringValue value(extension_->id());
+  return list->Find(value) != list->end();
+}
+
+bool EPKPChallengeKeyBase::IsUserManaged() const {
+  std::string email = GetUserEmail();
+
+  // TODO(davidyu): Use BrowserPolicyConnector::GetUserAffiliation() and fix
+  // the test.
+  return email.empty() ? false :
+      gaia::ExtractDomainName(email) == GetEnterpriseDomain();
+}
+
 std::string EPKPChallengeKeyBase::GetEnterpriseDomain() const {
   return install_attributes_->GetDomain();
+}
+
+std::string EPKPChallengeKeyBase::GetUserEmail() const {
+  SigninManagerBase* signin_manager =
+      SigninManagerFactory::GetForProfile(profile());
+  if (!signin_manager)
+    return std::string();
+
+  return gaia::CanonicalizeEmail(signin_manager->GetAuthenticatedUsername());
 }
 
 std::string EPKPChallengeKeyBase::GetDeviceId() const {
@@ -174,7 +224,26 @@ void EPKPChallengeKeyBase::GetCertificateCallback(
 
 // Implementation of ChallengeMachineKey()
 
+const char EPKPChallengeMachineKey::kGetCertificateFailedError[] =
+    "Failed to get Enterprise machine certificate. Error code = %d";
+const char EPKPChallengeMachineKey::kNonEnterpriseDeviceError[] =
+    "The device is not enterprise enrolled.";
+
 const char EPKPChallengeMachineKey::kKeyName[] = "attest-ent-machine";
+
+EPKPChallengeMachineKey::EPKPChallengeMachineKey() : EPKPChallengeKeyBase() {
+}
+
+EPKPChallengeMachineKey::EPKPChallengeMachineKey(
+    chromeos::CryptohomeClient* cryptohome_client,
+    cryptohome::AsyncMethodCaller* async_caller,
+    chromeos::attestation::AttestationFlow* attestation_flow,
+    policy::EnterpriseInstallAttributes* install_attributes) :
+    EPKPChallengeKeyBase(cryptohome_client,
+                         async_caller,
+                         attestation_flow,
+                         install_attributes) {
+}
 
 EPKPChallengeMachineKey::~EPKPChallengeMachineKey() {
 }
@@ -186,15 +255,25 @@ bool EPKPChallengeMachineKey::RunImpl() {
 
   std::string challenge;
   if (!base::Base64Decode(params->challenge, &challenge)) {
-    SetError("Challenge is not base64 encoded.");
-    SendResponse(false);
+    SetError(kChallengeBadBase64Error);
     return false;
   }
 
   // Check if the device is enterprise enrolled.
   if (!IsEnterpriseDevice()) {
-    SetError("The device is not enterprise enrolled.");
-    SendResponse(false);
+    SetError(kNonEnterpriseDeviceError);
+    return false;
+  }
+
+  // Check if the extension is whitelisted in the user policy.
+  if (!IsExtensionWhitelisted()) {
+    SetError(kExtensionNotWhitelistedError);
+    return false;
+  }
+
+  // Check if the user domain is the same as the enrolled enterprise domain.
+  if (!IsUserManaged()) {
+    SetError(kUserNotManaged);
     return false;
   }
 
@@ -209,7 +288,7 @@ bool EPKPChallengeMachineKey::RunImpl() {
 void EPKPChallengeMachineKey::GetDeviceAttestationEnabledCallback(
     const std::string& challenge, bool enabled) {
   if (!enabled) {
-    SetError("Remote attestation is not enabled for your device.");
+    SetError(kDevicePolicyDisabledError);
     SendResponse(false);
     return;
   }
@@ -225,9 +304,7 @@ void EPKPChallengeMachineKey::GetDeviceAttestationEnabledCallback(
 void EPKPChallengeMachineKey::PrepareKeyCallback(
     const std::string& challenge, PrepareKeyResult result) {
   if (result != PREPARE_KEY_OK) {
-    SetError(base::StringPrintf(
-        "Failed to get Enterprise machince certificate. Error code = %d",
-        result));
+    SetError(base::StringPrintf(kGetCertificateFailedError, result));
     SendResponse(false);
     return;
   }
@@ -246,14 +323,14 @@ void EPKPChallengeMachineKey::PrepareKeyCallback(
 void EPKPChallengeMachineKey::SignChallengeCallback(
     bool success, const std::string& response) {
   if (!success) {
-    SetError("Challenge failed.");
+    SetError(kSignChallengeFailedError);
     SendResponse(false);
     return;
   }
 
   std::string encoded_response;
   if (!base::Base64Encode(response, &encoded_response)) {
-    SetError("Response cannot be encoded in base64.");
+    SetError(kResponseBadBase64Error);
     SendResponse(false);
     return;
   }
@@ -264,7 +341,28 @@ void EPKPChallengeMachineKey::SignChallengeCallback(
 
 // Implementation of ChallengeUserKey()
 
+const char EPKPChallengeUserKey::kGetCertificateFailedError[] =
+    "Failed to get Enterprise user certificate. Error code = %d";
+const char EPKPChallengeUserKey::kKeyRegistrationFailedError[] =
+    "Key registration failed.";
+const char EPKPChallengeUserKey::kUserPolicyDisabledError[] =
+    "Remote attestation is not enabled for your account.";
+
 const char EPKPChallengeUserKey::kKeyName[] = "attest-ent-user";
+
+EPKPChallengeUserKey::EPKPChallengeUserKey() : EPKPChallengeKeyBase() {
+}
+
+EPKPChallengeUserKey::EPKPChallengeUserKey(
+    chromeos::CryptohomeClient* cryptohome_client,
+    cryptohome::AsyncMethodCaller* async_caller,
+    chromeos::attestation::AttestationFlow* attestation_flow,
+    policy::EnterpriseInstallAttributes* install_attributes) :
+    EPKPChallengeKeyBase(cryptohome_client,
+                         async_caller,
+                         attestation_flow,
+                         install_attributes) {
+}
 
 EPKPChallengeUserKey::~EPKPChallengeUserKey() {
 }
@@ -286,34 +384,26 @@ bool EPKPChallengeUserKey::RunImpl() {
 
   std::string challenge;
   if (!base::Base64Decode(params->challenge, &challenge)) {
-    SetError("Challenge is not base64 encoded.");
-    SendResponse(false);
+    SetError(kChallengeBadBase64Error);
     return false;
   }
 
   // Check if RA is enabled in the user policy.
   if (!IsRemoteAttestationEnabledForUser()) {
-    SetError("Remote attestation is not enabled for your account.");
-    SendResponse(false);
+    SetError(kUserPolicyDisabledError);
     return false;
   }
 
   // Check if the extension is whitelisted in the user policy.
   if (!IsExtensionWhitelisted()) {
-    SetError("The extension does not have permission to call this function.");
-    SendResponse(false);
+    SetError(kExtensionNotWhitelistedError);
     return false;
   }
 
-  std::string user_domain = GetUserDomain();
-
   if (IsEnterpriseDevice()) {
     // Check if the user domain is the same as the enrolled enterprise domain.
-    std::string enterprise_domain = GetEnterpriseDomain();
-    if (user_domain != enterprise_domain) {
-      SetError("User domain " + user_domain + " and Enterprise domain " +
-               enterprise_domain + " don't match");
-      SendResponse(false);
+    if (!IsUserManaged()) {
+      SetError(kUserNotManaged);
       return false;
     }
 
@@ -323,7 +413,6 @@ bool EPKPChallengeUserKey::RunImpl() {
                    this,
                    challenge,
                    params->register_key,
-                   user_domain,
                    false));  // user consent is not required.
   } else {
     // For personal devices, we don't need to check if RA is enabled in the
@@ -331,7 +420,6 @@ bool EPKPChallengeUserKey::RunImpl() {
     GetDeviceAttestationEnabledCallback(
         challenge,
         params->register_key,
-        user_domain,
         true,  // user consent is required.
         true);  // attestation is enabled.
   }
@@ -342,11 +430,10 @@ bool EPKPChallengeUserKey::RunImpl() {
 void EPKPChallengeUserKey::GetDeviceAttestationEnabledCallback(
     const std::string& challenge,
     bool register_key,
-    const std::string& domain,
     bool require_user_consent,
     bool enabled) {
   if (!enabled) {
-    SetError("Remote attestation is not enabled for your device.");
+    SetError(kDevicePolicyDisabledError);
     SendResponse(false);
     return;
   }
@@ -356,16 +443,14 @@ void EPKPChallengeUserKey::GetDeviceAttestationEnabledCallback(
              chromeos::attestation::PROFILE_ENTERPRISE_USER_CERTIFICATE,
              require_user_consent,
              base::Bind(&EPKPChallengeUserKey::PrepareKeyCallback, this,
-                        challenge, register_key, domain));
+                        challenge, register_key));
 }
 
 void EPKPChallengeUserKey::PrepareKeyCallback(const std::string& challenge,
                                               bool register_key,
-                                              const std::string& domain,
                                               PrepareKeyResult result) {
   if (result != PREPARE_KEY_OK) {
-    SetError(base::StringPrintf(
-        "Cannot get a key to sign the challenge. Error code = %d", result));
+    SetError(base::StringPrintf(kGetCertificateFailedError, result));
     SendResponse(false);
     return;
   }
@@ -374,7 +459,7 @@ void EPKPChallengeUserKey::PrepareKeyCallback(const std::string& challenge,
   async_caller_->TpmAttestationSignEnterpriseChallenge(
       chromeos::attestation::KEY_USER,
       kKeyName,
-      domain,
+      GetUserEmail(),
       GetDeviceId(),
       register_key ?
           chromeos::attestation::CHALLENGE_INCLUDE_SIGNED_PUBLIC_KEY :
@@ -388,7 +473,7 @@ void EPKPChallengeUserKey::SignChallengeCallback(bool register_key,
                                                  bool success,
                                                  const std::string& response) {
   if (!success) {
-    SetError("Challenge failed.");
+    SetError(kSignChallengeFailedError);
     SendResponse(false);
     return;
   }
@@ -408,14 +493,14 @@ void EPKPChallengeUserKey::RegisterKeyCallback(
     bool success,
     cryptohome::MountError return_code) {
   if (!success || return_code != cryptohome::MOUNT_ERROR_NONE) {
-    SetError("Key registration failed.");
+    SetError(kKeyRegistrationFailedError);
     SendResponse(false);
     return;
   }
 
   std::string encoded_response;
   if (!base::Base64Encode(response, &encoded_response)) {
-    SetError("Response cannot be encoded in base64.");
+    SetError(kResponseBadBase64Error);
     SendResponse(false);
     return;
   }
@@ -424,25 +509,8 @@ void EPKPChallengeUserKey::RegisterKeyCallback(
   SendResponse(true);
 }
 
-bool EPKPChallengeUserKey::IsExtensionWhitelisted() const {
-  const base::ListValue* list =
-      profile()->GetPrefs()->GetList(prefs::kAttestationExtensionWhitelist);
-  StringValue value(extension_->id());
-  return list->Find(value) != list->end();
-}
-
 bool EPKPChallengeUserKey::IsRemoteAttestationEnabledForUser() const {
   return profile()->GetPrefs()->GetBoolean(prefs::kAttestationEnabled);
-}
-
-std::string EPKPChallengeUserKey::GetUserDomain() const {
-  SigninManagerBase* signin_manager =
-      SigninManagerFactory::GetForProfile(profile());
-  if (!signin_manager)
-    return std::string();
-
-  return gaia::ExtractDomainName(
-      gaia::CanonicalizeEmail(signin_manager->GetAuthenticatedUsername()));
 }
 
 }  // namespace extensions

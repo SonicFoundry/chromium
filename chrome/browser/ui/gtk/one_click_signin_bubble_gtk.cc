@@ -10,7 +10,7 @@
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
 #include "base/message_loop.h"
-#include "base/utf_string_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/gtk/browser_toolbar_gtk.h"
@@ -61,7 +61,8 @@ void OneClickSigninBubbleGtk::BubbleClosing(
   // |close_button_| (which is a CustomDrawButton) can be destroyed, because it
   // depends on all references being cleared for the GtkWidget before it is
   // destroyed.
-  MessageLoopForUI::current()->DeleteSoon(FROM_HERE, close_button_.release());
+  base::MessageLoopForUI::current()->DeleteSoon(FROM_HERE,
+                                                close_button_.release());
 
   delete this;
 }
@@ -168,14 +169,16 @@ void OneClickSigninBubbleGtk::InitializeWidgets(
   GtkThemeService* const theme_provider = GtkThemeService::GetFrom(
       browser_window_gtk->browser()->profile());
 
-  // Advanced link.
-  advanced_link_ = theme_provider->BuildChromeLinkButton(
-      l10n_util::GetStringUTF8(
-          IDS_ONE_CLICK_SIGNIN_DIALOG_ADVANCED));
-  g_signal_connect(advanced_link_, "clicked",
-                   G_CALLBACK(OnClickAdvancedLinkThunk), this);
+  // Advanced link. Will not be displayed in the error bubble.
+  if (is_sync_dialog_ || error_message_.empty()) {
+    advanced_link_ = theme_provider->BuildChromeLinkButton(
+        l10n_util::GetStringUTF8(
+            IDS_ONE_CLICK_SIGNIN_DIALOG_ADVANCED));
+    g_signal_connect(advanced_link_, "clicked",
+                     G_CALLBACK(OnClickAdvancedLinkThunk), this);
+  }
 
-  // The 'Learn More...' link
+  // The 'Learn More...' link.
   learn_more_ = theme_provider->BuildChromeLinkButton(
       l10n_util::GetStringUTF8(IDS_LEARN_MORE));
   g_signal_connect(learn_more_, "clicked",
@@ -236,31 +239,30 @@ GtkWidget* OneClickSigninBubbleGtk::LayoutWidgets() {
   gtk_box_pack_start(GTK_BOX(content_widget),
                      message_label_, FALSE, FALSE, 0);
 
-  if (learn_more_) {
-    GtkWidget* box = gtk_hbox_new(FALSE, ui::kControlSpacing);
-    if (is_sync_dialog_){
-      gtk_box_pack_end(GTK_BOX(box),
-                     learn_more_, FALSE, FALSE, 0);
-    } else {
-      gtk_box_pack_start(GTK_BOX(box),
-                     learn_more_, FALSE, FALSE, 0);
-    }
-    gtk_box_pack_start(GTK_BOX(content_widget),
-                       box, TRUE, TRUE, 0);
-  }
-
+  GtkWidget* box = gtk_hbox_new(FALSE, ui::kControlSpacing);
   GtkWidget* bottom_line = gtk_hbox_new(FALSE, ui::kControlSpacing);
-  gtk_box_pack_start(GTK_BOX(content_widget),
-                     bottom_line, FALSE, FALSE, 0);
-
-  gtk_box_pack_start(GTK_BOX(bottom_line),
-                     advanced_link_, FALSE, FALSE, 0);
-  gtk_box_pack_end(GTK_BOX(bottom_line),
-                   ok_button_, FALSE, FALSE, 0);
 
   if (is_sync_dialog_) {
-    gtk_box_pack_end(GTK_BOX(bottom_line),
-                     undo_button_, FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(box), learn_more_, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content_widget), box, TRUE, TRUE, 0);
+
+    gtk_box_pack_start(GTK_BOX(content_widget), bottom_line, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(bottom_line), advanced_link_, FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(bottom_line), ok_button_, FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(bottom_line), undo_button_, FALSE, FALSE, 0);
+  } else {
+    gtk_box_pack_start(GTK_BOX(box), learn_more_, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content_widget), box, TRUE, TRUE, 0);
+
+    // Don't display the Advanced link for the error bubble, and
+    // in this case align the OK button with the Learn More link.
+    if (error_message_.empty()) {
+      gtk_box_pack_start(GTK_BOX(bottom_line), advanced_link_, FALSE, FALSE, 0);
+      gtk_box_pack_end(GTK_BOX(bottom_line), ok_button_, FALSE, FALSE, 0);
+      gtk_box_pack_start(GTK_BOX(content_widget), bottom_line, FALSE, FALSE, 0);
+    } else {
+      gtk_box_pack_end(GTK_BOX(box), ok_button_, FALSE, FALSE, 0);
+    }
   }
   return content_widget;
 }

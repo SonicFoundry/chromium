@@ -6,8 +6,8 @@
 
 #include <algorithm>
 
-#include "base/string_util.h"
-#include "base/utf_string_conversions.h"
+#include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/autocomplete/autocomplete_match.h"
 #include "chrome/browser/extensions/api/omnibox/omnibox_api.h"
 #include "chrome/browser/profiles/profile.h"
@@ -162,7 +162,7 @@ void OmniboxPopupModel::SetSelectedLineState(LineState state) {
 }
 
 void OmniboxPopupModel::TryDeletingCurrentItem() {
-  // We could use InfoForCurrentSelection() here, but it seems better to try
+  // We could use GetInfoForCurrentText() here, but it seems better to try
   // and shift-delete the actual selection, rather than any "in progress, not
   // yet visible" one.
   if (selected_line_ == kNoMatch)

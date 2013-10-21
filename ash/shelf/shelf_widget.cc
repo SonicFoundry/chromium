@@ -427,15 +427,13 @@ void ShelfWidget::DelegateView::UpdateBackground(int alpha) {
   SchedulePaint();
 }
 
-ShelfWidget::ShelfWidget(
-    aura::Window* shelf_container,
-    aura::Window* status_container,
-    internal::WorkspaceController* workspace_controller) :
-    launcher_(NULL),
-    delegate_view_(new DelegateView(this)),
-    background_animator_(delegate_view_, 0, kLauncherBackgroundAlpha),
-    activating_as_fallback_(false),
-    window_container_(shelf_container) {
+ShelfWidget::ShelfWidget(aura::Window* shelf_container,
+                         aura::Window* status_container,
+                         internal::WorkspaceController* workspace_controller)
+    : delegate_view_(new DelegateView(this)),
+      background_animator_(delegate_view_, 0, kLauncherBackgroundAlpha),
+      activating_as_fallback_(false),
+      window_container_(shelf_container) {
   views::Widget::InitParams params(
       views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
   params.transparent = true;
@@ -465,6 +463,7 @@ ShelfWidget::ShelfWidget(
       new internal::StatusAreaLayoutManager(this));
 
   views::Widget::AddObserver(this);
+  GetNativeView()->SetProperty(internal::kStayInSameRootWindowKey, true);
 }
 
 ShelfWidget::~ShelfWidget() {
@@ -482,8 +481,9 @@ ShelfAlignment ShelfWidget::GetAlignment() const {
 }
 
 void ShelfWidget::SetAlignment(ShelfAlignment alignment) {
-  shelf_layout_manager_->SetAlignment(alignment);
-  shelf_layout_manager_->LayoutShelf();
+  if (launcher_)
+    launcher_->SetAlignment(alignment);
+  status_area_widget_->SetShelfAlignment(alignment);
   delegate_view_->SchedulePaint();
 }
 
@@ -496,25 +496,30 @@ bool ShelfWidget::GetDimsShelf() const {
 }
 
 void ShelfWidget::CreateLauncher() {
-  if (!launcher_) {
-    Shell* shell = Shell::GetInstance();
-    // This needs to be called before launcher_model().
-    shell->GetLauncherDelegate();
-    launcher_.reset(new Launcher(shell->launcher_model(),
-                                 shell->GetLauncherDelegate(),
-                                 this));
+  if (launcher_)
+    return;
 
-    SetFocusCycler(shell->focus_cycler());
+  Shell* shell = Shell::GetInstance();
+  // This needs to be called before launcher_model().
+  LauncherDelegate* launcher_delegate = shell->GetLauncherDelegate();
+  if (!launcher_delegate)
+    return;  // Not ready to create Launcher
 
-    // Inform the root window controller.
-    internal::RootWindowController::ForWindow(window_container_)->
-        OnLauncherCreated();
+  launcher_.reset(new Launcher(shell->launcher_model(),
+                               shell->GetLauncherDelegate(),
+                               this));
+  SetFocusCycler(shell->focus_cycler());
 
-    launcher_->SetVisible(
-        shell->session_state_delegate()->IsActiveUserSessionStarted());
+  // Inform the root window controller.
+  internal::RootWindowController::ForWindow(window_container_)->
+      OnLauncherCreated();
 
-    Show();
-  }
+  launcher_->SetVisible(
+      shell->session_state_delegate()->IsActiveUserSessionStarted());
+
+  shelf_layout_manager_->LayoutShelf();
+
+  Show();
 }
 
 bool ShelfWidget::IsLauncherVisible() const {
@@ -578,4 +583,3 @@ void ShelfWidget::DisableDimmingAnimationsForTest() {
 }
 
 }  // namespace ash
-

@@ -13,6 +13,9 @@
     {
       'target_name': 'google_apis',
       'type': 'static_library',
+      'includes': [
+        'determine_use_official_keys.gypi',
+      ],
       'dependencies': [
         '../base/base.gyp:base',
         '../crypto/crypto.gyp:crypto',
@@ -45,19 +48,35 @@
             'GOOGLE_CLIENT_SECRET_REMOTING="<(google_default_client_secret)"',
           ]
         }],
-        ['use_official_google_api_keys==1', {
-          'defines': ['USE_OFFICIAL_GOOGLE_API_KEYS=1'],
+        [ 'OS == "android"', {
+            'dependencies': [
+              '../third_party/openssl/openssl.gyp:openssl',
+            ],
+            'sources/': [
+              ['exclude', 'cup/client_update_protocol_nss\.cc$'],
+            ],
         }],
+        [ 'use_openssl==1', {
+            'sources!': [
+              'cup/client_update_protocol_nss.cc',
+            ],
+          }, {
+            'sources!': [
+              'cup/client_update_protocol_openssl.cc',
+            ],
+        },],
       ],
       'sources': [
+        'cup/client_update_protocol.cc',
+        'cup/client_update_protocol.h',
+        'cup/client_update_protocol_nss.cc',
+        'cup/client_update_protocol_openssl.cc',
         'gaia/gaia_auth_consumer.cc',
         'gaia/gaia_auth_consumer.h',
         'gaia/gaia_auth_fetcher.cc',
         'gaia/gaia_auth_fetcher.h',
         'gaia/gaia_auth_util.cc',
         'gaia/gaia_auth_util.h',
-        'gaia/gaia_authenticator.cc',
-        'gaia/gaia_authenticator.h',
         'gaia/gaia_constants.cc',
         'gaia/gaia_constants.h',
         'gaia/gaia_oauth_client.cc',

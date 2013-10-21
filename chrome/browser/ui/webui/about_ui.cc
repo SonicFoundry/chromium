@@ -20,12 +20,12 @@
 #include "base/metrics/statistics_recorder.h"
 #include "base/metrics/stats_table.h"
 #include "base/path_service.h"
-#include "base/string_util.h"
-#include "base/stringprintf.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
+#include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread.h"
-#include "base/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/about_flags.h"
 #include "chrome/browser/browser_about_handler.h"
@@ -103,7 +103,7 @@ const char kMemoryCssPath[] = "about_memory.css";
 const char kStatsJsPath[] = "stats.js";
 const char kStringsJsPath[] = "strings.js";
 // chrome://terms falls back to offline page after kOnlineTermsTimeoutSec.
-const int kOnlineTermsTimeoutSec = 10;
+const int kOnlineTermsTimeoutSec = 7;
 
 // When you type about:memory, it actually loads this intermediate URL that
 // redirects you to the final page. This avoids the problem where typing
@@ -145,18 +145,22 @@ class AboutMemoryHandler : public MemoryDetails {
 };
 
 #if defined(OS_CHROMEOS)
+
 // Helper class that fetches the online Chrome OS terms. Empty string is
 // returned once fetching failed or exceeded |kOnlineTermsTimeoutSec|.
 class ChromeOSOnlineTermsHandler : public net::URLFetcherDelegate {
  public:
   typedef base::Callback<void (ChromeOSOnlineTermsHandler*)> FetchCallback;
 
-  explicit ChromeOSOnlineTermsHandler(const FetchCallback& callback)
+  explicit ChromeOSOnlineTermsHandler(const FetchCallback& callback,
+                                      const std::string& locale)
       : fetch_callback_(callback) {
-    eula_fetcher_.reset(net::URLFetcher::Create(
-        GURL(l10n_util::GetStringUTF16(IDS_EULA_POLICY_URL)),
-        net::URLFetcher::GET,
-        this));
+    std::string eula_URL = base::StringPrintf(chrome::kOnlineEulaURLPath,
+                                              locale.c_str());
+    eula_fetcher_.reset(net::URLFetcher::Create(0 /* ID used for testing */,
+                                                GURL(eula_URL),
+                                                net::URLFetcher::GET,
+                                                this));
     eula_fetcher_->SetRequestContext(
         g_browser_process->system_request_context());
     eula_fetcher_->AddExtraRequestHeader("Accept: text/html");
@@ -257,7 +261,8 @@ class ChromeOSTermsHandler
       // Try to load online version of ChromeOS terms first.
       // ChromeOSOnlineTermsHandler object destroys itself.
       new ChromeOSOnlineTermsHandler(
-          base::Bind(&ChromeOSTermsHandler::OnOnlineEULAFetched, this));
+          base::Bind(&ChromeOSTermsHandler::OnOnlineEULAFetched, this),
+          locale_);
     }
   }
 

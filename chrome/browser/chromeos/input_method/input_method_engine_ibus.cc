@@ -10,10 +10,9 @@
 
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/string_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/utf_string_conversions.h"
-#include "chrome/browser/chromeos/input_method/input_method_configuration.h"
+#include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/ibus/ibus_client.h"
 #include "chromeos/dbus/ibus/ibus_component.h"
@@ -33,12 +32,12 @@ const char* kErrorNotActive = "IME is not active";
 const char* kErrorWrongContext = "Context is not active";
 const char* kCandidateNotFound = "Candidate not found";
 const char* kEngineBusPrefix = "org.freedesktop.IBus.";
-const char* kObjectPathPrefix = "/org/freedesktop/IBus/Engine/";
 
 namespace {
 const uint32 kIBusAltKeyMask = 1 << 3;
 const uint32 kIBusCtrlKeyMask = 1 << 2;
 const uint32 kIBusShiftKeyMask = 1 << 0;
+const uint32 kIBusCapsLockMask = 1 << 1;
 const uint32 kIBusKeyReleaseMask = 1 << 30;
 }
 
@@ -47,7 +46,6 @@ InputMethodEngineIBus::InputMethodEngineIBus()
       active_(false),
       context_id_(0),
       next_context_id_(1),
-      current_object_path_(0),
       aux_text_(new IBusText()),
       aux_text_visible_(false),
       observer_(NULL),
@@ -60,13 +58,16 @@ InputMethodEngineIBus::InputMethodEngineIBus()
 }
 
 InputMethodEngineIBus::~InputMethodEngineIBus() {
-  input_method::GetInputMethodManager()->RemoveInputMethodExtension(ibus_id_);
+  input_method::InputMethodManager::Get()->RemoveInputMethodExtension(ibus_id_);
 
   // Do not unset engine before removing input method extension, above function
   // may call reset function of engine object.
   // TODO(nona): Call Reset manually here and remove relevant code from
   //             InputMethodManager once ibus-daemon is gone. (crbug.com/158273)
-  GetCurrentService()->UnsetEngine(this);
+  if (!object_path_.value().empty()) {
+    GetCurrentService()->UnsetEngine(this);
+    DBusThreadManager::Get()->RemoveIBusEngineService(object_path_);
+  }
 }
 
 void InputMethodEngineIBus::Initialize(
@@ -77,6 +78,7 @@ void InputMethodEngineIBus::Initialize(
     const char* description,
     const char* language,
     const std::vector<std::string>& layouts,
+    const GURL& options_page,
     std::string* error) {
   DCHECK(observer) << "Observer must not be null.";
 
@@ -84,7 +86,7 @@ void InputMethodEngineIBus::Initialize(
   engine_id_ = engine_id;
 
   input_method::InputMethodManager* manager =
-      input_method::GetInputMethodManager();
+      input_method::InputMethodManager::Get();
   ComponentExtensionIMEManager* comp_ext_ime_manager
       = manager->GetComponentExtensionIMEManager();
 
@@ -108,12 +110,22 @@ void InputMethodEngineIBus::Initialize(
   engine_desc.author = ibus_id_;
 
   component_->mutable_engine_description()->push_back(engine_desc);
-  manager->AddInputMethodExtension(ibus_id_, engine_name, layouts, language,
-                                   this);
+
+  std::vector<std::string> languages;
+  languages.push_back(language);
+  manager->AddInputMethodExtension(ibus_id_, engine_name, layouts, languages,
+                                   options_page, this);
   // If connection is avaiable, register component. If there are no connection
   // to ibus-daemon, OnConnected callback will register component instead.
   if (IsConnected())
     RegisterComponent();
+}
+
+void InputMethodEngineIBus::StartIme() {
+  input_method::InputMethodManager* manager =
+      input_method::InputMethodManager::Get();
+  if (manager && ibus_id_ == manager->GetCurrentInputMethod().id())
+    Enable();
 }
 
 bool InputMethodEngineIBus::SetComposition(
@@ -389,8 +401,6 @@ bool InputMethodEngineIBus::DeleteSurroundingText(int context_id,
                                                   int offset,
                                                   size_t number_of_chars,
                                                   std::string* error) {
-  const uint32 kBackSpaceKeyCode = 14;
-
   if (!active_) {
     *error = kErrorNotActive;
     return false;
@@ -399,12 +409,12 @@ bool InputMethodEngineIBus::DeleteSurroundingText(int context_id,
     *error = kErrorWrongContext;
     return false;
   }
+
   if (offset < 0 && static_cast<size_t>(-1 * offset) != size_t(number_of_chars))
     return false;  // Currently we can only support preceding text.
 
   // TODO(nona): Return false if there is ongoing composition.
-  for (size_t i = 0; i < number_of_chars; ++i)
-    GetCurrentService()->ForwardKeyEvent(XK_BackSpace, kBackSpaceKeyCode, 0U);
+  GetCurrentService()->DeleteSurroundingText(offset, number_of_chars);
   return true;
 }
 
@@ -466,6 +476,7 @@ void InputMethodEngineIBus::SetCapability(
 }
 
 void InputMethodEngineIBus::Reset() {
+  observer_->OnReset(engine_id_);
 }
 
 void InputMethodEngineIBus::ProcessKeyEvent(
@@ -484,6 +495,7 @@ void InputMethodEngineIBus::ProcessKeyEvent(
   event.alt_key = state & kIBusAltKeyMask;
   event.ctrl_key = state & kIBusCtrlKeyMask;
   event.shift_key = state & kIBusShiftKeyMask;
+  event.caps_lock = state & kIBusCapsLockMask;
   observer_->OnKeyEvent(
       engine_id_,
       event,
@@ -623,11 +635,12 @@ void InputMethodEngineIBus::OnComponentRegistrationFailed() {
 
 void InputMethodEngineIBus::CreateEngineHandler(
     const IBusEngineFactoryService::CreateEngineResponseSender& sender) {
+  GetCurrentService()->UnsetEngine(this);
   DBusThreadManager::Get()->RemoveIBusEngineService(object_path_);
 
-  current_object_path_++;
-  object_path_ = dbus::ObjectPath(kObjectPathPrefix +
-                                  base::IntToString(current_object_path_));
+  object_path_ = DBusThreadManager::Get()->GetIBusEngineFactoryService()->
+      GenerateUniqueObjectPath();
+
   GetCurrentService()->SetEngine(this);
   sender.Run(object_path_);
 }

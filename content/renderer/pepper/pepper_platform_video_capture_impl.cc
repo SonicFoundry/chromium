@@ -6,10 +6,11 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/message_loop_proxy.h"
+#include "base/message_loop/message_loop_proxy.h"
 #include "content/renderer/media/video_capture_impl_manager.h"
 #include "content/renderer/pepper/pepper_plugin_delegate_impl.h"
 #include "content/renderer/render_thread_impl.h"
+#include "googleurl/src/gurl.h"
 #include "media/video/capture/video_capture_proxy.h"
 
 namespace content {
@@ -17,6 +18,7 @@ namespace content {
 PepperPlatformVideoCaptureImpl::PepperPlatformVideoCaptureImpl(
     const base::WeakPtr<PepperPluginDelegateImpl>& plugin_delegate,
     const std::string& device_id,
+    const GURL& document_url,
     webkit::ppapi::PluginDelegate::PlatformVideoCaptureEventHandler* handler)
     : plugin_delegate_(plugin_delegate),
       device_id_(device_id),
@@ -26,18 +28,14 @@ PepperPlatformVideoCaptureImpl::PepperPlatformVideoCaptureImpl(
       handler_(handler),
       video_capture_(NULL),
       unbalanced_start_(false) {
-  if (device_id.empty()) {
-    // "1" is the session ID for the default device.
-    session_id_ = 1;
-    Initialize();
-  } else {
-    // We need to open the device and obtain the label and session ID before
-    // initializing.
-    if (plugin_delegate_) {
-      plugin_delegate_->OpenDevice(
-          PP_DEVICETYPE_DEV_VIDEOCAPTURE, device_id,
-          base::Bind(&PepperPlatformVideoCaptureImpl::OnDeviceOpened, this));
-    }
+  // We need to open the device and obtain the label and session ID before
+  // initializing.
+  if (plugin_delegate_.get()) {
+    plugin_delegate_->OpenDevice(
+        PP_DEVICETYPE_DEV_VIDEOCAPTURE,
+        device_id,
+        document_url,
+        base::Bind(&PepperPlatformVideoCaptureImpl::OnDeviceOpened, this));
   }
 }
 
@@ -150,7 +148,7 @@ PepperPlatformVideoCaptureImpl::~PepperPlatformVideoCaptureImpl() {
     manager->RemoveDevice(session_id_, handler_proxy_.get());
   }
 
-  if (plugin_delegate_ && !label_.empty())
+  if (plugin_delegate_.get() && !label_.empty())
     plugin_delegate_->CloseDevice(label_);
 }
 
@@ -163,7 +161,7 @@ void PepperPlatformVideoCaptureImpl::Initialize() {
 void PepperPlatformVideoCaptureImpl::OnDeviceOpened(int request_id,
                                                     bool succeeded,
                                                     const std::string& label) {
-  succeeded = succeeded && plugin_delegate_;
+  succeeded = succeeded && plugin_delegate_.get();
   if (succeeded) {
     label_ = label;
     session_id_ = plugin_delegate_->GetSessionID(PP_DEVICETYPE_DEV_VIDEOCAPTURE,

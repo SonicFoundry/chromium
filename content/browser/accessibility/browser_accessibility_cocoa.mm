@@ -9,14 +9,13 @@
 #include <map>
 
 #include "base/basictypes.h"
-#include "base/string16.h"
+#include "base/strings/string16.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/utf_string_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
 #include "content/browser/accessibility/browser_accessibility_manager_mac.h"
 #include "content/public/common/content_client.h"
 #include "grit/webkit_strings.h"
-#include "third_party/WebKit/Source/Platform/chromium/public/WebRect.h"
 
 // See http://openradar.appspot.com/9896491. This SPI has been tested on 10.5,
 // 10.6, and 10.7. It allows accessibility clients to observe events posted on
@@ -345,15 +344,11 @@ NSDictionary* attributeToMethodNameMap = nil;
   return self;
 }
 
-// Deletes our associated BrowserAccessibilityMac.
-- (void)dealloc {
+- (void)detach {
   if (browserAccessibility_) {
     NSAccessibilityUnregisterUniqueIdForUIElement(self);
-    delete browserAccessibility_;
     browserAccessibility_ = NULL;
   }
-
-  [super dealloc];
 }
 
 - (NSString*)accessKey {
@@ -998,6 +993,9 @@ NSDictionary* attributeToMethodNameMap = nil;
 // Returns the accessibility value for the given attribute.  If the value isn't
 // supported this will return nil.
 - (id)accessibilityAttributeValue:(NSString*)attribute {
+  if (!browserAccessibility_)
+    return nil;
+
   SEL selector =
       NSSelectorFromString([self methodNameForAttribute:attribute]);
   if (selector)
@@ -1037,6 +1035,9 @@ NSDictionary* attributeToMethodNameMap = nil;
 // value isn't supported this will return nil.
 - (id)accessibilityAttributeValue:(NSString*)attribute
                      forParameter:(id)parameter {
+  if (!browserAccessibility_)
+    return nil;
+
   const std::vector<int32>& line_breaks = browserAccessibility_->line_breaks();
   int len = static_cast<int>(browserAccessibility_->value().size());
 
@@ -1144,6 +1145,9 @@ NSDictionary* attributeToMethodNameMap = nil;
 // Returns an array of parameterized attributes names that this object will
 // respond to.
 - (NSArray*)accessibilityParameterizedAttributeNames {
+  if (!browserAccessibility_)
+    return nil;
+
   if ([[self role] isEqualToString:NSAccessibilityTableRole] ||
       [[self role] isEqualToString:NSAccessibilityGridRole]) {
     return [NSArray arrayWithObjects:
@@ -1169,6 +1173,9 @@ NSDictionary* attributeToMethodNameMap = nil;
 
 // Returns an array of action names that this object will respond to.
 - (NSArray*)accessibilityActionNames {
+  if (!browserAccessibility_)
+    return nil;
+
   NSMutableArray* ret =
       [NSMutableArray arrayWithObject:NSAccessibilityShowMenuAction];
   NSString* role = [self role];
@@ -1191,6 +1198,9 @@ NSDictionary* attributeToMethodNameMap = nil;
 - (NSArray*)accessibilityArrayAttributeValues:(NSString*)attribute
                                         index:(NSUInteger)index
                                      maxCount:(NSUInteger)maxCount {
+  if (!browserAccessibility_)
+    return nil;
+
   NSArray* fullArray = [self accessibilityAttributeValue:attribute];
   if (!fullArray)
     return nil;
@@ -1208,12 +1218,18 @@ NSDictionary* attributeToMethodNameMap = nil;
 
 // Returns the count of the specified accessibility array attribute.
 - (NSUInteger)accessibilityArrayAttributeCount:(NSString*)attribute {
+  if (!browserAccessibility_)
+    return nil;
+
   NSArray* fullArray = [self accessibilityAttributeValue:attribute];
   return [fullArray count];
 }
 
 // Returns the list of accessibility attributes that this object supports.
 - (NSArray*)accessibilityAttributeNames {
+  if (!browserAccessibility_)
+    return nil;
+
   // General attributes.
   NSMutableArray* ret = [NSMutableArray arrayWithObjects:
       NSAccessibilityChildrenAttribute,
@@ -1349,6 +1365,9 @@ NSDictionary* attributeToMethodNameMap = nil;
 
 // Returns the index of the child in this objects array of children.
 - (NSUInteger)accessibilityGetIndexOf:(id)child {
+  if (!browserAccessibility_)
+    return nil;
+
   NSUInteger index = 0;
   for (BrowserAccessibilityCocoa* childToCheck in [self children]) {
     if ([child isEqual:childToCheck])
@@ -1361,6 +1380,9 @@ NSDictionary* attributeToMethodNameMap = nil;
 // Returns whether or not the specified attribute can be set by the
 // accessibility API via |accessibilitySetValue:forAttribute:|.
 - (BOOL)accessibilityIsAttributeSettable:(NSString*)attribute {
+  if (!browserAccessibility_)
+    return nil;
+
   if ([attribute isEqualToString:NSAccessibilityFocusedAttribute])
     return GetState(browserAccessibility_,
         AccessibilityNodeData::STATE_FOCUSABLE);
@@ -1381,12 +1403,18 @@ NSDictionary* attributeToMethodNameMap = nil;
 // Returns whether or not this object should be ignored in the accessibilty
 // tree.
 - (BOOL)accessibilityIsIgnored {
+  if (!browserAccessibility_)
+    return true;
+
   return [self isIgnored];
 }
 
 // Performs the given accessibilty action on the webkit accessibility object
 // that backs this object.
 - (void)accessibilityPerformAction:(NSString*)action {
+  if (!browserAccessibility_)
+    return;
+
   // TODO(feldstein): Support more actions.
   if ([action isEqualToString:NSAccessibilityPressAction])
     [delegate_ doDefaultAction:browserAccessibility_->renderer_id()];
@@ -1396,6 +1424,9 @@ NSDictionary* attributeToMethodNameMap = nil;
 
 // Returns the description of the given action.
 - (NSString*)accessibilityActionDescription:(NSString*)action {
+  if (!browserAccessibility_)
+    return nil;
+
   return NSAccessibilityActionDescription(action);
 }
 
@@ -1408,6 +1439,9 @@ NSDictionary* attributeToMethodNameMap = nil;
 
 // Sets the value for an accessibility attribute via the accessibility API.
 - (void)accessibilitySetValue:(id)value forAttribute:(NSString*)attribute {
+  if (!browserAccessibility_)
+    return;
+
   if ([attribute isEqualToString:NSAccessibilityFocusedAttribute]) {
     NSNumber* focusedNumber = value;
     BOOL focused = [focusedNumber intValue];
@@ -1425,8 +1459,12 @@ NSDictionary* attributeToMethodNameMap = nil;
 
 // Returns the deepest accessibility child that should not be ignored.
 // It is assumed that the hit test has been narrowed down to this object
-// or one of its children, so this will never return nil.
+// or one of its children, so this will never return nil unless this
+// object is invalid.
 - (id)accessibilityHitTest:(NSPoint)point {
+  if (!browserAccessibility_)
+    return nil;
+
   BrowserAccessibilityCocoa* hit = self;
   for (BrowserAccessibilityCocoa* child in [self children]) {
     NSPoint origin = [child origin];

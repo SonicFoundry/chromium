@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "base/files/file_path.h"
 #include "base/values.h"
 #include "content/common/content_export.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -111,8 +112,8 @@ struct CONTENT_EXPORT RendererPreferences {
   // being overridden for the current navigation.
   std::string user_agent_override;
 
-  // Specifies whether renderer input event throttle is enabled.
-  bool throttle_input_events;
+  // The accept-languages of the browser, comma-separated.
+  std::string accept_languages;
 
   // Specifies whether the renderer reports frame name changes to the browser
   // process.
@@ -130,6 +131,8 @@ struct CONTENT_EXPORT RendererPreferences {
 
   // node-webkit: remote page rules in package.json
   std::string nw_remote_page_rules;
+
+  base::FilePath nw_app_root_path;
 };
 
 }  // namespace content

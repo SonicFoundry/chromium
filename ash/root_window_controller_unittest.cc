@@ -118,14 +118,10 @@ class RootWindowControllerTest : public test::AshTestBase {
   }
 };
 
-#if defined(OS_WIN)
-// Multiple displays are not supported on Windows Ash. http://crbug.com/165962
-#define MAYBE_MoveWindows_Basic DISABLED_MoveWindows_Basic
-#else
-#define MAYBE_MoveWindows_Basic MoveWindows_Basic
-#endif
+TEST_F(RootWindowControllerTest, MoveWindows_Basic) {
+  if (!SupportsMultipleDisplays())
+    return;
 
-TEST_F(RootWindowControllerTest, MAYBE_MoveWindows_Basic) {
   UpdateDisplay("600x600,500x500");
   Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
   internal::RootWindowController* controller =
@@ -144,15 +140,9 @@ TEST_F(RootWindowControllerTest, MAYBE_MoveWindows_Basic) {
   views::Widget* maximized = CreateTestWidget(gfx::Rect(700, 10, 100, 100));
   maximized->Maximize();
   EXPECT_EQ(root_windows[1], maximized->GetNativeView()->GetRootWindow());
-  if (Shell::IsLauncherPerDisplayEnabled()) {
-    EXPECT_EQ("600,0 500x452", maximized->GetWindowBoundsInScreen().ToString());
-    EXPECT_EQ("0,0 500x452",
-              maximized->GetNativeView()->GetBoundsInRootWindow().ToString());
-  } else {
-    EXPECT_EQ("600,0 500x500", maximized->GetWindowBoundsInScreen().ToString());
-    EXPECT_EQ("0,0 500x500",
-              maximized->GetNativeView()->GetBoundsInRootWindow().ToString());
-  }
+  EXPECT_EQ("600,0 500x452", maximized->GetWindowBoundsInScreen().ToString());
+  EXPECT_EQ("0,0 500x452",
+            maximized->GetNativeView()->GetBoundsInRootWindow().ToString());
 
   views::Widget* minimized = CreateTestWidget(gfx::Rect(800, 10, 100, 100));
   minimized->Minimize();
@@ -247,14 +237,10 @@ TEST_F(RootWindowControllerTest, MAYBE_MoveWindows_Basic) {
   EXPECT_EQ(internal::kShellWindowId_PanelContainer, panel->parent()->id());
 }
 
-#if defined(OS_WIN)
-// Multiple displays are not supported on Windows Ash. http://crbug.com/165962
-#define MAYBE_MoveWindows_Modal DISABLED_MoveWindows_Modal
-#else
-#define MAYBE_MoveWindows_Modal MoveWindows_Modal
-#endif
+TEST_F(RootWindowControllerTest, MoveWindows_Modal) {
+  if (!SupportsMultipleDisplays())
+    return;
 
-TEST_F(RootWindowControllerTest, MAYBE_MoveWindows_Modal) {
   UpdateDisplay("500x500,500x500");
 
   Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
@@ -333,7 +319,7 @@ TEST_F(RootWindowControllerTest, ModalContainerNotLoggedInLoggedIn) {
   SetUserLoggedIn(false);
   EXPECT_EQ(user::LOGGED_IN_NONE,
             shell->system_tray_delegate()->GetUserLoginStatus());
-  EXPECT_FALSE(shell->session_state_delegate()->HasActiveUser());
+  EXPECT_EQ(0, shell->session_state_delegate()->NumberOfLoggedInUsers());
   EXPECT_FALSE(shell->session_state_delegate()->IsActiveUserSessionStarted());
 
   internal::RootWindowController* controller =
@@ -358,7 +344,7 @@ TEST_F(RootWindowControllerTest, ModalContainerNotLoggedInLoggedIn) {
   SetSessionStarted(true);
   EXPECT_EQ(user::LOGGED_IN_USER,
             shell->system_tray_delegate()->GetUserLoginStatus());
-  EXPECT_TRUE(shell->session_state_delegate()->HasActiveUser());
+  EXPECT_EQ(1, shell->session_state_delegate()->NumberOfLoggedInUsers());
   EXPECT_TRUE(shell->session_state_delegate()->IsActiveUserSessionStarted());
   EXPECT_EQ(Shell::GetContainer(controller->root_window(),
       internal::kShellWindowId_SystemModalContainer)->layout_manager(),
@@ -400,6 +386,39 @@ TEST_F(RootWindowControllerTest, GetFullscreenWindow) {
   // If the fullscreen window is active, GetFullscreenWindow() should find it.
   w2->Activate();
   EXPECT_EQ(w2->GetNativeWindow(), controller->GetFullscreenWindow());
+}
+
+// Test that user session window can't be focused if user session blocked by
+// some overlapping UI.
+TEST_F(RootWindowControllerTest, FocusBlockedWindow) {
+  UpdateDisplay("600x600");
+  internal::RootWindowController* controller =
+      Shell::GetInstance()->GetPrimaryRootWindowController();
+  aura::Window* lock_container =
+      Shell::GetContainer(controller->root_window(),
+                          internal::kShellWindowId_LockScreenContainer);
+  aura::Window* lock_window = Widget::CreateWindowWithParentAndBounds(NULL,
+      lock_container, gfx::Rect(0, 0, 100, 100))->GetNativeView();
+  lock_window->Show();
+  aura::Window* session_window =
+      CreateTestWidget(gfx::Rect(0, 0, 100, 100))->GetNativeView();
+  session_window->Show();
+
+  // Lock screen.
+  Shell::GetInstance()->session_state_delegate()->LockScreen();
+  lock_window->Focus();
+  EXPECT_TRUE(lock_window->HasFocus());
+  session_window->Focus();
+  EXPECT_FALSE(session_window->HasFocus());
+  Shell::GetInstance()->session_state_delegate()->UnlockScreen();
+
+  // Session not started yet.
+  SetSessionStarted(false);
+  lock_window->Focus();
+  EXPECT_TRUE(lock_window->HasFocus());
+  session_window->Focus();
+  EXPECT_FALSE(session_window->HasFocus());
+  SetSessionStarted(true);
 }
 
 }  // namespace test

@@ -6,16 +6,16 @@
 
 #include "base/lazy_instance.h"
 #include "base/metrics/histogram.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/time.h"
-#include "base/utf_string_conversions.h"
 #include "content/common/dom_storage_messages.h"
 #include "content/public/renderer/render_view.h"
 #include "content/renderer/dom_storage/dom_storage_dispatcher.h"
 #include "content/renderer/render_thread_impl.h"
-#include "third_party/WebKit/Source/Platform/chromium/public/WebURL.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebView.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebFrame.h"
-#include "webkit/dom_storage/dom_storage_cached_area.h"
+#include "third_party/WebKit/public/platform/WebURL.h"
+#include "webkit/renderer/dom_storage/dom_storage_cached_area.h"
+#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/WebKit/public/web/WebFrame.h"
 
 using dom_storage::DomStorageCachedArea;
 using WebKit::WebString;
@@ -71,7 +71,7 @@ WebStorageAreaImpl::WebStorageAreaImpl(
 WebStorageAreaImpl::~WebStorageAreaImpl() {
   g_all_areas_map.Pointer()->Remove(connection_id_);
   if (dispatcher())
-    dispatcher()->CloseCachedArea(connection_id_, cached_area_);
+    dispatcher()->CloseCachedArea(connection_id_, cached_area_.get());
 }
 
 unsigned WebStorageAreaImpl::length() {

@@ -8,24 +8,21 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import android.os.IBinder;
-import android.os.ResultReceiver;
 import android.test.suitebuilder.annotation.MediumTest;
 import android.test.suitebuilder.annotation.SmallTest;
 import android.text.TextUtils;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
-import android.view.inputmethod.InputConnection;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.content.browser.ContentView;
-import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content.browser.test.util.DOMUtils;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
+import org.chromium.content.browser.test.util.TestInputMethodManagerWrapper;
 import org.chromium.content_shell_apk.ContentShellTestBase;
 
 import java.util.ArrayList;
@@ -39,6 +36,7 @@ public class ImeTest extends ContentShellTestBase {
             "<body><form action=\"about:blank\">" +
             "<input id=\"input_text\" type=\"text\" />" +
             "<input id=\"input_radio\" type=\"radio\" />" +
+            "<br/><textarea id=\"textarea\" rows=\"4\" cols=\"20\"></textarea>" +
             "</form></body></html>");
 
     private TestAdapterInputConnection mConnection;
@@ -56,7 +54,7 @@ public class ImeTest extends ContentShellTestBase {
 
         mInputMethodManagerWrapper = new TestInputMethodManagerWrapper(getContentViewCore());
         getImeAdapter().setInputMethodManagerWrapper(mInputMethodManagerWrapper);
-        assertEquals(0, mInputMethodManagerWrapper.mShowSoftInputCounter);
+        assertEquals(0, mInputMethodManagerWrapper.getShowSoftInputCounter());
         getContentViewCore().setAdapterInputConnectionFactory(
                 new TestAdapterInputConnectionFactory());
 
@@ -71,9 +69,9 @@ public class ImeTest extends ContentShellTestBase {
         mImeAdapter = getImeAdapter();
 
         waitAndVerifyEditableCallback(mConnection.mImeUpdateQueue, 0, "", 0, 0, -1, -1);
-        assertEquals(1, mInputMethodManagerWrapper.mShowSoftInputCounter);
-        assertEquals(0, mInputMethodManagerWrapper.mEditorInfo.initialSelStart);
-        assertEquals(0, mInputMethodManagerWrapper.mEditorInfo.initialSelEnd);
+        assertEquals(1, mInputMethodManagerWrapper.getShowSoftInputCounter());
+        assertEquals(0, mInputMethodManagerWrapper.getEditorInfo().initialSelStart);
+        assertEquals(0, mInputMethodManagerWrapper.getEditorInfo().initialSelEnd);
     }
 
     @MediumTest
@@ -93,19 +91,19 @@ public class ImeTest extends ContentShellTestBase {
     public void testGetTextUpdatesAfterEnteringText() throws Throwable {
         mConnection.setComposingText("h", 1);
         waitAndVerifyEditableCallback(mConnection.mImeUpdateQueue, 1, "h", 1, 1, 0, 1);
-        assertEquals(1, mInputMethodManagerWrapper.mShowSoftInputCounter);
+        assertEquals(1, mInputMethodManagerWrapper.getShowSoftInputCounter());
 
         mConnection.setComposingText("he", 1);
         waitAndVerifyEditableCallback(mConnection.mImeUpdateQueue, 2, "he", 2, 2, 0, 2);
-        assertEquals(1, mInputMethodManagerWrapper.mShowSoftInputCounter);
+        assertEquals(1, mInputMethodManagerWrapper.getShowSoftInputCounter());
 
         mConnection.setComposingText("hel", 1);
         waitAndVerifyEditableCallback(mConnection.mImeUpdateQueue, 3, "hel", 3, 3, 0, 3);
-        assertEquals(1, mInputMethodManagerWrapper.mShowSoftInputCounter);
+        assertEquals(1, mInputMethodManagerWrapper.getShowSoftInputCounter());
 
         mConnection.commitText("hel", 1);
         waitAndVerifyEditableCallback(mConnection.mImeUpdateQueue, 4, "hel", 3, 3, -1, -1);
-        assertEquals(1, mInputMethodManagerWrapper.mShowSoftInputCounter);
+        assertEquals(1, mInputMethodManagerWrapper.getShowSoftInputCounter());
     }
 
     @SmallTest
@@ -132,8 +130,8 @@ public class ImeTest extends ContentShellTestBase {
 
         DOMUtils.clickNode(this, mContentView, mCallbackContainer, "input_text");
         assertWaitForKeyboardStatus(true);
-        assertEquals(5, mInputMethodManagerWrapper.mEditorInfo.initialSelStart);
-        assertEquals(5, mInputMethodManagerWrapper.mEditorInfo.initialSelEnd);
+        assertEquals(5, mInputMethodManagerWrapper.getEditorInfo().initialSelStart);
+        assertEquals(5, mInputMethodManagerWrapper.getEditorInfo().initialSelEnd);
     }
 
     @SmallTest
@@ -237,6 +235,17 @@ public class ImeTest extends ContentShellTestBase {
     @SmallTest
     @Feature({"TextInput", "Main"})
     public void testFinishComposingText() throws Throwable {
+        // Focus the textarea. We need to do the following steps because we are focusing using JS.
+        DOMUtils.focusNode(this, mContentView, mCallbackContainer, "input_radio");
+        assertWaitForKeyboardStatus(false);
+        DOMUtils.focusNode(this, mContentView, mCallbackContainer, "textarea");
+        assertWaitForKeyboardStatus(false);
+        performShowImeIfNeeded();
+        assertWaitForKeyboardStatus(true);
+
+        mConnection = (TestAdapterInputConnection) getAdapterInputConnection();
+        waitAndVerifyEditableCallback(mConnection.mImeUpdateQueue, 0, "", 0, 0, -1, -1);
+
         mConnection.commitText("hllo", 1);
         waitAndVerifyEditableCallback(mConnection.mImeUpdateQueue, 1, "hllo", 4, 4, -1, -1);
 
@@ -251,8 +260,11 @@ public class ImeTest extends ContentShellTestBase {
 
         mConnection.finishComposingText();
         // finishComposingText() is a two step IME event.
-        waitAndVerifyEditableCallback(mConnection.mImeUpdateQueue, 5, "hllo ", 4, 4, -1, -1);
+        waitAndVerifyEditableCallback(mConnection.mImeUpdateQueue, 5, "hllo ", 1, 1, 0, 1);
         waitAndVerifyEditableCallback(mConnection.mImeUpdateQueue, 6, "hllo ", 1, 1, -1, -1);
+
+        mConnection.commitText("\n", 1);
+        waitAndVerifyEditableCallback(mConnection.mImeUpdateQueue, 7, "h\nllo ", 2, 2, -1, -1);
     }
 
     private void performShowImeIfNeeded() {
@@ -382,51 +394,6 @@ public class ImeTest extends ContentShellTestBase {
         }
     }
 
-    private static class TestInputMethodManagerWrapper extends InputMethodManagerWrapper {
-        private ContentViewCore mContentViewCore;
-        private InputConnection mInputConnection;
-        private int mShowSoftInputCounter = 0;
-        private EditorInfo mEditorInfo;
-
-        public TestInputMethodManagerWrapper(ContentViewCore contentViewCore) {
-            super(null);
-            mContentViewCore = contentViewCore;
-        }
-
-        @Override
-        public void restartInput(View view) {
-            mEditorInfo = new EditorInfo();
-            mInputConnection = mContentViewCore.onCreateInputConnection(mEditorInfo);
-        }
-
-        @Override
-        public void showSoftInput(View view, int flags, ResultReceiver resultReceiver) {
-            mShowSoftInputCounter++;
-            if (mInputConnection != null) return;
-            mEditorInfo = new EditorInfo();
-            mInputConnection = mContentViewCore.onCreateInputConnection(mEditorInfo);
-        }
-
-        @Override
-        public boolean isActive(View view) {
-            if (mInputConnection == null) return false;
-            return true;
-        }
-
-        @Override
-        public boolean hideSoftInputFromWindow(IBinder windowToken, int flags,
-                ResultReceiver resultReceiver) {
-            boolean retVal = mInputConnection == null;
-            mInputConnection = null;
-            return retVal;
-        }
-
-        @Override
-        public void updateSelection(View view, int selStart, int selEnd,
-                int candidatesStart, int candidatesEnd) {
-        }
-    }
-
     private static class TestImeState {
         private final String mText;
         private final int mSelectionStart;
@@ -445,11 +412,11 @@ public class ImeTest extends ContentShellTestBase {
 
         public void assertEqualState(String text, int selectionStart, int selectionEnd,
                 int compositionStart, int compositionEnd) {
-            assertEquals("Text did not match", mText, text);
-            assertEquals("Selection start did not match", mSelectionStart, selectionStart);
-            assertEquals("Selection end did not match", mSelectionEnd, selectionEnd);
-            assertEquals("Composition start did not match", mCompositionStart, compositionStart);
-            assertEquals("Composition end did not match", mCompositionEnd, compositionEnd);
+            assertEquals("Text did not match", text, mText);
+            assertEquals("Selection start did not match", selectionStart, mSelectionStart);
+            assertEquals("Selection end did not match", selectionEnd, mSelectionEnd);
+            assertEquals("Composition start did not match", compositionStart, mCompositionStart);
+            assertEquals("Composition end did not match", compositionEnd, mCompositionEnd);
         }
     }
 }

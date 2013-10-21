@@ -9,11 +9,14 @@
 
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "media/audio/audio_input_ipc.h"
 #include "media/audio/audio_parameters.h"
 #include "webkit/plugins/ppapi/plugin_delegate.h"
+
+class GURL;
 
 namespace media {
 class AudioParameters;
@@ -41,6 +44,7 @@ class PepperPlatformAudioInputImpl
   static PepperPlatformAudioInputImpl* Create(
       const base::WeakPtr<PepperPluginDelegateImpl>& plugin_delegate,
       const std::string& device_id,
+      const GURL& document_url,
       int sample_rate,
       int frames_per_buffer,
       webkit::ppapi::PluginDelegate::PlatformAudioInputClient* client);
@@ -71,6 +75,7 @@ class PepperPlatformAudioInputImpl
   bool Initialize(
       const base::WeakPtr<PepperPluginDelegateImpl>& plugin_delegate,
       const std::string& device_id,
+      const GURL& document_url,
       int sample_rate,
       int frames_per_buffer,
       webkit::ppapi::PluginDelegate::PlatformAudioInputClient* client);
@@ -95,7 +100,7 @@ class PepperPlatformAudioInputImpl
   // I/O THREAD.
   scoped_ptr<media::AudioInputIPC> ipc_;
 
-  base::MessageLoopProxy* main_message_loop_proxy_;
+  scoped_refptr<base::MessageLoopProxy> main_message_loop_proxy_;
 
   // THIS MUST ONLY BE ACCESSED ON THE MAIN THREAD.
   base::WeakPtr<PepperPluginDelegateImpl> plugin_delegate_;
@@ -106,6 +111,9 @@ class PepperPlatformAudioInputImpl
 
   // Initialized on the main thread and accessed on the I/O thread afterwards.
   media::AudioParameters params_;
+
+  // Whether we have tried to create an audio stream.
+  bool create_stream_sent_;
 
   DISALLOW_COPY_AND_ASSIGN(PepperPlatformAudioInputImpl);
 };

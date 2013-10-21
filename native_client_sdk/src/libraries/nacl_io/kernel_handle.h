@@ -7,35 +7,38 @@
 
 #include <pthread.h>
 
+#include "nacl_io/error.h"
+#include "nacl_io/mount.h"
+#include "nacl_io/mount_node.h"
 #include "nacl_io/ostypes.h"
-#include "utils/macros.h"
-#include "utils/ref_object.h"
 
-class Mount;
-class MountNode;
+#include "sdk_util/macros.h"
+#include "sdk_util/ref_object.h"
+#include "sdk_util/scoped_ref.h"
 
 // KernelHandle provides a reference counted container for the open
 // file information, such as it's mount, node, access type and offset.
 // KernelHandle can only be referenced when the KernelProxy lock is held.
 class KernelHandle : public RefObject {
  public:
-  KernelHandle(Mount* mnt, MountNode* node, int oflags);
+  KernelHandle();
+  KernelHandle(const ScopedMount& mnt, const ScopedMountNode& node);
 
-  off_t Seek(off_t offset, int whence);
+  Error Init(int open_flags);
 
-  Mount* mount_;
-  MountNode* node_;
-  int mode_;
+  // Assumes |out_offset| is non-NULL.
+  Error Seek(off_t offset, int whence, off_t* out_offset);
+
+  ScopedRef<Mount> mount_;
+  ScopedRef<MountNode> node_;
   size_t offs_;
 
  private:
-  // May only be called by the KernelProxy when the Kernel's
-  // lock is held.
   friend class KernelObject;
   friend class KernelProxy;
-  void Acquire() { RefObject::Acquire(); }
-  bool Release() { return RefObject::Release(); }
   DISALLOW_COPY_AND_ASSIGN(KernelHandle);
 };
+
+typedef ScopedRef<KernelHandle> ScopedKernelHandle;
 
 #endif  // LIBRARIES_NACL_IO_KERNEL_HANDLE_H_

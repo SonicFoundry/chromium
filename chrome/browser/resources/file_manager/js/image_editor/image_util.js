@@ -403,11 +403,15 @@ ImageUtil.setClass = function(element, className, on) {
  * 2. Copies pixels from HTMLImageElement to HTMLCanvasElement. This is done
  *    stripe-by-stripe to avoid freezing up the UI. The transform is taken into
  *    account.
+ *
  * @param {HTMLDocument} document Owner document.
+ * @param {MetadataCache=} opt_metadataCache Metadata cache. Required for
+ *     caching. If not passed, caching will be disabled.
  * @constructor
  */
-ImageUtil.ImageLoader = function(document) {
+ImageUtil.ImageLoader = function(document, opt_metadataCache) {
   this.document_ = document;
+  this.metadataCache_ = opt_metadataCache || null;
   this.image_ = new Image();
   this.generation_ = 0;
 };
@@ -427,10 +431,15 @@ ImageUtil.ImageLoader.isTooLarge = function(image) {
 };
 
 /**
+ * Loads an image.
+ * TODO(mtomasz): Simplify, or even get rid of this class and merge with the
+ * ThumbnaiLoader class.
+ *
  * @param {string} url Image URL.
  * @param {function(function(object))} transformFetcher function to get
  *     the image transform (which we need for the image orientation).
- * @param {function(HTMLCanvasElement)} callback To be called when loaded.
+ * @param {function(HTMLCanvasElement, string=)} callback Callback to be
+ *     called when loaded. The second optional argument is an error identifier.
  * @param {number=} opt_delay Load delay in milliseconds, useful to let the
  *     animations play out before the computation heavy image loading starts.
  */
@@ -450,41 +459,88 @@ ImageUtil.ImageLoader.prototype.load = function(
     }
   };
 
-  var startLoad = function() {
+  var onError = function(opt_error) {
+    this.image_.onerror = null;
+    this.image_.onload = null;
+    var tmpCallback = this.callback_;
+    this.callback_ = null;
+    var emptyCanvas = this.document_.createElement('canvas');
+    emptyCanvas.width = 0;
+    emptyCanvas.height = 0;
+    tmpCallback(emptyCanvas, opt_error);
+  }.bind(this);
+
+  var loadImage = function(opt_metadata) {
     ImageUtil.metrics.startInterval(ImageUtil.getMetricName('LoadTime'));
     this.timeout_ = null;
-    // The clients of this class sometimes request the same url repeatedly.
-    // The onload fires only if the src is different from the previous value.
-    // To work around that we reset the src temporarily.
-    this.image_.src = '';
-    var errorCallback = function(error) {
-      this.image_.onerror = null;
-      this.image_.onload = null;
-      var tmpCallback = this.callback_;
-      this.callback_ = null;
-      var emptyCanvas = this.document_.createElement('canvas');
-      emptyCanvas.width = 0;
-      emptyCanvas.height = 0;
-      tmpCallback(emptyCanvas, error);
-    }.bind(this);
+
     this.image_.onload = function(e) {
       this.image_.onerror = null;
       this.image_.onload = null;
       if (ImageUtil.ImageLoader.isTooLarge(this.image_)) {
-        errorCallback('IMAGE_TOO_BIG_ERROR');
+        onError('IMAGE_TOO_BIG_ERROR');
         return;
       }
       transformFetcher(url, onTransform.bind(this, e.target));
     }.bind(this);
-    // errorCallback has an optional error argument, which in case of general
-    // error should not be specified
-    this.image_.onerror = errorCallback.bind(this, 'IMAGE_ERROR');
-    this.taskId_ = util.loadImage(this.image_, url);
+
+    // The error callback has an optional error argument, which in case of a
+    // general error should not be specified
+    this.image_.onerror = onError.bind(this, 'IMAGE_ERROR');
+
+    // Extract the last modification date to determine if the cached image
+    // is outdated.
+    var modificationTime = opt_metadata &&
+                           opt_metadata.modificationTime &&
+                           opt_metadata.modificationTime.getTime();
+
+    // Load the image directly.
+    this.image_.src = url;
   }.bind(this);
+
+  // Loads the image. If already loaded, then forces a reload.
+  var startLoad = this.resetImage_.bind(this, function() {
+    // Fetch metadata to detect last modification time for the caching purpose.
+    if (this.metadataCache_)
+      this.metadataCache_.get(url, 'filesystem', loadImage);
+    else
+      loadImage();
+  }.bind(this), onError);
+
   if (opt_delay) {
     this.timeout_ = setTimeout(startLoad, opt_delay);
   } else {
     startLoad();
+  }
+};
+
+/**
+ * Resets the image by forcing the garbage collection and clearing the src
+ * attribute.
+ *
+ * @param {function()} onSuccess Success callback.
+ * @param {function(opt_string)} onError Failure callback with an optional
+ *     error identifier.
+ * @private
+ */
+ImageUtil.ImageLoader.prototype.resetImage_ = function(onSuccess, onError) {
+  var clearSrc = function() {
+    this.image_.onload = onSuccess;
+    this.image_.onerror = onSuccess;
+    this.image_.src = '';
+  }.bind(this);
+
+  var emptyImage = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAA' +
+      'AAABAAEAAAICTAEAOw==';
+
+  if (this.image_.src != emptyImage) {
+    // Load an empty image, then clear src.
+    this.image_.onload = clearSrc;
+    this.image_.onerror = onError.bind(this, 'IMAGE_ERROR');
+    this.image_.src = emptyImage;
+  } else {
+    // Empty image already loaded, so clear src immediately.
+    clearSrc();
   }
 };
 
@@ -525,8 +581,6 @@ ImageUtil.ImageLoader.prototype.cancel = function() {
     this.image_.onerror = function() {};
     this.image_.src = '';
   }
-  if (this.taskId_)
-    util.cancelLoadImage(this.taskId_);
   this.generation_++;  // Silence the transform fetcher if it is in progress.
 };
 

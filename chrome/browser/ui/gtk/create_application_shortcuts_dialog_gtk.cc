@@ -8,7 +8,7 @@
 
 #include "base/bind.h"
 #include "base/environment.h"
-#include "base/utf_string_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/shell_integration_linux.h"
@@ -347,7 +347,9 @@ void CreateChromeApplicationShortcutsDialogGtk::CreateDesktopShortcut(
     const ShellIntegration::ShortcutLocations& creation_locations) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE));
 
-  if (web_app::CreateShortcutsOnFileThread(shortcut_info, creation_locations)) {
+  if (web_app::CreateShortcutsOnFileThread(
+          shortcut_info, creation_locations,
+          web_app::ALLOW_DUPLICATE_SHORTCUTS)) {
     Release();
   } else {
     BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,

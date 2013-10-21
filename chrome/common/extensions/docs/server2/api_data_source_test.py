@@ -9,14 +9,12 @@ import os
 import sys
 import unittest
 
-from api_data_source import (APIDataSource,
-                             _JSCModel,
+from api_data_source import (_JSCModel,
                              _FormatValue,
                              _RemoveNoDocs,
+                             _DetectInlineableTypes,
                              _InlineDocs)
-from compiled_file_system import CompiledFileSystem
 from file_system import FileNotFoundError
-from local_file_system import LocalFileSystem
 from object_store_creator import ObjectStoreCreator
 from reference_resolver import ReferenceResolver
 
@@ -60,7 +58,7 @@ class APIDataSourceTest(unittest.TestCase):
         self._LoadJSON(filename))
     return ReferenceResolver.Factory(data_source,
                                      data_source,
-                                     ObjectStoreCreator.TestFactory()).Create()
+                                     ObjectStoreCreator.ForTest()).Create()
 
   def _LoadJSON(self, filename):
     return json.loads(self._ReadLocalFile(filename))
@@ -177,6 +175,36 @@ class APIDataSourceTest(unittest.TestCase):
     _InlineDocs(inlined_schema)
     self.assertEqual(expected_schema, inlined_schema)
 
+  def testDetectInline(self):
+    schema = {
+      "types": [
+        {
+          "id": "Key",
+          "items": {
+            "$ref": "Value"
+          }
+        },
+        {
+          "id": "Value",
+          "marker": True
+        }
+      ]
+    }
+
+    expected_schema = {
+      "types": [
+        {
+          "id": "Key",
+          "items": {
+            "marker": True,
+          }
+        }
+      ]
+    }
+
+    _DetectInlineableTypes(schema)
+    _InlineDocs(schema)
+    self.assertEqual(expected_schema, schema)
 
 if __name__ == '__main__':
   unittest.main()

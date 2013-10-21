@@ -94,6 +94,8 @@ std::string GetPermissionName(const std::string& function_name) {
     return function_name;
 }
 
+
+
 }  // namespace
 
 namespace extensions {
@@ -120,8 +122,8 @@ PermissionSet* PermissionSet::CreateDifference(
     const PermissionSet* set1,
     const PermissionSet* set2) {
   scoped_refptr<PermissionSet> empty = new PermissionSet();
-  const PermissionSet* set1_safe = (set1 == NULL) ? empty : set1;
-  const PermissionSet* set2_safe = (set2 == NULL) ? empty : set2;
+  const PermissionSet* set1_safe = (set1 == NULL) ? empty.get() : set1;
+  const PermissionSet* set2_safe = (set2 == NULL) ? empty.get() : set2;
 
   APIPermissionSet apis;
   APIPermissionSet::Difference(set1_safe->apis(), set2_safe->apis(), &apis);
@@ -144,8 +146,8 @@ PermissionSet* PermissionSet::CreateIntersection(
     const PermissionSet* set1,
     const PermissionSet* set2) {
   scoped_refptr<PermissionSet> empty = new PermissionSet();
-  const PermissionSet* set1_safe = (set1 == NULL) ? empty : set1;
-  const PermissionSet* set2_safe = (set2 == NULL) ? empty : set2;
+  const PermissionSet* set1_safe = (set1 == NULL) ? empty.get() : set1;
+  const PermissionSet* set2_safe = (set2 == NULL) ? empty.get() : set2;
 
   APIPermissionSet apis;
   APIPermissionSet::Intersection(set1_safe->apis(), set2_safe->apis(), &apis);
@@ -168,8 +170,8 @@ PermissionSet* PermissionSet::CreateUnion(
     const PermissionSet* set1,
     const PermissionSet* set2) {
   scoped_refptr<PermissionSet> empty = new PermissionSet();
-  const PermissionSet* set1_safe = (set1 == NULL) ? empty : set1;
-  const PermissionSet* set2_safe = (set2 == NULL) ? empty : set2;
+  const PermissionSet* set1_safe = (set1 == NULL) ? empty.get() : set1;
+  const PermissionSet* set2_safe = (set2 == NULL) ? empty.get() : set2;
 
   APIPermissionSet apis;
   APIPermissionSet::Union(set1_safe->apis(), set2_safe->apis(), &apis);
@@ -263,35 +265,11 @@ PermissionMessages PermissionSet::GetPermissionMessages(
     return messages;
   }
 
-  // Since platform apps always use isolated storage, they can't (silently)
-  // access user data on other domains, so there's no need to prompt.
-  if (extension_type != Manifest::TYPE_PLATFORM_APP) {
-    if (HasEffectiveAccessToAllHosts()) {
-      messages.push_back(PermissionMessage(
-          PermissionMessage::kHostsAll,
-          l10n_util::GetStringUTF16(IDS_EXTENSION_PROMPT_WARNING_ALL_HOSTS)));
-    } else {
-      for (URLPatternSet::const_iterator i = effective_hosts_.begin();
-           i != effective_hosts_.end(); ++i) {
-        if (i->scheme() == chrome::kChromeUIScheme) {
-          // chrome://favicon is the only URL for chrome:// scheme that we
-          // want to support. We want to deprecate the "chrome" scheme.
-          // We should not add any additional "host" here.
-          CHECK(GURL(chrome::kChromeUIFaviconURL).host() == i->host());
-          messages.push_back(PermissionMessage(
-              PermissionMessage::kFavicon,
-              l10n_util::GetStringUTF16(IDS_EXTENSION_PROMPT_WARNING_FAVICON)));
-        }
-      }
-      std::set<std::string> hosts = GetDistinctHostsForDisplay();
-      if (!hosts.empty())
-        messages.push_back(PermissionMessage::CreateFromHostList(hosts));
-    }
-  }
-
-  std::set<PermissionMessage> simple_msgs =
-      GetSimplePermissionMessages();
-  messages.insert(messages.end(), simple_msgs.begin(), simple_msgs.end());
+  std::set<PermissionMessage> host_msgs =
+      GetHostPermissionMessages(extension_type);
+  std::set<PermissionMessage> api_msgs = GetAPIPermissionMessages();
+  messages.insert(messages.end(), host_msgs.begin(), host_msgs.end());
+  messages.insert(messages.end(), api_msgs.begin(), api_msgs.end());
 
   return messages;
 }
@@ -443,7 +421,8 @@ bool PermissionSet::HasEffectiveFullAccess() const {
 }
 
 bool PermissionSet::HasLessPrivilegesThan(
-    const PermissionSet* permissions) const {
+    const PermissionSet* permissions,
+    Manifest::Type extension_type) const {
   // Things can't get worse than native code access.
   if (HasEffectiveFullAccess())
     return false;
@@ -452,7 +431,7 @@ bool PermissionSet::HasLessPrivilegesThan(
   if (permissions->HasEffectiveFullAccess())
     return true;
 
-  if (HasLessHostPrivilegesThan(permissions))
+  if (HasLessHostPrivilegesThan(permissions, extension_type))
     return true;
 
   if (HasLessAPIPrivilegesThan(permissions))
@@ -486,8 +465,10 @@ std::set<std::string> PermissionSet::GetDistinctHosts(
 
     // If the host has an RCD, split it off so we can detect duplicates.
     std::string rcd;
-    size_t reg_len = net::RegistryControlledDomainService::GetRegistryLength(
-        host, false);
+    size_t reg_len = net::registry_controlled_domains::GetRegistryLength(
+        host,
+        net::registry_controlled_domains::EXCLUDE_UNKNOWN_REGISTRIES,
+        net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES);
     if (reg_len && reg_len != std::string::npos) {
       if (include_rcd)  // else leave rcd empty
         rcd = host.substr(host.size() - reg_len);
@@ -522,6 +503,11 @@ void PermissionSet::InitImplicitPermissions() {
   if (apis_.find(APIPermission::kDownloads) != apis_.end())
     apis_.insert(APIPermission::kDownloadsInternal);
 
+  // TODO(fsamuel): Is there a better way to request access to the WebRequest
+  // API without exposing it to the Chrome App?
+  if (apis_.find(APIPermission::kWebView) != apis_.end())
+    apis_.insert(APIPermission::kWebRequestInternal);
+
   // The webRequest permission implies the internal version as well.
   if (apis_.find(APIPermission::kWebRequest) != apis_.end())
     apis_.insert(APIPermission::kWebRequestInternal);
@@ -538,8 +524,7 @@ void PermissionSet::InitEffectiveHosts() {
       explicit_hosts(), scriptable_hosts(), &effective_hosts_);
 }
 
-std::set<PermissionMessage>
-    PermissionSet::GetSimplePermissionMessages() const {
+std::set<PermissionMessage> PermissionSet::GetAPIPermissionMessages() const {
   std::set<PermissionMessage> messages;
   for (APIPermissionSet::const_iterator permission_it = apis_.begin();
        permission_it != apis_.end(); ++permission_it) {
@@ -553,15 +538,51 @@ std::set<PermissionMessage>
   return messages;
 }
 
+std::set<PermissionMessage> PermissionSet::GetHostPermissionMessages(
+    Manifest::Type extension_type) const {
+  // Since platform apps always use isolated storage, they can't (silently)
+  // access user data on other domains, so there's no need to prompt.
+  // Note: this must remain consistent with HasLessHostPrivilegesThan.
+  // See crbug.com/255229.
+  std::set<PermissionMessage> messages;
+  if (extension_type == Manifest::TYPE_PLATFORM_APP)
+    return messages;
+
+  if (HasEffectiveAccessToAllHosts()) {
+    messages.insert(PermissionMessage(
+        PermissionMessage::kHostsAll,
+        l10n_util::GetStringUTF16(IDS_EXTENSION_PROMPT_WARNING_ALL_HOSTS)));
+  } else {
+    for (URLPatternSet::const_iterator i = effective_hosts_.begin();
+         i != effective_hosts_.end(); ++i) {
+      if (i->scheme() != chrome::kChromeUIScheme)
+        continue;
+      // chrome://favicon is the only URL for chrome:// scheme that we
+      // want to support. We want to deprecate the "chrome" scheme.
+      // We should not add any additional "host" here.
+      if (GURL(chrome::kChromeUIFaviconURL).host() != i->host())
+        continue;
+      messages.insert(PermissionMessage(
+          PermissionMessage::kFavicon,
+          l10n_util::GetStringUTF16(IDS_EXTENSION_PROMPT_WARNING_FAVICON)));
+    }
+
+    std::set<std::string> hosts = GetDistinctHostsForDisplay();
+    if (!hosts.empty())
+      messages.insert(PermissionMessage::CreateFromHostList(hosts));
+  }
+  return messages;
+}
+
 bool PermissionSet::HasLessAPIPrivilegesThan(
     const PermissionSet* permissions) const {
   if (permissions == NULL)
     return false;
 
   std::set<PermissionMessage> current_warnings =
-      GetSimplePermissionMessages();
+      GetAPIPermissionMessages();
   std::set<PermissionMessage> new_warnings =
-      permissions->GetSimplePermissionMessages();
+      permissions->GetAPIPermissionMessages();
   std::set<PermissionMessage> delta_warnings;
   std::set_difference(new_warnings.begin(), new_warnings.end(),
                       current_warnings.begin(), current_warnings.end(),
@@ -572,7 +593,13 @@ bool PermissionSet::HasLessAPIPrivilegesThan(
 }
 
 bool PermissionSet::HasLessHostPrivilegesThan(
-    const PermissionSet* permissions) const {
+    const PermissionSet* permissions,
+    Manifest::Type extension_type) const {
+  // Platform apps host permission changes do not count as privilege increases.
+  // Note: this must remain consistent with GetHostPermissionMessages.
+  if (extension_type == Manifest::TYPE_PLATFORM_APP)
+    return false;
+
   // If this permission set can access any host, then it can't be elevated.
   if (HasEffectiveAccessToAllHosts())
     return false;

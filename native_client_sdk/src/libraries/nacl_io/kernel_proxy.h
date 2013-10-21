@@ -24,9 +24,15 @@ class PepperInterface;
 
 // KernelProxy provide one-to-one mapping for libc kernel calls.  Calls to the
 // proxy will result in IO access to the provided Mount and MountNode objects.
+//
+// NOTE: The KernelProxy is the only class that should be setting errno. All
+// other classes should return Error (as defined by nacl_io/error.h).
 class KernelProxy : protected KernelObject {
  public:
-  typedef Mount* (*MountFactory_t)(int, StringMap_t&, PepperInterface*);
+  typedef Error (*MountFactory_t)(int,
+                                  StringMap_t&,
+                                  PepperInterface*,
+                                  ScopedMount*);
   typedef std::map<std::string, std::string> StringMap_t;
   typedef std::map<std::string, MountFactory_t> MountFactoryMap_t;
 
@@ -70,6 +76,7 @@ class KernelProxy : protected KernelObject {
   virtual int fchmod(int fd, int prot);
   virtual int fstat(int fd, struct stat *buf);
   virtual int getdents(int fd, void *buf, unsigned int count);
+  virtual int ftruncate(int fd, off_t length);
   virtual int fsync(int fd);
   virtual int isatty(int fd);
 
@@ -89,7 +96,11 @@ class KernelProxy : protected KernelObject {
   virtual int link(const char* oldpath, const char* newpath);
   virtual int symlink(const char* oldpath, const char* newpath);
 
-  virtual void* mmap(void* addr, size_t length, int prot, int flags, int fd,
+  virtual void* mmap(void* addr,
+                     size_t length,
+                     int prot,
+                     int flags,
+                     int fd,
                      size_t offset);
   virtual int munmap(void* addr, size_t length);
 

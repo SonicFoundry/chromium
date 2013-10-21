@@ -106,7 +106,8 @@ NSPoint GetPointForBubble(content::WebContents* web_contents,
 void CreateShortcuts(const ShellIntegration::ShortcutInfo& shortcut_info) {
   // creation_locations will be ignored by CreatePlatformShortcuts on Mac.
   ShellIntegration::ShortcutLocations creation_locations;
-  web_app::CreateShortcuts(shortcut_info, creation_locations);
+  web_app::CreateShortcuts(shortcut_info, creation_locations,
+                           web_app::ALLOW_DUPLICATE_SHORTCUTS);
 }
 
 }  // namespace
@@ -316,6 +317,14 @@ gfx::Rect BrowserWindowCocoa::GetRestoredBounds() const {
   return bounds;
 }
 
+ui::WindowShowState BrowserWindowCocoa::GetRestoredState() const {
+  if (IsMaximized())
+    return ui::SHOW_STATE_MAXIMIZED;
+  if (IsMinimized())
+    return ui::SHOW_STATE_MINIMIZED;
+  return ui::SHOW_STATE_NORMAL;
+}
+
 gfx::Rect BrowserWindowCocoa::GetBounds() const {
   return GetRestoredBounds();
 }
@@ -489,13 +498,12 @@ void BrowserWindowCocoa::ShowOneClickSigninBubble(
   WebContents* web_contents =
         browser_->tab_strip_model()->GetActiveWebContents();
   if (type == ONE_CLICK_SIGNIN_BUBBLE_TYPE_BUBBLE) {
-    scoped_nsobject<OneClickSigninBubbleController> bubble_controller(
-        [[OneClickSigninBubbleController alloc]
-            initWithBrowserWindowController:cocoa_controller()
-                                webContents:web_contents
-                               errorMessage:base::SysUTF16ToNSString(
-                                                error_message)
-                                   callback:start_sync_callback]);
+    base::scoped_nsobject<OneClickSigninBubbleController> bubble_controller([
+            [OneClickSigninBubbleController alloc]
+        initWithBrowserWindowController:cocoa_controller()
+                            webContents:web_contents
+                           errorMessage:base::SysUTF16ToNSString(error_message)
+                               callback:start_sync_callback]);
     [bubble_controller showWindow:nil];
   } else {
     // Deletes itself when the dialog closes.
@@ -518,7 +526,7 @@ DownloadShelf* BrowserWindowCocoa::GetDownloadShelf() {
 void BrowserWindowCocoa::ConfirmBrowserCloseWithPendingDownloads() {
   // Call InProgressDownloadResponse asynchronously to avoid a crash when the
   // browser window is closed here (http://crbug.com/44454).
-  MessageLoop::current()->PostTask(FROM_HERE,
+  base::MessageLoop::current()->PostTask(FROM_HERE,
       base::Bind(&Browser::InProgressDownloadResponse,
                  confirm_close_factory_.GetWeakPtr(), true));
 }
@@ -647,7 +655,7 @@ FindBar* BrowserWindowCocoa::CreateFindBar() {
   return bridge;
 }
 
-WebContentsModalDialogHost*
+web_modal::WebContentsModalDialogHost*
     BrowserWindowCocoa::GetWebContentsModalDialogHost() {
   return NULL;
 }
@@ -692,7 +700,8 @@ void BrowserWindowCocoa::ShowAvatarBubble(WebContents* web_contents,
 }
 
 void BrowserWindowCocoa::ShowAvatarBubbleFromAvatarButton() {
-  [[controller_ avatarButtonController] showAvatarBubble];
+  AvatarButtonController* controller = [controller_ avatarButtonController];
+  [controller showAvatarBubble:[controller buttonView]];
 }
 
 void BrowserWindowCocoa::ShowPasswordGenerationBubble(

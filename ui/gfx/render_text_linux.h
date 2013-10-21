@@ -32,9 +32,7 @@ class RenderTextLinux : public RenderText {
   virtual SelectionModel AdjacentWordSelectionModel(
       const SelectionModel& selection,
       VisualCursorDirection direction) OVERRIDE;
-  virtual void GetGlyphBounds(size_t index,
-                              ui::Range* xspan,
-                              int* height) OVERRIDE;
+  virtual ui::Range GetGlyphBounds(size_t index) OVERRIDE;
   virtual std::vector<Rect> GetSubstringBounds(const ui::Range& range) OVERRIDE;
   virtual size_t TextIndexToLayoutIndex(size_t index) const OVERRIDE;
   virtual size_t LayoutIndexToTextIndex(size_t index) const OVERRIDE;
@@ -81,8 +79,6 @@ class RenderTextLinux : public RenderText {
 
   // The text in the |layout_|.
   const char* layout_text_;
-  // The text length.
-  size_t layout_text_len_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderTextLinux);
 };

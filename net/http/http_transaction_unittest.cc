@@ -8,9 +8,11 @@
 
 #include "base/bind.h"
 #include "base/message_loop.h"
-#include "base/stringprintf.h"
-#include "net/base/net_errors.h"
+#include "base/strings/stringprintf.h"
+#include "base/time.h"
 #include "net/base/load_flags.h"
+#include "net/base/load_timing_info.h"
+#include "net/base/net_errors.h"
 #include "net/disk_cache/disk_cache.h"
 #include "net/http/http_cache.h"
 #include "net/http/http_request_info.h"
@@ -153,9 +155,7 @@ int TestTransactionConsumer::quit_counter_ = 0;
 TestTransactionConsumer::TestTransactionConsumer(
     net::RequestPriority priority,
     net::HttpTransactionFactory* factory)
-    : state_(IDLE),
-      trans_(NULL),
-      error_(net::OK) {
+    : state_(IDLE), error_(net::OK) {
   // Disregard the error code.
   factory->CreateTransaction(priority, &trans_, NULL);
   ++quit_counter_;
@@ -195,13 +195,14 @@ void TestTransactionConsumer::DidFinish(int result) {
   state_ = DONE;
   error_ = result;
   if (--quit_counter_ == 0)
-    MessageLoop::current()->Quit();
+    base::MessageLoop::current()->Quit();
 }
 
 void TestTransactionConsumer::Read() {
   state_ = READING;
   read_buf_ = new net::IOBuffer(1024);
-  int result = trans_->Read(read_buf_, 1024,
+  int result = trans_->Read(read_buf_.get(),
+                            1024,
                             base::Bind(&TestTransactionConsumer::OnIOComplete,
                                        base::Unretained(this)));
   if (result != net::ERR_IO_PENDING)
@@ -227,7 +228,8 @@ MockNetworkTransaction::MockNetworkTransaction(
     : weak_factory_(this),
       data_cursor_(0),
       priority_(priority),
-      transaction_factory_(factory->AsWeakPtr()) {
+      transaction_factory_(factory->AsWeakPtr()),
+      socket_log_id_(net::NetLog::Source::kInvalidId) {
 }
 
 MockNetworkTransaction::~MockNetworkTransaction() {}
@@ -241,7 +243,7 @@ int MockNetworkTransaction::Start(const net::HttpRequestInfo* request,
 
   test_mode_ = t->test_mode;
 
-  // Return immediately if we're returning in error.
+  // Return immediately if we're returning an error.
   if (net::OK != t->return_code) {
     if (test_mode_ & TEST_MODE_SYNC_NET_START)
       return t->return_code;
@@ -271,9 +273,12 @@ int MockNetworkTransaction::Start(const net::HttpRequestInfo* request,
     response_.response_time = t->response_time;
 
   response_.headers = new net::HttpResponseHeaders(header_data);
-  response_.vary_data.Init(*request, *response_.headers);
+  response_.vary_data.Init(*request, *response_.headers.get());
   response_.ssl_info.cert_status = t->cert_status;
   data_ = resp_data;
+
+  if (net_log.net_log())
+    socket_log_id_ = net_log.net_log()->NextID();
 
   if (test_mode_ & TEST_MODE_SYNC_NET_START)
     return net::OK;
@@ -320,8 +325,13 @@ int MockNetworkTransaction::Read(net::IOBuffer* buf, int buf_len,
 
 void MockNetworkTransaction::StopCaching() {}
 
+bool MockNetworkTransaction::GetFullRequestHeaders(
+    net::HttpRequestHeaders* headers) const {
+  return false;
+}
+
 void MockNetworkTransaction::DoneReading() {
-  if (transaction_factory_)
+  if (transaction_factory_.get())
     transaction_factory_->TransactionDoneReading();
 }
 
@@ -341,7 +351,24 @@ net::UploadProgress MockNetworkTransaction::GetUploadProgress() const {
 
 bool MockNetworkTransaction::GetLoadTimingInfo(
     net::LoadTimingInfo* load_timing_info) const {
-  return false;
+  if (socket_log_id_ != net::NetLog::Source::kInvalidId) {
+    // The minimal set of times for a request that gets a response, assuming it
+    // gets a new socket.
+    load_timing_info->socket_reused = false;
+    load_timing_info->socket_log_id = socket_log_id_;
+    load_timing_info->connect_timing.connect_start = base::TimeTicks::Now();
+    load_timing_info->connect_timing.connect_end = base::TimeTicks::Now();
+    load_timing_info->send_start = base::TimeTicks::Now();
+    load_timing_info->send_end = base::TimeTicks::Now();
+  } else {
+    // If there's no valid socket ID, just use the generic socket reused values.
+    // No tests currently depend on this, just should not match the values set
+    // by a cache hit.
+    load_timing_info->socket_reused = true;
+    load_timing_info->send_start = base::TimeTicks::Now();
+    load_timing_info->send_end = base::TimeTicks::Now();
+  }
+  return true;
 }
 
 void MockNetworkTransaction::SetPriority(net::RequestPriority priority) {
@@ -350,7 +377,7 @@ void MockNetworkTransaction::SetPriority(net::RequestPriority priority) {
 
 void MockNetworkTransaction::CallbackLater(
     const net::CompletionCallback& callback, int result) {
-  MessageLoop::current()->PostTask(
+  base::MessageLoop::current()->PostTask(
       FROM_HERE, base::Bind(&MockNetworkTransaction::RunCallback,
                             weak_factory_.GetWeakPtr(), callback, result));
 }
@@ -403,7 +430,7 @@ int ReadTransaction(net::HttpTransaction* trans, std::string* result) {
   std::string content;
   do {
     scoped_refptr<net::IOBuffer> buf(new net::IOBuffer(256));
-    rv = trans->Read(buf, 256, callback.callback());
+    rv = trans->Read(buf.get(), 256, callback.callback());
     if (rv == net::ERR_IO_PENDING)
       rv = callback.WaitForResult();
 

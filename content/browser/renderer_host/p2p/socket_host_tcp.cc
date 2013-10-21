@@ -7,68 +7,105 @@
 #include "base/sys_byteorder.h"
 #include "content/common/p2p_messages.h"
 #include "ipc/ipc_sender.h"
+#include "jingle/glue/fake_ssl_client_socket.h"
+#include "jingle/glue/proxy_resolving_client_socket.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_util.h"
 #include "net/socket/tcp_client_socket.h"
+#include "net/url_request/url_request_context_getter.h"
 
 namespace {
+
+typedef uint16 PacketLength;
+const int kPacketHeaderSize = sizeof(PacketLength);
 const int kReadBufferSize = 4096;
-const int kPacketHeaderSize = sizeof(uint16);
+const int kPacketLengthOffset = 2;
+const int kTurnChannelDataHeaderSize = 4;
+
+bool IsSslClientSocket(content::P2PSocketType type) {
+  return (type == content::P2P_SOCKET_SSLTCP_CLIENT ||
+          type == content::P2P_SOCKET_STUN_SSLTCP_CLIENT);
+}
+
 }  // namespace
 
 namespace content {
 
-P2PSocketHostTcp::P2PSocketHostTcp(IPC::Sender* message_sender, int id)
+P2PSocketHostTcpBase::P2PSocketHostTcpBase(
+    IPC::Sender* message_sender, int id,
+    P2PSocketType type, net::URLRequestContextGetter* url_context)
     : P2PSocketHost(message_sender, id),
       write_pending_(false),
-      connected_(false) {
+      connected_(false),
+      type_(type),
+      url_context_(url_context) {
 }
 
-P2PSocketHostTcp::~P2PSocketHostTcp() {
+P2PSocketHostTcpBase::~P2PSocketHostTcpBase() {
   if (state_ == STATE_OPEN) {
     DCHECK(socket_.get());
     socket_.reset();
   }
 }
 
-bool P2PSocketHostTcp::InitAccepted(const net::IPEndPoint& remote_address,
-                                    net::StreamSocket* socket) {
+bool P2PSocketHostTcpBase::InitAccepted(const net::IPEndPoint& remote_address,
+                                        net::StreamSocket* socket) {
   DCHECK(socket);
   DCHECK_EQ(state_, STATE_UNINITIALIZED);
 
   remote_address_ = remote_address;
+  // TODO(ronghuawu): Add FakeSSLServerSocket.
   socket_.reset(socket);
   state_ = STATE_OPEN;
   DoRead();
   return state_ != STATE_ERROR;
 }
 
-bool P2PSocketHostTcp::Init(const net::IPEndPoint& local_address,
-                            const net::IPEndPoint& remote_address) {
+bool P2PSocketHostTcpBase::Init(const net::IPEndPoint& local_address,
+                                const net::IPEndPoint& remote_address) {
   DCHECK_EQ(state_, STATE_UNINITIALIZED);
 
   remote_address_ = remote_address;
   state_ = STATE_CONNECTING;
-  scoped_ptr<net::TCPClientSocket> tcp_socket(new net::TCPClientSocket(
-      net::AddressList(remote_address),
-      NULL, net::NetLog::Source()));
-  if (tcp_socket->Bind(local_address) != net::OK) {
-    OnError();
-    return false;
-  }
-  socket_.reset(tcp_socket.release());
 
-  int result = socket_->Connect(
-      base::Bind(&P2PSocketHostTcp::OnConnected, base::Unretained(this)));
-  if (result != net::ERR_IO_PENDING) {
-    OnConnected(result);
+  net::HostPortPair dest_host_port_pair =
+      net::HostPortPair::FromIPEndPoint(remote_address);
+  // TODO(mallinath) - We are ignoring local_address altogether. We should
+  // find a way to inject this into ProxyResolvingClientSocket. This could be
+  // a problem on multi-homed host.
+
+  // The default SSLConfig is good enough for us for now.
+  const net::SSLConfig ssl_config;
+  socket_.reset(new jingle_glue::ProxyResolvingClientSocket(
+                    NULL,     // Default socket pool provided by the net::Proxy.
+                    url_context_,
+                    ssl_config,
+                    dest_host_port_pair));
+  if (IsSslClientSocket(type_)) {
+    socket_.reset(new jingle_glue::FakeSSLClientSocket(socket_.release()));
+  }
+
+  int status = socket_->Connect(
+      base::Bind(&P2PSocketHostTcpBase::OnConnected,
+                 base::Unretained(this)));
+  if (status != net::ERR_IO_PENDING) {
+    // We defer execution of ProcessConnectDone instead of calling it
+    // directly here as the caller may not expect an error/close to
+    // happen here.  This is okay, as from the caller's point of view,
+    // the connect always happens asynchronously.
+    base::MessageLoop* message_loop = base::MessageLoop::current();
+    CHECK(message_loop);
+    message_loop->PostTask(
+        FROM_HERE,
+        base::Bind(&P2PSocketHostTcpBase::OnConnected,
+                   base::Unretained(this), status));
   }
 
   return state_ != STATE_ERROR;
 }
 
-void P2PSocketHostTcp::OnError() {
+void P2PSocketHostTcpBase::OnError() {
   socket_.reset();
 
   if (state_ == STATE_UNINITIALIZED || state_ == STATE_CONNECTING ||
@@ -79,7 +116,7 @@ void P2PSocketHostTcp::OnError() {
   state_ = STATE_ERROR;
 }
 
-void P2PSocketHostTcp::OnConnected(int result) {
+void P2PSocketHostTcpBase::OnConnected(int result) {
   DCHECK_EQ(state_, STATE_CONNECTING);
   DCHECK_NE(result, net::ERR_IO_PENDING);
 
@@ -103,10 +140,10 @@ void P2PSocketHostTcp::OnConnected(int result) {
   DoRead();
 }
 
-void P2PSocketHostTcp::DoRead() {
+void P2PSocketHostTcpBase::DoRead() {
   int result;
   do {
-    if (!read_buffer_) {
+    if (!read_buffer_.get()) {
       read_buffer_ = new net::GrowableIOBuffer();
       read_buffer_->SetCapacity(kReadBufferSize);
     } else if (read_buffer_->RemainingCapacity() < kReadBufferSize) {
@@ -117,21 +154,22 @@ void P2PSocketHostTcp::DoRead() {
       read_buffer_->SetCapacity(read_buffer_->capacity() + kReadBufferSize -
                                 read_buffer_->RemainingCapacity());
     }
-    result = socket_->Read(read_buffer_, read_buffer_->RemainingCapacity(),
-                           base::Bind(&P2PSocketHostTcp::OnRead,
-                                      base::Unretained(this)));
+    result = socket_->Read(
+        read_buffer_.get(),
+        read_buffer_->RemainingCapacity(),
+        base::Bind(&P2PSocketHostTcp::OnRead, base::Unretained(this)));
     DidCompleteRead(result);
   } while (result > 0);
 }
 
-void P2PSocketHostTcp::OnRead(int result) {
+void P2PSocketHostTcpBase::OnRead(int result) {
   DidCompleteRead(result);
   if (state_ == STATE_OPEN) {
     DoRead();
   }
 }
 
-void P2PSocketHostTcp::OnPacket(std::vector<char>& data) {
+void P2PSocketHostTcpBase::OnPacket(const std::vector<char>& data) {
   if (!connected_) {
     P2PSocketHost::StunMessageType type;
     bool stun = GetStunPacketType(&*data.begin(), data.size(), &type);
@@ -150,43 +188,8 @@ void P2PSocketHostTcp::OnPacket(std::vector<char>& data) {
   message_sender_->Send(new P2PMsg_OnDataReceived(id_, remote_address_, data));
 }
 
-void P2PSocketHostTcp::DidCompleteRead(int result) {
-  DCHECK_EQ(state_, STATE_OPEN);
-
-  if (result == net::ERR_IO_PENDING) {
-    return;
-  } else if (result < 0){
-    LOG(ERROR) << "Error when reading from TCP socket: " << result;
-    OnError();
-    return;
-  }
-
-  read_buffer_->set_offset(read_buffer_->offset() + result);
-  char* head = read_buffer_->StartOfBuffer();  // Purely a convenience.
-  int consumed = 0;
-  while (consumed + kPacketHeaderSize <= read_buffer_->offset() &&
-         state_ == STATE_OPEN) {
-    int packet_size = base::NetToHost16(
-        *reinterpret_cast<uint16*>(head + consumed));
-    if (consumed + packet_size + kPacketHeaderSize > read_buffer_->offset())
-      break;
-    // We've got a full packet!
-    consumed += kPacketHeaderSize;
-    char* cur = head + consumed;
-    std::vector<char> data(cur, cur + packet_size);
-    OnPacket(data);
-    consumed += packet_size;
-  }
-  // We've consumed all complete packets from the buffer; now move any remaining
-  // bytes to the head of the buffer and set offset to reflect this.
-  if (consumed && consumed <= read_buffer_->offset()) {
-    memmove(head, head + consumed, read_buffer_->offset() - consumed);
-    read_buffer_->set_offset(read_buffer_->offset() - consumed);
-  }
-}
-
-void P2PSocketHostTcp::Send(const net::IPEndPoint& to,
-                            const std::vector<char>& data) {
+void P2PSocketHostTcpBase::Send(const net::IPEndPoint& to,
+                                const std::vector<char>& data) {
   if (!socket_) {
     // The Send message may be sent after the an OnError message was
     // sent by hasn't been processed the renderer.
@@ -211,13 +214,12 @@ void P2PSocketHostTcp::Send(const net::IPEndPoint& to,
     }
   }
 
-  int size = kPacketHeaderSize + data.size();
-  scoped_refptr<net::DrainableIOBuffer> buffer =
-      new net::DrainableIOBuffer(new net::IOBuffer(size), size);
-  *reinterpret_cast<uint16*>(buffer->data()) = base::HostToNet16(data.size());
-  memcpy(buffer->data() + kPacketHeaderSize, &data[0], data.size());
+  DoSend(to, data);
+}
 
-  if (write_buffer_) {
+void P2PSocketHostTcpBase::WriteOrQueue(
+    scoped_refptr<net::DrainableIOBuffer>& buffer) {
+  if (write_buffer_.get()) {
     write_queue_.push(buffer);
     return;
   }
@@ -226,16 +228,17 @@ void P2PSocketHostTcp::Send(const net::IPEndPoint& to,
   DoWrite();
 }
 
-void P2PSocketHostTcp::DoWrite() {
-  while (write_buffer_ && state_ == STATE_OPEN && !write_pending_) {
-    int result = socket_->Write(write_buffer_, write_buffer_->BytesRemaining(),
-                                base::Bind(&P2PSocketHostTcp::OnWritten,
-                                           base::Unretained(this)));
+void P2PSocketHostTcpBase::DoWrite() {
+  while (write_buffer_.get() && state_ == STATE_OPEN && !write_pending_) {
+    int result = socket_->Write(
+        write_buffer_.get(),
+        write_buffer_->BytesRemaining(),
+        base::Bind(&P2PSocketHostTcp::OnWritten, base::Unretained(this)));
     HandleWriteResult(result);
   }
 }
 
-void P2PSocketHostTcp::OnWritten(int result) {
+void P2PSocketHostTcpBase::OnWritten(int result) {
   DCHECK(write_pending_);
   DCHECK_NE(result, net::ERR_IO_PENDING);
 
@@ -244,8 +247,8 @@ void P2PSocketHostTcp::OnWritten(int result) {
   DoWrite();
 }
 
-void P2PSocketHostTcp::HandleWriteResult(int result) {
-  DCHECK(write_buffer_);
+void P2PSocketHostTcpBase::HandleWriteResult(int result) {
+  DCHECK(write_buffer_.get());
   if (result >= 0) {
     write_buffer_->DidConsume(result);
     if (write_buffer_->BytesRemaining() == 0) {
@@ -265,11 +268,167 @@ void P2PSocketHostTcp::HandleWriteResult(int result) {
   }
 }
 
-P2PSocketHost* P2PSocketHostTcp::AcceptIncomingTcpConnection(
+P2PSocketHost* P2PSocketHostTcpBase::AcceptIncomingTcpConnection(
     const net::IPEndPoint& remote_address, int id) {
   NOTREACHED();
   OnError();
   return NULL;
 }
 
-} // namespace content
+void P2PSocketHostTcpBase::DidCompleteRead(int result) {
+  DCHECK_EQ(state_, STATE_OPEN);
+
+  if (result == net::ERR_IO_PENDING) {
+    return;
+  } else if (result < 0) {
+    LOG(ERROR) << "Error when reading from TCP socket: " << result;
+    OnError();
+    return;
+  }
+
+  read_buffer_->set_offset(read_buffer_->offset() + result);
+  char* head = read_buffer_->StartOfBuffer();  // Purely a convenience.
+  int pos = 0;
+  while (pos <= read_buffer_->offset() && state_ == STATE_OPEN) {
+    int consumed = ProcessInput(head + pos, read_buffer_->offset() - pos);
+    if (!consumed)
+      break;
+    pos += consumed;
+  }
+  // We've consumed all complete packets from the buffer; now move any remaining
+  // bytes to the head of the buffer and set offset to reflect this.
+  if (pos && pos <= read_buffer_->offset()) {
+    memmove(head, head + pos, read_buffer_->offset() - pos);
+    read_buffer_->set_offset(read_buffer_->offset() - pos);
+  }
+}
+
+P2PSocketHostTcp::P2PSocketHostTcp(
+    IPC::Sender* message_sender, int id,
+    P2PSocketType type, net::URLRequestContextGetter* url_context)
+    : P2PSocketHostTcpBase(message_sender, id, type, url_context) {
+  DCHECK(type == P2P_SOCKET_TCP_CLIENT || type == P2P_SOCKET_SSLTCP_CLIENT);
+}
+
+P2PSocketHostTcp::~P2PSocketHostTcp() {
+}
+
+int P2PSocketHostTcp::ProcessInput(char* input, int input_len) {
+  if (input_len < kPacketHeaderSize)
+    return 0;
+  int packet_size = base::NetToHost16(*reinterpret_cast<uint16*>(input));
+  if (input_len < packet_size + kPacketHeaderSize)
+    return 0;
+
+  int consumed = kPacketHeaderSize;
+  char* cur = input + consumed;
+  std::vector<char> data(cur, cur + packet_size);
+  OnPacket(data);
+  consumed += packet_size;
+  return consumed;
+}
+
+void P2PSocketHostTcp::DoSend(const net::IPEndPoint& to,
+                              const std::vector<char>& data) {
+  int size = kPacketHeaderSize + data.size();
+  scoped_refptr<net::DrainableIOBuffer> buffer =
+      new net::DrainableIOBuffer(new net::IOBuffer(size), size);
+  *reinterpret_cast<uint16*>(buffer->data()) = base::HostToNet16(data.size());
+  memcpy(buffer->data() + kPacketHeaderSize, &data[0], data.size());
+
+  WriteOrQueue(buffer);
+}
+
+// P2PSocketHostStunTcp
+P2PSocketHostStunTcp::P2PSocketHostStunTcp(
+    IPC::Sender* message_sender, int id,
+    P2PSocketType type, net::URLRequestContextGetter* url_context)
+    : P2PSocketHostTcpBase(message_sender, id, type, url_context) {
+  DCHECK(type == P2P_SOCKET_STUN_TCP_CLIENT ||
+         type == P2P_SOCKET_STUN_SSLTCP_CLIENT);
+}
+
+P2PSocketHostStunTcp::~P2PSocketHostStunTcp() {
+}
+
+int P2PSocketHostStunTcp::ProcessInput(char* input, int input_len) {
+  if (input_len < kPacketHeaderSize + kPacketLengthOffset)
+    return 0;
+
+  int pad_bytes;
+  int packet_size = GetExpectedPacketSize(
+      input, input_len, &pad_bytes);
+
+  if (input_len < packet_size + pad_bytes)
+    return 0;
+
+  // We have a complete packet. Read through it.
+  int consumed = 0;
+  char* cur = input;
+  std::vector<char> data(cur, cur + packet_size);
+  OnPacket(data);
+  consumed += packet_size;
+  consumed += pad_bytes;
+  return consumed;
+}
+
+void P2PSocketHostStunTcp::DoSend(const net::IPEndPoint& to,
+                                  const std::vector<char>& data) {
+  // Each packet is expected to have header (STUN/TURN ChannelData), where
+  // header contains message type and and length of message.
+  if (data.size() < kPacketHeaderSize + kPacketLengthOffset) {
+    NOTREACHED();
+    OnError();
+    return;
+  }
+
+  int pad_bytes;
+  size_t expected_len = GetExpectedPacketSize(
+      &data[0], data.size(), &pad_bytes);
+
+  // Accepts only complete STUN/TURN packets.
+  if (data.size() != expected_len) {
+    NOTREACHED();
+    OnError();
+    return;
+  }
+
+  // Add any pad bytes to the total size.
+  int size = data.size() + pad_bytes;
+
+  scoped_refptr<net::DrainableIOBuffer> buffer =
+      new net::DrainableIOBuffer(new net::IOBuffer(size), size);
+  memcpy(buffer->data(), &data[0], data.size());
+
+  if (pad_bytes) {
+    char padding[4] = {0};
+    DCHECK_LE(pad_bytes, 4);
+    memcpy(buffer->data() + data.size(), padding, pad_bytes);
+  }
+  WriteOrQueue(buffer);
+}
+
+int P2PSocketHostStunTcp::GetExpectedPacketSize(
+    const char* data, int len, int* pad_bytes) {
+  DCHECK_LE(kTurnChannelDataHeaderSize, len);
+  // Both stun and turn had length at offset 2.
+  int packet_size = base::NetToHost16(*reinterpret_cast<const uint16*>(
+      data + kPacketLengthOffset));
+
+  // Get packet type (STUN or TURN).
+  uint16 msg_type = base::NetToHost16(*reinterpret_cast<const uint16*>(data));
+
+  *pad_bytes = 0;
+  // Add heder length to packet length.
+  if ((msg_type & 0xC000) == 0) {
+    packet_size += kStunHeaderSize;
+  } else {
+    packet_size += kTurnChannelDataHeaderSize;
+    // Calculate any padding if present.
+    if (packet_size % 4)
+      *pad_bytes = 4 - packet_size % 4;
+  }
+  return packet_size;
+}
+
+}  // namespace content

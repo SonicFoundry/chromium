@@ -66,7 +66,7 @@ void ChromeRenderViewHostObserver::Navigate(const GURL& url) {
     return;
   if (!CommandLine::ForCurrentProcess()->HasSwitch(switches::kChromeFrame) &&
      (url.SchemeIs(chrome::kHttpScheme) || url.SchemeIs(chrome::kHttpsScheme)))
-    predictor_->PreconnectUrlAndSubresources(url);
+    predictor_->PreconnectUrlAndSubresources(url, GURL());
 }
 
 bool ChromeRenderViewHostObserver::OnMessageReceived(
@@ -169,7 +169,7 @@ void ChromeRenderViewHostObserver::RemoveRenderViewHostForExtensions(
 
 void ChromeRenderViewHostObserver::OnFocusedNodeTouched(bool editable) {
   if (editable) {
-#if defined(OS_WIN)
+#if defined(OS_WIN) && defined(USE_AURA)
     base::win::DisplayVirtualKeyboard();
 #endif
     content::NotificationService::current()->Notify(
@@ -177,7 +177,7 @@ void ChromeRenderViewHostObserver::OnFocusedNodeTouched(bool editable) {
         content::Source<RenderViewHost>(render_view_host()),
         content::Details<bool>(&editable));
   } else {
-#if defined(OS_WIN)
+#if defined(OS_WIN) && defined(USE_AURA)
     base::win::DismissVirtualKeyboard();
 #endif
   }

@@ -165,6 +165,10 @@ int fsync(int fd) {
   return ki_fsync(fd);
 }
 
+int ftruncate(int fd, off_t length) NOTHROW {
+  return ki_ftruncate(fd, length);
+}
+
 char* getcwd(char* buf, size_t size) NOTHROW {
   return ki_getcwd(buf, size);
 }
@@ -430,3 +434,4 @@ EXTERN_C_END
 
 
 #endif  // defined(__native_client__) && defined(__GLIBC__)
+

@@ -21,7 +21,6 @@
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/resource/resource_bundle.h"
 
 
 // static
@@ -49,7 +48,7 @@ SessionCrashedInfoBarDelegate::SessionCrashedInfoBarDelegate(
     : ConfirmInfoBarDelegate(infobar_service),
       accepted_(false),
       removed_notification_received_(false),
-      browser_(browser) {
+      profile_(browser->profile()) {
   // TODO(pkasting,marja): Once InfoBars own they delegates, this is not needed
   // any more. Then we can rely on delegates getting destroyed, and we can
   // initiate the session storage scavenging only in the destructor. (Currently,
@@ -62,14 +61,13 @@ SessionCrashedInfoBarDelegate::~SessionCrashedInfoBarDelegate() {
   // If the info bar wasn't accepted, it was either dismissed or expired. In
   // that case, session restore won't happen.
   if (!accepted_ && !removed_notification_received_) {
-    content::BrowserContext::GetDefaultStoragePartition(browser_->profile())->
-        GetDOMStorageContext()->StartScavengingUnusedSessionStorage();
+    content::BrowserContext::GetDefaultStoragePartition(profile_)
+        ->GetDOMStorageContext()->StartScavengingUnusedSessionStorage();
   }
 }
 
-gfx::Image* SessionCrashedInfoBarDelegate::GetIcon() const {
-  return &ResourceBundle::GetSharedInstance().GetNativeImageNamed(
-      IDR_INFOBAR_RESTORE_SESSION);
+int SessionCrashedInfoBarDelegate::GetIconID() const {
+  return IDR_INFOBAR_RESTORE_SESSION;
 }
 
 string16 SessionCrashedInfoBarDelegate::GetMessageText() const {
@@ -88,9 +86,11 @@ string16 SessionCrashedInfoBarDelegate::GetButtonLabel(
 
 bool SessionCrashedInfoBarDelegate::Accept() {
   uint32 behavior = 0;
-  if (browser_->tab_strip_model()->count() == 1) {
+  Browser* browser =
+      chrome::FindBrowserWithWebContents(owner()->web_contents());
+  if (browser->tab_strip_model()->count() == 1) {
     const content::WebContents* active_tab =
-        browser_->tab_strip_model()->GetWebContentsAt(0);
+        browser->tab_strip_model()->GetWebContentsAt(0);
     if (active_tab->GetURL() == GURL(chrome::kChromeUINewTabURL) ||
         chrome::IsInstantNTP(active_tab)) {
       // There is only one tab and its the new tab page, make session restore
@@ -99,7 +99,7 @@ bool SessionCrashedInfoBarDelegate::Accept() {
     }
   }
   SessionRestore::RestoreSession(
-      browser_->profile(), browser_, browser_->host_desktop_type(), behavior,
+      browser->profile(), browser, browser->host_desktop_type(), behavior,
       std::vector<GURL>());
   accepted_ = true;
   return true;
@@ -114,7 +114,7 @@ void SessionCrashedInfoBarDelegate::Observe(
       this)
     return;
   if (!accepted_) {
-    content::BrowserContext::GetDefaultStoragePartition(browser_->profile())->
+    content::BrowserContext::GetDefaultStoragePartition(profile_)->
         GetDOMStorageContext()->StartScavengingUnusedSessionStorage();
     removed_notification_received_ = true;
   }

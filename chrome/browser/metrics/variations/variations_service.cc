@@ -12,6 +12,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram.h"
+#include "base/metrics/sparse_histogram.h"
 #include "base/prefs/pref_registry_simple.h"
 #include "base/prefs/pref_service.h"
 #include "base/version.h"
@@ -25,6 +26,7 @@
 #include "content/public/common/url_fetcher.h"
 #include "googleurl/src/gurl.h"
 #include "net/base/load_flags.h"
+#include "net/base/net_errors.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/url_util.h"
 #include "net/http/http_response_headers.h"
@@ -97,14 +99,14 @@ chrome::VersionInfo::Channel GetChannelForVariations() {
 Study_Platform GetCurrentPlatform() {
 #if defined(OS_WIN)
   return Study_Platform_PLATFORM_WINDOWS;
+#elif defined(OS_IOS)
+  return Study_Platform_PLATFORM_IOS;
 #elif defined(OS_MACOSX)
   return Study_Platform_PLATFORM_MAC;
 #elif defined(OS_CHROMEOS)
   return Study_Platform_PLATFORM_CHROMEOS;
 #elif defined(OS_ANDROID)
   return Study_Platform_PLATFORM_ANDROID;
-#elif defined(OS_IOS)
-  return Study_Platform_PLATFORM_IOS;
 #elif defined(OS_LINUX) || defined(OS_BSD) || defined(OS_SOLARIS)
   // Default BSD and SOLARIS to Linux to not break those builds, although these
   // platforms are not officially supported by Chrome.
@@ -119,14 +121,14 @@ Study_Platform GetCurrentPlatform() {
 std::string GetPlatformString() {
 #if defined(OS_WIN)
   return "win";
+#elif defined(OS_IOS)
+  return "ios";
 #elif defined(OS_MACOSX)
   return "mac";
 #elif defined(OS_CHROMEOS)
   return "chromeos";
 #elif defined(OS_ANDROID)
   return "android";
-#elif defined(OS_IOS)
-  return "ios";
 #elif defined(OS_LINUX) || defined(OS_BSD) || defined(OS_SOLARIS)
   // Default BSD and SOLARIS to Linux to not break those builds, although these
   // platforms are not officially supported by Chrome.
@@ -155,12 +157,26 @@ std::string GetRestrictParameterPref(PrefService* local_state) {
   return parameter;
 }
 
+enum ResourceRequestsAllowedState {
+  RESOURCE_REQUESTS_ALLOWED,
+  RESOURCE_REQUESTS_NOT_ALLOWED,
+  RESOURCE_REQUESTS_ALLOWED_NOTIFIED,
+  RESOURCE_REQUESTS_ALLOWED_ENUM_SIZE,
+};
+
+// Records UMA histogram with the current resource requests allowed state.
+void RecordRequestsAllowedHistogram(ResourceRequestsAllowedState state) {
+  UMA_HISTOGRAM_ENUMERATION("Variations.ResourceRequestsAllowed", state,
+                            RESOURCE_REQUESTS_ALLOWED_ENUM_SIZE);
+}
+
 }  // namespace
 
 VariationsService::VariationsService(PrefService* local_state)
     : local_state_(local_state),
       variations_server_url_(GetVariationsServerURL(local_state)),
       create_trials_from_seed_called_(false),
+      initial_request_completed_(false),
       resource_request_allowed_notifier_(
           new ResourceRequestAllowedNotifier) {
   resource_request_allowed_notifier_->Init(this);
@@ -171,6 +187,7 @@ VariationsService::VariationsService(ResourceRequestAllowedNotifier* notifier,
     : local_state_(local_state),
       variations_server_url_(GetVariationsServerURL(NULL)),
       create_trials_from_seed_called_(false),
+      initial_request_completed_(false),
       resource_request_allowed_notifier_(notifier) {
   resource_request_allowed_notifier_->Init(this);
 }
@@ -293,8 +310,11 @@ VariationsService* VariationsService::Create(PrefService* local_state) {
   // Unless the URL was provided, unsupported builds should return NULL to
   // indicate that the service should not be used.
   if (!CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kVariationsServerURL))
+          switches::kVariationsServerURL)) {
+    DVLOG(1) << "Not creating VariationsService in unofficial build without --"
+             << switches::kVariationsServerURL << " specified.";
     return NULL;
+  }
 #endif
   return new VariationsService(local_state);
 }
@@ -313,34 +333,57 @@ void VariationsService::DoActualFetch() {
   }
   pending_seed_request_->Start();
 
-  last_request_started_time_ = base::TimeTicks::Now();
+  const base::TimeTicks now = base::TimeTicks::Now();
+  base::TimeDelta time_since_last_fetch;
+  // Record a time delta of 0 (default value) if there was no previous fetch.
+  if (!last_request_started_time_.is_null())
+    time_since_last_fetch = now - last_request_started_time_;
+  UMA_HISTOGRAM_CUSTOM_COUNTS("Variations.TimeSinceLastFetchAttempt",
+                              time_since_last_fetch.InMinutes(), 0,
+                              base::TimeDelta::FromDays(7).InMinutes(), 50);
+  last_request_started_time_ = now;
 }
 
 void VariationsService::FetchVariationsSeed() {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
   if (!resource_request_allowed_notifier_->ResourceRequestsAllowed()) {
+    RecordRequestsAllowedHistogram(RESOURCE_REQUESTS_NOT_ALLOWED);
     DVLOG(1) << "Resource requests were not allowed. Waiting for notification.";
     return;
   }
 
+  RecordRequestsAllowedHistogram(RESOURCE_REQUESTS_ALLOWED);
   DoActualFetch();
 }
 
 void VariationsService::OnURLFetchComplete(const net::URLFetcher* source) {
   DCHECK_EQ(pending_seed_request_.get(), source);
+
+  const bool is_first_request = !initial_request_completed_;
+  initial_request_completed_ = true;
+
   // The fetcher will be deleted when the request is handled.
   scoped_ptr<const net::URLFetcher> request(pending_seed_request_.release());
-  if (request->GetStatus().status() != net::URLRequestStatus::SUCCESS) {
-    DVLOG(1) << "Variations server request failed.";
+  const net::URLRequestStatus& request_status = request->GetStatus();
+  if (request_status.status() != net::URLRequestStatus::SUCCESS) {
+    UMA_HISTOGRAM_SPARSE_SLOWLY("Variations.FailedRequestErrorCode",
+                                -request_status.error());
+    DVLOG(1) << "Variations server request failed with error: "
+             << request_status.error() << ": "
+             << net::ErrorToString(request_status.error());
+    // It's common for the very first fetch attempt to fail (e.g. the network
+    // may not yet be available). In such a case, try again soon, rather than
+    // waiting the full time interval.
+    if (is_first_request)
+      request_scheduler_->ScheduleFetchShortly();
     return;
   }
 
   // Log the response code.
   const int response_code = request->GetResponseCode();
-  UMA_HISTOGRAM_CUSTOM_ENUMERATION("Variations.SeedFetchResponseCode",
-      net::HttpUtil::MapStatusCodeForHistogram(response_code),
-      net::HttpUtil::GetStatusCodesForHistogram());
+  UMA_HISTOGRAM_SPARSE_SLOWLY("Variations.SeedFetchResponseCode",
+                              response_code);
 
   const base::TimeDelta latency =
       base::TimeTicks::Now() - last_request_started_time_;
@@ -386,6 +429,7 @@ void VariationsService::OnResourceRequestsAllowed() {
   // attempt was made earlier that fails (which implies that the period had
   // elapsed). After a successful attempt is made, the notifier will know not
   // to call this method again until another failed attempt occurs.
+  RecordRequestsAllowedHistogram(RESOURCE_REQUESTS_ALLOWED_NOTIFIED);
   DVLOG(1) << "Retrying fetch.";
   DoActualFetch();
 
@@ -595,7 +639,9 @@ bool VariationsService::ValidateStudyAndComputeTotalProbability(
                << study.experiment(i).name();
       return false;
     }
-    divisor += study.experiment(i).probability_weight();
+
+    if (!study.experiment(i).has_forcing_flag())
+      divisor += study.experiment(i).probability_weight();
     if (study.experiment(i).name() == default_group_name)
       found_default_group = true;
   }
@@ -615,10 +661,9 @@ bool VariationsService::ValidateStudyAndComputeTotalProbability(
 bool VariationsService::LoadTrialsSeedFromPref(PrefService* local_prefs,
                                                TrialsSeed* seed) {
   std::string base64_seed_data = local_prefs->GetString(prefs::kVariationsSeed);
-  if (base64_seed_data.empty()) {
-    UMA_HISTOGRAM_BOOLEAN("Variations.SeedEmpty", true);
+  UMA_HISTOGRAM_BOOLEAN("Variations.SeedEmpty", base64_seed_data.empty());
+  if (base64_seed_data.empty())
     return false;
-  }
 
   // If the decode process fails, assume the pref value is corrupt and clear it.
   std::string seed_data;
@@ -639,6 +684,20 @@ void VariationsService::CreateTrialFromStudy(const Study& study,
   if (!ValidateStudyAndComputeTotalProbability(study, &total_probability))
     return;
 
+  // Check if any experiments need to be forced due to a command line
+  // flag. Force the first experiment with an existing flag.
+  CommandLine* command_line = CommandLine::ForCurrentProcess();
+  for (int i = 0; i < study.experiment_size(); ++i) {
+    const Study_Experiment& experiment = study.experiment(i);
+    if (experiment.has_forcing_flag() &&
+        command_line->HasSwitch(experiment.forcing_flag())) {
+      base::FieldTrialList::CreateFieldTrial(study.name(), experiment.name());
+      DVLOG(1) << "Trial " << study.name() << " forced by flag: "
+               << experiment.forcing_flag();
+      return;
+    }
+  }
+
   // The trial is created without specifying an expiration date because the
   // expiration check in field_trial.cc is based on the build date. Instead,
   // the expiration check using |reference_date| is done explicitly below.
@@ -657,6 +716,11 @@ void VariationsService::CreateTrialFromStudy(const Study& study,
 
   for (int i = 0; i < study.experiment_size(); ++i) {
     const Study_Experiment& experiment = study.experiment(i);
+    // Groups with flags can't be selected randomly, so we don't add them to
+    // the field trial.
+    if (experiment.has_forcing_flag())
+      continue;
+
     if (experiment.name() != study.default_experiment_name())
       trial->AppendGroup(experiment.name(), experiment.probability_weight());
 

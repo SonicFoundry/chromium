@@ -483,35 +483,6 @@ TEST_F('HistoryWebUITest', 'bulkDeletion', function() {
 });
 
 /**
- * Test individual deletion of history entries.
- */
-TEST_F('HistoryWebUITest', 'singleDeletion', function() {
-  var dropDownButton = document.querySelector('.entry-box .drop-down');
-  assertNotEquals(dropDownButton, null);
-  expectFalse(dropDownButton.disabled);
-
-  var removeMenuItem = document.getElementById('remove-visit');
-  assertNotEquals(removeMenuItem, null);
-  expectFalse(removeMenuItem.disabled);
-
-  var secondEntry = document.querySelectorAll('.title a')[1];
-
-  // Delete the first entry.
-  cr.dispatchSimpleEvent(dropDownButton, 'mousedown');
-  expectEquals(window.activeVisit.textContent,
-               historyModel.visits_[0].textContent);
-  cr.dispatchSimpleEvent(removeMenuItem, 'activate');
-
-  // Removing the item triggers a fade-out transition followed by node removal.
-  waitForCallback('removeNodeWithoutTransition', function() {
-    // The original second entry should now be the first.
-    expectEquals(document.querySelector('.title a').textContent,
-                 secondEntry.textContent);
-    testDone();
-  });
-});
-
-/**
  * Test selecting multiple entries using shift click.
  */
 TEST_F('HistoryWebUITest', 'multipleSelect', function() {
@@ -659,6 +630,8 @@ RangeHistoryWebUITest.prototype = {
 
   setUp: function() {
     // Show the filter controls as if the command line switch was active.
+    $('top-container').hidden = true;
+    $('history-page').classList.add('big-topbar-page');
     $('filter-controls').hidden = false;
     expectFalse($('filter-controls').hidden);
   },
@@ -666,8 +639,7 @@ RangeHistoryWebUITest.prototype = {
 
 TEST_F('RangeHistoryWebUITest', 'allView', function() {
   // Check that we start off in the all time view.
-  expectEquals(parseInt($('timeframe-filter').value, 10),
-               HistoryModel.Range.ALL_TIME);
+  expectTrue($('timeframe-filter-all').checked);
   // See if the correct number of days is shown.
   var dayHeaders = document.querySelectorAll('.day');
   assertEquals(Math.ceil(RESULTS_PER_PAGE / 4), dayHeaders.length);
@@ -698,23 +670,9 @@ function checkGroupedVisits(element) {
   }
 }
 
-TEST_F('RangeHistoryWebUITest', 'weekView', function() {
-  // Change to weekly view.
-  $('timeframe-filter').value = HistoryModel.Range.WEEK;
-  historyView.setRangeInDays(HistoryModel.Range.WEEK);
-  waitForCallback('historyResult', function() {
-    // See if the correct number of days is shown.
-    var dayHeaders = document.querySelectorAll('.day');
-    assertEquals(7, dayHeaders.length);
-    expectFalse(document.querySelector('h2.timeframe').hidden);
-
-    testDone();
-  });
-});
-
 TEST_F('RangeHistoryWebUITest', 'weekViewGrouped', function() {
   // Change to weekly view.
-  setPageState('', 0, true, HistoryModel.Range.WEEK, 0);
+  setPageState('', 0, HistoryModel.Range.WEEK, 0);
   waitForCallback('historyResult', function() {
     // See if the correct number of days is still shown.
     var dayResults = document.querySelectorAll('.day-results');
@@ -728,21 +686,9 @@ TEST_F('RangeHistoryWebUITest', 'weekViewGrouped', function() {
   });
 });
 
-TEST_F('RangeHistoryWebUITest', 'monthView', function() {
-  // Change to monthly view.
-  setPageState('', 0, false, HistoryModel.Range.MONTH, 0);
-  waitForCallback('historyResult', function() {
-    // See if the correct number of days is shown.
-    var dayHeaders = document.querySelectorAll('.day');
-    assertEquals(2, dayHeaders.length);
-    expectFalse(document.querySelector('h2.timeframe').hidden);
-    testDone();
-  });
-});
-
 TEST_F('RangeHistoryWebUITest', 'monthViewGrouped', function() {
   // Change to monthly view.
-  setPageState('', 0, true, HistoryModel.Range.MONTH, 0);
+  setPageState('', 0, HistoryModel.Range.MONTH, 0);
   waitForCallback('historyResult', function() {
     // See if the correct number of days is shown.
     var monthResults = document.querySelectorAll('.month-results');
@@ -756,7 +702,7 @@ TEST_F('RangeHistoryWebUITest', 'monthViewGrouped', function() {
 
 TEST_F('RangeHistoryWebUITest', 'monthViewEmptyMonth', function() {
   // Change to monthly view.
-  setPageState('', 0, true, HistoryModel.Range.MONTH, 2);
+  setPageState('', 0, HistoryModel.Range.MONTH, 2);
 
   waitForCallback('historyResult', function() {
     // See if the correct number of days is shown.
@@ -800,6 +746,47 @@ TEST_F('HistoryWebUIRealBackendTest', 'basic', function() {
   assertEquals(3, document.querySelectorAll('.entry').length);
 
   testDone();
+});
+
+/**
+ * Test individual deletion of history entries.
+ * Disabled because it fails on all platforms: crbug.com/242293
+ */
+TEST_F('HistoryWebUIRealBackendTest', 'DISABLED_singleDeletion', function() {
+  // Deletes the history entry represented by |entryElement|, and calls callback
+  // when the deletion is complete.
+  var removeEntry = function(entryElement, callback) {
+    var dropDownButton = entryElement.querySelector('.drop-down');
+    var removeMenuItem = $('remove-visit');
+
+    assertFalse(dropDownButton.disabled);
+    assertFalse(removeMenuItem.disabled);
+
+    waitForCallback('removeNodeWithoutTransition', callback);
+
+    cr.dispatchSimpleEvent(dropDownButton, 'mousedown');
+    cr.dispatchSimpleEvent(removeMenuItem, 'activate');
+  };
+
+  var secondTitle = document.querySelectorAll('.entry a')[1].textContent;
+  var thirdTitle = document.querySelectorAll('.entry a')[2].textContent;
+
+  // historyDeleted() should not be called when deleting individual entries
+  // using the drop down.
+  waitForCallback('historyDeleted', function() {
+    testDone([false, 'historyDeleted() called when deleting single entry']);
+  });
+
+  // Delete the first entry. The previous second entry should now be the first.
+  removeEntry(document.querySelector('.entry'), function() {
+    expectEquals(document.querySelector('.entry a').textContent, secondTitle);
+
+    // Delete another entry. The original third entry should now be the first.
+    removeEntry(document.querySelector('.entry'), function() {
+      expectEquals(document.querySelector('.entry a').textContent, thirdTitle);
+      testDone();
+    });
+  });
 });
 
 /**

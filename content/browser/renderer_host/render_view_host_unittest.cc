@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/utf_string_conversions.h"
+#include "base/path_service.h"
+#include "base/strings/utf_string_conversions.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/renderer_host/test_render_view_host.h"
 #include "content/browser/web_contents/navigation_controller_impl.h"
@@ -12,15 +13,49 @@
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/common/bindings_policy.h"
 #include "content/public/common/page_transition_types.h"
+#include "content/public/common/url_constants.h"
 #include "content/public/test/mock_render_process_host.h"
+#include "content/test/test_content_browser_client.h"
 #include "content/test/test_web_contents.h"
 #include "net/base/net_util.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebDragOperation.h"
-#include "webkit/glue/webdropdata.h"
+#include "third_party/WebKit/public/web/WebDragOperation.h"
+#include "webkit/common/webdropdata.h"
 
 namespace content {
 
+class RenderViewHostTestBrowserClient : public TestContentBrowserClient {
+ public:
+  RenderViewHostTestBrowserClient() {}
+  virtual ~RenderViewHostTestBrowserClient() {}
+
+  virtual bool IsHandledURL(const GURL& url) OVERRIDE {
+    return url.scheme() == chrome::kFileScheme;
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(RenderViewHostTestBrowserClient);
+};
+
 class RenderViewHostTest : public RenderViewHostImplTestHarness {
+ public:
+  RenderViewHostTest() : old_browser_client_(NULL) {}
+  virtual ~RenderViewHostTest() {}
+
+  virtual void SetUp() OVERRIDE {
+    RenderViewHostImplTestHarness::SetUp();
+    old_browser_client_ = SetBrowserClientForTesting(&test_browser_client_);
+  }
+
+  virtual void TearDown() OVERRIDE {
+    SetBrowserClientForTesting(old_browser_client_);
+    RenderViewHostImplTestHarness::TearDown();
+  }
+
+ private:
+  RenderViewHostTestBrowserClient test_browser_client_;
+  ContentBrowserClient* old_browser_client_;
+
+  DISALLOW_COPY_AND_ASSIGN(RenderViewHostTest);
 };
 
 // All about URLs reported by the renderer should get rewritten to about:blank.
@@ -66,7 +101,7 @@ TEST_F(RenderViewHostTest, ResetUnloadOnReload) {
   test_rvh()->SendShouldCloseACK(true);
   contents()->Stop();
   controller().Reload(false);
-  EXPECT_FALSE(test_rvh()->is_waiting_for_unload_ack_for_testing());
+  EXPECT_FALSE(test_rvh()->is_waiting_for_unload_ack());
 }
 
 // Ensure we do not grant bindings to a process shared with unprivileged views.
@@ -83,9 +118,6 @@ class MockDraggingRenderViewHostDelegateView
     : public RenderViewHostDelegateView {
  public:
   virtual ~MockDraggingRenderViewHostDelegateView() {}
-  virtual void ShowContextMenu(
-      const ContextMenuParams& params,
-      ContextMenuSourceType type) OVERRIDE {}
   virtual void ShowPopupMenu(const gfx::Rect& bounds,
                              int item_height,
                              double item_font_size,
@@ -226,5 +258,42 @@ TEST_F(RenderViewHostTest, BadMessageHandlerInputEventAck) {
 }
 
 #endif
+
+TEST_F(RenderViewHostTest, MessageWithBadHistoryItemFiles) {
+  base::FilePath file_path;
+  EXPECT_TRUE(PathService::Get(base::DIR_TEMP, &file_path));
+  file_path = file_path.AppendASCII("foo");
+  EXPECT_EQ(0, process()->bad_msg_count());
+  test_rvh()->TestOnUpdateStateWithFile(process()->GetID(), file_path);
+  EXPECT_EQ(1, process()->bad_msg_count());
+
+  ChildProcessSecurityPolicyImpl::GetInstance()->GrantPermissionsForFile(
+      process()->GetID(), file_path,
+      base::PLATFORM_FILE_OPEN |
+      base::PLATFORM_FILE_READ |
+      base::PLATFORM_FILE_EXCLUSIVE_READ |
+      base::PLATFORM_FILE_ASYNC);
+  test_rvh()->TestOnUpdateStateWithFile(process()->GetID(), file_path);
+  EXPECT_EQ(1, process()->bad_msg_count());
+}
+
+TEST_F(RenderViewHostTest, NavigationWithBadHistoryItemFiles) {
+  GURL url("http://www.google.com");
+  base::FilePath file_path;
+  EXPECT_TRUE(PathService::Get(base::DIR_TEMP, &file_path));
+  file_path = file_path.AppendASCII("bar");
+  EXPECT_EQ(0, process()->bad_msg_count());
+  test_rvh()->SendNavigateWithFile(1, url, file_path);
+  EXPECT_EQ(1, process()->bad_msg_count());
+
+  ChildProcessSecurityPolicyImpl::GetInstance()->GrantPermissionsForFile(
+      process()->GetID(), file_path,
+      base::PLATFORM_FILE_OPEN |
+      base::PLATFORM_FILE_READ |
+      base::PLATFORM_FILE_EXCLUSIVE_READ |
+      base::PLATFORM_FILE_ASYNC);
+  test_rvh()->SendNavigateWithFile(process()->GetID(), url, file_path);
+  EXPECT_EQ(1, process()->bad_msg_count());
+}
 
 }  // namespace content

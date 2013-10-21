@@ -80,6 +80,8 @@ WebSocketJob::WebSocketJob(SocketStream::Delegate* delegate)
       handshake_request_sent_(0),
       response_cookies_save_index_(0),
       spdy_protocol_version_(0),
+      save_next_cookie_running_(false),
+      callback_pending_(false),
       weak_ptr_factory_(this),
       weak_ptr_factory_for_send_pending_(this) {
 }
@@ -109,7 +111,7 @@ bool WebSocketJob::SendData(const char* data, int len) {
       {
         scoped_refptr<IOBufferWithSize> buffer = new IOBufferWithSize(len);
         memcpy(buffer->data(), data, len);
-        if (current_send_buffer_ || !send_buffer_queue_.empty()) {
+        if (current_send_buffer_.get() || !send_buffer_queue_.empty()) {
           send_buffer_queue_.push_back(buffer);
           return true;
         }
@@ -130,7 +132,7 @@ void WebSocketJob::Close() {
     return;
 
   state_ = CLOSING;
-  if (current_send_buffer_) {
+  if (current_send_buffer_.get()) {
     // Will close in SendPending.
     return;
   }
@@ -153,7 +155,7 @@ void WebSocketJob::DetachDelegate() {
   weak_ptr_factory_for_send_pending_.InvalidateWeakPtrs();
 
   delegate_ = NULL;
-  if (socket_)
+  if (socket_.get())
     socket_->DetachDelegate();
   socket_ = NULL;
   if (!callback_.is_null()) {
@@ -203,9 +205,9 @@ void WebSocketJob::OnSentData(SocketStream* socket, int amount_sent) {
   }
   if (delegate_) {
     DCHECK(state_ == OPEN || state_ == CLOSING);
-    if (!current_send_buffer_) {
-      VLOG(1) << "OnSentData current_send_buffer=NULL amount_sent="
-              << amount_sent;
+    if (!current_send_buffer_.get()) {
+      VLOG(1)
+          << "OnSentData current_send_buffer=NULL amount_sent=" << amount_sent;
       return;
     }
     current_send_buffer_->DidConsume(amount_sent);
@@ -218,7 +220,7 @@ void WebSocketJob::OnSentData(SocketStream* socket, int amount_sent) {
     DCHECK_GT(amount_sent, 0);
     current_send_buffer_ = NULL;
     if (!weak_ptr_factory_for_send_pending_.HasWeakPtrs()) {
-      MessageLoopForIO::current()->PostTask(
+      base::MessageLoopForIO::current()->PostTask(
           FROM_HERE,
           base::Bind(&WebSocketJob::SendPending,
                      weak_ptr_factory_for_send_pending_.GetWeakPtr()));
@@ -300,24 +302,21 @@ void WebSocketJob::OnSentSpdyHeaders() {
   if (state_ != CONNECTING)
     return;
   if (delegate_)
-    delegate_->OnSentData(socket_, handshake_request_->original_length());
+    delegate_->OnSentData(socket_.get(), handshake_request_->original_length());
   handshake_request_.reset();
 }
 
-int WebSocketJob::OnReceivedSpdyResponseHeader(
-    const SpdyHeaderBlock& headers, int status) {
+void WebSocketJob::OnSpdyResponseHeadersUpdated(
+    const SpdyHeaderBlock& response_headers) {
   DCHECK_NE(INITIALIZED, state_);
   if (state_ != CONNECTING)
-    return status;
-  if (status != OK)
-    return status;
+    return;
   // TODO(toyoshim): Fallback to non-spdy connection?
-  handshake_response_->ParseResponseHeaderBlock(headers,
+  handshake_response_->ParseResponseHeaderBlock(response_headers,
                                                 challenge_,
                                                 spdy_protocol_version_);
 
   SaveCookiesAndNotifyHeadersComplete();
-  return OK;
 }
 
 void WebSocketJob::OnSentSpdyData(size_t bytes_sent) {
@@ -327,7 +326,7 @@ void WebSocketJob::OnSentSpdyData(size_t bytes_sent) {
     return;
   if (!spdy_websocket_stream_.get())
     return;
-  OnSentData(socket_, static_cast<int>(bytes_sent));
+  OnSentData(socket_.get(), static_cast<int>(bytes_sent));
 }
 
 void WebSocketJob::OnReceivedSpdyData(scoped_ptr<SpdyBuffer> buffer) {
@@ -338,16 +337,16 @@ void WebSocketJob::OnReceivedSpdyData(scoped_ptr<SpdyBuffer> buffer) {
   if (!spdy_websocket_stream_.get())
     return;
   if (buffer) {
-    OnReceivedData(socket_, buffer->GetRemainingData(),
-                   buffer->GetRemainingSize());
+    OnReceivedData(
+        socket_.get(), buffer->GetRemainingData(), buffer->GetRemainingSize());
   } else {
-    OnReceivedData(socket_, NULL, 0);
+    OnReceivedData(socket_.get(), NULL, 0);
   }
 }
 
 void WebSocketJob::OnCloseSpdyStream() {
   spdy_websocket_stream_.reset();
-  OnClose(socket_);
+  OnClose(socket_.get());
 }
 
 bool WebSocketJob::SendHandshakeRequest(const char* data, int len) {
@@ -366,12 +365,12 @@ bool WebSocketJob::SendHandshakeRequest(const char* data, int len) {
 
 void WebSocketJob::AddCookieHeaderAndSend() {
   bool allow = true;
-  if (delegate_ && !delegate_->CanGetCookies(socket_, GetURLForCookies()))
+  if (delegate_ && !delegate_->CanGetCookies(socket_.get(), GetURLForCookies()))
     allow = false;
 
-  if (socket_ && delegate_ && state_ == CONNECTING) {
-    handshake_request_->RemoveHeaders(
-        kCookieHeaders, arraysize(kCookieHeaders));
+  if (socket_.get() && delegate_ && state_ == CONNECTING) {
+    handshake_request_->RemoveHeaders(kCookieHeaders,
+                                      arraysize(kCookieHeaders));
     if (allow && socket_->context()->cookie_store()) {
       // Add cookies, including HttpOnly cookies.
       CookieOptions cookie_options;
@@ -388,6 +387,10 @@ void WebSocketJob::AddCookieHeaderAndSend() {
 
 void WebSocketJob::LoadCookieCallback(const std::string& cookie) {
   if (!cookie.empty())
+    // TODO(tyoshino): Sending cookie means that connection doesn't need
+    // kPrivacyModeEnabled as cookies may be server-bound and channel id
+    // wouldn't negatively affect privacy anyway. Need to restart connection
+    // or refactor to determine cookie status prior to connecting.
     handshake_request_->AppendHeaderIfMissing("Cookie", cookie);
   DoSendData();
 }
@@ -474,10 +477,11 @@ void WebSocketJob::SaveCookiesAndNotifyHeadersComplete() {
 
 void WebSocketJob::NotifyHeadersComplete() {
   // Remove cookie headers, with malformed headers preserved.
-  // Actual handshake should be done in WebKit.
+  // Actual handshake should be done in Blink.
   handshake_response_->RemoveHeaders(
       kSetCookieHeaders, arraysize(kSetCookieHeaders));
   std::string handshake_response = handshake_response_->GetResponse();
+  handshake_response_.reset();
   std::vector<char> received_data(handshake_response.begin(),
                                   handshake_response.end());
   received_data.insert(received_data.end(),
@@ -490,46 +494,71 @@ void WebSocketJob::NotifyHeadersComplete() {
   DCHECK(!received_data.empty());
   if (delegate_)
     delegate_->OnReceivedData(
-        socket_, &received_data.front(), received_data.size());
-
-  handshake_response_.reset();
+        socket_.get(), &received_data.front(), received_data.size());
 
   WebSocketThrottle::GetInstance()->RemoveFromQueue(this);
   WebSocketThrottle::GetInstance()->WakeupSocketIfNecessary();
 }
 
 void WebSocketJob::SaveNextCookie() {
-  if (response_cookies_save_index_ == response_cookies_.size()) {
-    response_cookies_.clear();
-    response_cookies_save_index_ = 0;
-
-    NotifyHeadersComplete();
-
+  if (!socket_.get() || !delegate_ || state_ != CONNECTING)
     return;
-  }
 
-  bool allow = true;
-  CookieOptions options;
-  GURL url = GetURLForCookies();
-  std::string cookie = response_cookies_[response_cookies_save_index_];
-  if (delegate_ && !delegate_->CanSetCookie(socket_, url, cookie, &options))
-    allow = false;
+  callback_pending_ = false;
+  save_next_cookie_running_ = true;
 
-  if (socket_ && delegate_ && state_ == CONNECTING) {
-    response_cookies_save_index_++;
-    if (allow && socket_->context()->cookie_store()) {
-      options.set_include_httponly();
+  if (socket_->context()->cookie_store()) {
+    GURL url_for_cookies = GetURLForCookies();
+
+    CookieOptions options;
+    options.set_include_httponly();
+
+    // Loop as long as SetCookieWithOptionsAsync completes synchronously. Since
+    // CookieMonster's asynchronous operation APIs queue the callback to run it
+    // on the thread where the API was called, there won't be race. I.e. unless
+    // the callback is run synchronously, it won't be run in parallel with this
+    // method.
+    while (!callback_pending_ &&
+           response_cookies_save_index_ < response_cookies_.size()) {
+      std::string cookie = response_cookies_[response_cookies_save_index_];
+      response_cookies_save_index_++;
+
+      if (!delegate_->CanSetCookie(
+              socket_.get(), url_for_cookies, cookie, &options))
+        continue;
+
+      callback_pending_ = true;
       socket_->context()->cookie_store()->SetCookieWithOptionsAsync(
-          url, cookie, options,
-          base::Bind(&WebSocketJob::SaveCookieCallback,
+          url_for_cookies, cookie, options,
+          base::Bind(&WebSocketJob::OnCookieSaved,
                      weak_ptr_factory_.GetWeakPtr()));
-    } else {
-      SaveNextCookie();
     }
   }
+
+  save_next_cookie_running_ = false;
+
+  if (callback_pending_)
+    return;
+
+  response_cookies_.clear();
+  response_cookies_save_index_ = 0;
+
+  NotifyHeadersComplete();
 }
 
-void WebSocketJob::SaveCookieCallback(bool cookie_status) {
+void WebSocketJob::OnCookieSaved(bool cookie_status) {
+  // Tell the caller of SetCookieWithOptionsAsync() that this completion
+  // callback is invoked.
+  // - If the caller checks callback_pending earlier than this callback, the
+  //   caller exits to let this method continue iteration.
+  // - Otherwise, the caller continues iteration.
+  callback_pending_ = false;
+
+  // Resume SaveNextCookie if the caller of SetCookieWithOptionsAsync() exited
+  // the loop. Otherwise, return.
+  if (save_next_cookie_running_)
+    return;
+
   SaveNextCookie();
 }
 
@@ -562,15 +591,16 @@ int WebSocketJob::TrySpdyStream() {
   if (!session.get())
     return OK;
   SpdySessionPool* spdy_pool = session->spdy_session_pool();
-  const HostPortProxyPair pair(HostPortPair::FromURL(socket_->url()),
-                               socket_->proxy_server());
-  if (!spdy_pool->HasSession(pair))
+  PrivacyMode privacy_mode = socket_->privacy_mode();
+  const SpdySessionKey key(HostPortPair::FromURL(socket_->url()),
+                               socket_->proxy_server(), privacy_mode);
+  if (!spdy_pool->HasSession(key))
     return OK;
 
   // Forbid wss downgrade to SPDY without SSL.
   // TODO(toyoshim): Does it realize the same policy with HTTP?
   scoped_refptr<SpdySession> spdy_session =
-      spdy_pool->Get(pair, *socket_->net_log());
+      spdy_pool->Get(key, *socket_->net_log());
   SSLInfo ssl_info;
   bool was_npn_negotiated;
   NextProto protocol_negotiated = kProtoUnknown;
@@ -581,12 +611,13 @@ int WebSocketJob::TrySpdyStream() {
 
   // Create SpdyWebSocketStream.
   spdy_protocol_version_ = spdy_session->GetProtocolVersion();
-  spdy_websocket_stream_.reset(new SpdyWebSocketStream(spdy_session, this));
+  spdy_websocket_stream_.reset(
+      new SpdyWebSocketStream(spdy_session.get(), this));
 
   int result = spdy_websocket_stream_->InitializeStream(
       socket_->url(), MEDIUM, *socket_->net_log());
   if (result == OK) {
-    OnConnected(socket_, kMaxPendingSendAllowed);
+    OnConnected(socket_.get(), kMaxPendingSendAllowed);
     return ERR_PROTOCOL_SWITCHED;
   }
   if (result != ERR_IO_PENDING) {
@@ -610,7 +641,7 @@ void WebSocketJob::Wakeup() {
     return;
   waiting_ = false;
   DCHECK(!callback_.is_null());
-  MessageLoopForIO::current()->PostTask(
+  base::MessageLoopForIO::current()->PostTask(
       FROM_HERE,
       base::Bind(&WebSocketJob::RetryPendingIO,
                  weak_ptr_factory_.GetWeakPtr()));
@@ -651,7 +682,7 @@ void WebSocketJob::CloseInternal() {
 }
 
 void WebSocketJob::SendPending() {
-  if (current_send_buffer_)
+  if (current_send_buffer_.get())
     return;
 
   // Current buffer has been sent. Try next if any.
@@ -664,8 +695,8 @@ void WebSocketJob::SendPending() {
 
   scoped_refptr<IOBufferWithSize> next_buffer = send_buffer_queue_.front();
   send_buffer_queue_.pop_front();
-  current_send_buffer_ = new DrainableIOBuffer(next_buffer,
-                                               next_buffer->size());
+  current_send_buffer_ =
+      new DrainableIOBuffer(next_buffer.get(), next_buffer->size());
   SendDataInternal(current_send_buffer_->data(),
                    current_send_buffer_->BytesRemaining());
 }

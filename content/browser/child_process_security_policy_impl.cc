@@ -10,7 +10,7 @@
 #include "base/metrics/histogram.h"
 #include "base/platform_file.h"
 #include "base/stl_util.h"
-#include "base/string_util.h"
+#include "base/strings/string_util.h"
 #include "content/browser/site_instance_impl.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/render_process_host.h"
@@ -20,7 +20,7 @@
 #include "googleurl/src/gurl.h"
 #include "net/base/net_util.h"
 #include "net/url_request/url_request.h"
-#include "webkit/fileapi/isolated_context.h"
+#include "webkit/browser/fileapi/isolated_context.h"
 
 namespace content {
 
@@ -54,7 +54,8 @@ class ChildProcessSecurityPolicyImpl::SecurityState {
  public:
   SecurityState()
     : enabled_bindings_(0),
-      can_read_raw_cookies_(false) { }
+      can_read_raw_cookies_(false),
+      universal_access_(false) { }
 
   ~SecurityState() {
     scheme_policy_.clear();
@@ -67,6 +68,10 @@ class ChildProcessSecurityPolicyImpl::SecurityState {
     }
     UMA_HISTOGRAM_COUNTS("ChildProcessSecurityPolicy.PerChildFilePermissions",
                          file_permissions_.size());
+  }
+
+  void GrantUniversalAccess() {
+    universal_access_ = true;
   }
 
   // Grant permission to request URLs with the specified scheme.
@@ -131,6 +136,9 @@ class ChildProcessSecurityPolicyImpl::SecurityState {
 
   // Determine whether permission has been granted to request |url|.
   bool CanRequestURL(const GURL& url) {
+    if (universal_access_)
+      return true;
+
     // Having permission to a scheme implies permssion to all of its URLs.
     SchemeMap::const_iterator judgment(scheme_policy_.find(url.scheme()));
     if (judgment != scheme_policy_.end())
@@ -149,6 +157,9 @@ class ChildProcessSecurityPolicyImpl::SecurityState {
 
   // Determine if the certain permissions have been granted to a file.
   bool HasPermissionsForFile(const base::FilePath& file, int permissions) {
+    if (universal_access_)
+      return true;
+
     if (!permissions || file.empty() || !file.IsAbsolute())
       return false;
     base::FilePath current_path = file.StripTrailingSeparators();
@@ -173,6 +184,9 @@ class ChildProcessSecurityPolicyImpl::SecurityState {
   }
 
   bool CanLoadPage(const GURL& gurl) {
+    if (universal_access_)
+      return true;
+
     if (origin_lock_.is_empty())
       return true;
 
@@ -184,6 +198,9 @@ class ChildProcessSecurityPolicyImpl::SecurityState {
   }
 
   bool CanAccessCookiesForOrigin(const GURL& gurl) {
+    if (universal_access_)
+      return true;
+
     if (origin_lock_.is_empty())
       return true;
     // TODO(creis): We must pass the valid browser_context to convert hosted
@@ -194,6 +211,9 @@ class ChildProcessSecurityPolicyImpl::SecurityState {
   }
 
   bool CanSendCookiesForOrigin(const GURL& gurl) {
+    if (universal_access_)
+      return true;
+
     // We only block cross-site cookies on network requests if the
     // --enable-strict-site-isolation flag is passed.  This is expected to break
     // compatibility with many sites.  The similar --site-per-process flag only
@@ -221,6 +241,9 @@ class ChildProcessSecurityPolicyImpl::SecurityState {
   }
 
   bool can_read_raw_cookies() const {
+    if (universal_access_)
+      return true;
+
     return can_read_raw_cookies_;
   }
 
@@ -254,6 +277,8 @@ class ChildProcessSecurityPolicyImpl::SecurityState {
   // The set of isolated filesystems the child process is permitted to access.
   FileSystemMap filesystem_permissions_;
 
+  bool universal_access_;
+
   DISALLOW_COPY_AND_ASSIGN(SecurityState);
 };
 
@@ -270,7 +295,7 @@ ChildProcessSecurityPolicyImpl::ChildProcessSecurityPolicyImpl() {
   // We know about the following pseudo schemes and treat them specially.
   RegisterPseudoScheme(chrome::kAboutScheme);
   RegisterPseudoScheme(chrome::kJavaScriptScheme);
-  RegisterPseudoScheme(chrome::kViewSourceScheme);
+  RegisterPseudoScheme(kViewSourceScheme);
 }
 
 ChildProcessSecurityPolicyImpl::~ChildProcessSecurityPolicyImpl() {
@@ -345,16 +370,13 @@ bool ChildProcessSecurityPolicyImpl::IsPseudoScheme(
   return (pseudo_schemes_.find(scheme) != pseudo_schemes_.end());
 }
 
-void ChildProcessSecurityPolicyImpl::RegisterDisabledSchemes(
-    const std::set<std::string>& schemes) {
+void ChildProcessSecurityPolicyImpl::GrantUniversalAccess(
+    int child_id) {
   base::AutoLock lock(lock_);
-  disabled_schemes_ = schemes;
-}
-
-bool ChildProcessSecurityPolicyImpl::IsDisabledScheme(
-    const std::string& scheme) {
-  base::AutoLock lock(lock_);
-  return disabled_schemes_.find(scheme) != disabled_schemes_.end();
+  SecurityStateMap::iterator state = security_state_.find(child_id);
+  if (state == security_state_.end())
+    return;
+  state->second->GrantUniversalAccess();
 }
 
 void ChildProcessSecurityPolicyImpl::GrantRequestURL(
@@ -369,7 +391,7 @@ void ChildProcessSecurityPolicyImpl::GrantRequestURL(
   if (IsPseudoScheme(url.scheme())) {
     // The view-source scheme is a special case of a pseudo-URL that eventually
     // results in requesting its embedded URL.
-    if (url.SchemeIs(chrome::kViewSourceScheme)) {
+    if (url.SchemeIs(kViewSourceScheme)) {
       // URLs with the view-source scheme typically look like:
       //   view-source:http://www.google.com/a
       // In order to request these URLs, the child_id needs to be able to
@@ -527,27 +549,24 @@ bool ChildProcessSecurityPolicyImpl::CanRequestURL(
   if (!url.is_valid())
     return false;  // Can't request invalid URLs.
 
-  if (IsDisabledScheme(url.scheme()))
-    return false;  // The scheme is disabled by policy.
-
   if (IsWebSafeScheme(url.scheme()))
     return true;  // The scheme has been white-listed for every child process.
 
   if (IsPseudoScheme(url.scheme())) {
     // There are a number of special cases for pseudo schemes.
 
-    if (url.SchemeIs(chrome::kViewSourceScheme)) {
+    if (url.SchemeIs(kViewSourceScheme)) {
       // A view-source URL is allowed if the child process is permitted to
       // request the embedded URL. Careful to avoid pointless recursion.
       GURL child_url(url.path());
-      if (child_url.SchemeIs(chrome::kViewSourceScheme) &&
-          url.SchemeIs(chrome::kViewSourceScheme))
+      if (child_url.SchemeIs(kViewSourceScheme) &&
+          url.SchemeIs(kViewSourceScheme))
           return false;
 
       return CanRequestURL(child_id, child_url);
     }
 
-    if (LowerCaseEqualsASCII(url.spec(), chrome::kAboutBlankURL))
+    if (LowerCaseEqualsASCII(url.spec(), kAboutBlankURL))
       return true;  // Every child process can request <about:blank>.
 
     // URLs like <about:memory> and <about:crash> shouldn't be requestable by

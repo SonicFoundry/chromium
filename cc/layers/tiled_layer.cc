@@ -137,7 +137,7 @@ void TiledLayer::UpdateTileSizeAndTilingOption() {
   gfx::Size requested_size = is_tiled ? tile_size : content_bounds();
   const int max_size =
       layer_tree_host()->GetRendererCapabilities().max_texture_size;
-  requested_size.ClampToMax(gfx::Size(max_size, max_size));
+  requested_size.SetToMin(gfx::Size(max_size, max_size));
   SetTileSize(requested_size);
 }
 
@@ -175,6 +175,11 @@ bool TiledLayer::DrawsContent() const {
     return false;
 
   return true;
+}
+
+void TiledLayer::ReduceMemoryUsage() {
+  if (Updater())
+    Updater()->ReduceMemoryUsage();
 }
 
 void TiledLayer::SetIsMask(bool is_mask) {
@@ -517,6 +522,7 @@ void TiledLayer::UpdateTileTextures(gfx::Rect paint_rect,
         gfx::Rect paint_inside_tile_opaque_rect =
             gfx::IntersectRects(tile->opaque_rect(), tile_painted_rect);
         bool paint_inside_tile_opaque_rect_is_non_opaque =
+            !paint_inside_tile_opaque_rect.IsEmpty() &&
             !tile_painted_opaque_rect.Contains(paint_inside_tile_opaque_rect);
         bool opaque_paint_not_inside_tile_opaque_rect =
             !tile_painted_opaque_rect.IsEmpty() &&

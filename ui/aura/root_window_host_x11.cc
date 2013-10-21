@@ -18,12 +18,13 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "base/message_loop.h"
-#include "base/message_pump_aurax11.h"
+#include "base/debug/trace_event.h"
+#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_aurax11.h"
 #include "base/stl_util.h"
-#include "base/string_number_conversions.h"
-#include "base/string_util.h"
-#include "base/stringprintf.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkPostConfig.h"
@@ -41,7 +42,6 @@
 #include "ui/base/ui_base_switches.h"
 #include "ui/base/view_prop.h"
 #include "ui/base/x/device_list_cache_x.h"
-#include "ui/base/x/valuators.h"
 #include "ui/base/x/x11_util.h"
 #include "ui/compositor/dip_util.h"
 #include "ui/compositor/layer.h"
@@ -162,6 +162,8 @@ bool ShouldSendCharEventForKeyboardCode(ui::KeyboardCode keycode) {
       return false;
   }
 }
+
+bool default_override_redirect = false;
 
 }  // namespace
 
@@ -357,6 +359,7 @@ RootWindowHostX11::RootWindowHostX11(const gfx::Rect& bounds)
   XSetWindowAttributes swa;
   memset(&swa, 0, sizeof(swa));
   swa.background_pixmap = None;
+  swa.override_redirect = default_override_redirect;
   xwindow_ = XCreateWindow(
       xdisplay_, x_root_window_,
       bounds.x(), bounds.y(), bounds.width(), bounds.height(),
@@ -364,7 +367,7 @@ RootWindowHostX11::RootWindowHostX11(const gfx::Rect& bounds)
       CopyFromParent,  // depth
       InputOutput,
       CopyFromParent,  // visual
-      CWBackPixmap,
+      CWBackPixmap | CWOverrideRedirect,
       &swa);
   base::MessagePumpAuraX11::Current()->AddDispatcherForWindow(this, xwindow_);
   base::MessagePumpAuraX11::Current()->AddDispatcherForRootWindow(this);
@@ -411,12 +414,6 @@ RootWindowHostX11::RootWindowHostX11(const gfx::Rect& bounds)
                   PropModeReplace,
                   reinterpret_cast<unsigned char*>(&pid), 1);
 
-  // crbug.com/120229 - set the window title so gtalk can find the primary root
-  // window to broadcast.
-  // TODO(jhorwich) Remove this once Chrome supports window-based broadcasting.
-  static int root_window_number = 0;
-  std::string name = base::StringPrintf("aura_root_%d", root_window_number++);
-  XStoreName(xdisplay_, xwindow_, name.c_str());
   XRRSelectInput(xdisplay_, x_root_window_,
                  RRScreenChangeNotifyMask | RROutputChangeNotifyMask);
   Env::GetInstance()->AddObserver(this);
@@ -772,31 +769,7 @@ void RootWindowHostX11::UnConfineCursor() {
 }
 
 void RootWindowHostX11::OnCursorVisibilityChanged(bool show) {
-#if defined(OS_CHROMEOS)
-  // Temporarily pause tap-to-click when the cursor is hidden.
-  Atom prop = atom_cache_.GetAtom("Tap Paused");
-  unsigned char value = !show;
-  XIDeviceList dev_list =
-      ui::DeviceListCacheX::GetInstance()->GetXI2DeviceList(xdisplay_);
-
-  // Only slave pointer devices could possibly have tap-paused property.
-  for (int i = 0; i < dev_list.count; i++) {
-    if (dev_list[i].use == XISlavePointer) {
-      Atom old_type;
-      int old_format;
-      unsigned long old_nvalues, bytes;
-      unsigned char* data;
-      int result = XIGetProperty(xdisplay_, dev_list[i].deviceid, prop, 0, 0,
-                                 False, AnyPropertyType, &old_type, &old_format,
-                                 &old_nvalues, &bytes, &data);
-      if (result != Success)
-        continue;
-      XFree(data);
-      XIChangeProperty(xdisplay_, dev_list[i].deviceid, prop, XA_INTEGER, 8,
-                       PropModeReplace, &value, 1);
-    }
-  }
-#endif
+  SetCrOSTapPaused(!show);
 }
 
 void RootWindowHostX11::MoveCursorTo(const gfx::Point& location) {
@@ -911,6 +884,10 @@ void RootWindowHostX11::OnRootWindowInitialized(RootWindow* root_window) {
   if (!delegate_ || root_window != GetRootWindow())
     return;
   UpdateIsInternalDisplay();
+
+  // We have to enable Tap-to-click by default because the cursor is set to
+  // visible in Shell::InitRootWindowController.
+  SetCrOSTapPaused(false);
 }
 
 bool RootWindowHostX11::DispatchEventForRootWindow(
@@ -936,16 +913,17 @@ void RootWindowHostX11::DispatchXI2Event(const base::NativeEvent& event) {
   if (!factory->ShouldProcessXI2Event(xev))
     return;
 
+  TRACE_EVENT1("input", "RootWindowHostX11::DispatchXI2Event",
+               "event_latency_us",
+               (ui::EventTimeForNow() - ui::EventTimeFromNative(event)).
+                 InMicroseconds());
+
   ui::EventType type = ui::EventTypeFromNative(xev);
   XEvent last_event;
   int num_coalesced = 0;
 
   switch (type) {
     case ui::ET_TOUCH_MOVED:
-      num_coalesced = ui::CoalescePendingMotionEvents(xev, &last_event);
-      if (num_coalesced > 0)
-        xev = &last_event;
-      // fallthrough
     case ui::ET_TOUCH_PRESSED:
     case ui::ET_TOUCH_CANCELLED:
     case ui::ET_TOUCH_RELEASED: {
@@ -1023,6 +1001,8 @@ void RootWindowHostX11::DispatchXI2Event(const base::NativeEvent& event) {
       delegate_->OnHostScrollEvent(&scrollev);
       break;
     }
+    case ui::ET_UMA_DATA:
+      break;
     case ui::ET_UNKNOWN:
       break;
     default:
@@ -1088,6 +1068,34 @@ void RootWindowHostX11::UpdateIsInternalDisplay() {
   is_internal_display_ = display.IsInternal();
 }
 
+void RootWindowHostX11::SetCrOSTapPaused(bool state) {
+#if defined(OS_CHROMEOS)
+  // Temporarily pause tap-to-click when the cursor is hidden.
+  Atom prop = atom_cache_.GetAtom("Tap Paused");
+  unsigned char value = state;
+  XIDeviceList dev_list =
+      ui::DeviceListCacheX::GetInstance()->GetXI2DeviceList(xdisplay_);
+
+  // Only slave pointer devices could possibly have tap-paused property.
+  for (int i = 0; i < dev_list.count; i++) {
+    if (dev_list[i].use == XISlavePointer) {
+      Atom old_type;
+      int old_format;
+      unsigned long old_nvalues, bytes;
+      unsigned char* data;
+      int result = XIGetProperty(xdisplay_, dev_list[i].deviceid, prop, 0, 0,
+                                 False, AnyPropertyType, &old_type, &old_format,
+                                 &old_nvalues, &bytes, &data);
+      if (result != Success)
+        continue;
+      XFree(data);
+      XIChangeProperty(xdisplay_, dev_list[i].deviceid, prop, XA_INTEGER, 8,
+                       PropModeReplace, &value, 1);
+    }
+  }
+#endif
+}
+
 // static
 RootWindowHost* RootWindowHost::Create(const gfx::Rect& bounds) {
   return new RootWindowHostX11(bounds);
@@ -1099,4 +1107,11 @@ gfx::Size RootWindowHost::GetNativeScreenSize() {
   return gfx::Size(DisplayWidth(xdisplay, 0), DisplayHeight(xdisplay, 0));
 }
 
+namespace test {
+
+void SetUseOverrideRedirectWindowByDefault(bool override_redirect) {
+  default_override_redirect = override_redirect;
+}
+
+}  // namespace test
 }  // namespace aura

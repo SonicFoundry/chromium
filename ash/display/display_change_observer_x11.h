@@ -10,6 +10,7 @@
 // Xlib.h defines RootWindow.
 #undef RootWindow
 
+#include "ash/ash_export.h"
 #include "ash/shell_observer.h"
 #include "base/basictypes.h"
 #include "chromeos/display/output_configurator.h"
@@ -28,8 +29,8 @@ class DisplayChangeObserverX11
   virtual ~DisplayChangeObserverX11();
 
   // chromeos::OutputConfigurator::StateController overrides:
-  virtual chromeos::OutputState GetStateForOutputs(
-      const std::vector<chromeos::OutputInfo>& outputs) const OVERRIDE;
+  virtual chromeos::OutputState GetStateForDisplayIds(
+      const std::vector<int64>& outputs) const OVERRIDE;
 
   // Overriden from chromeos::OutputConfigurator::Observer:
   virtual void OnDisplayModeChanged() OVERRIDE;
@@ -46,6 +47,12 @@ class DisplayChangeObserverX11
 
   DISALLOW_COPY_AND_ASSIGN(DisplayChangeObserverX11);
 };
+
+// Returns true if the size info in the output_info isn't valid
+// and should be ignored. This is exposed for testing.
+// |mm_width| and |mm_height| are given in millimeters.
+ASH_EXPORT bool ShouldIgnoreSize(unsigned long mm_width,
+                                 unsigned long mm_height);
 
 }  // namespace internal
 }  // namespace ash

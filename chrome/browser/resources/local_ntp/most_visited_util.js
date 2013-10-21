@@ -17,18 +17,18 @@
  */
 function parseQueryParams(location) {
   var params = Object.create(null);
-  var query = decodeURI(location.search.substring(1));
+  var query = location.search.substring(1);
   var vars = query.split('&');
   for (var i = 0; i < vars.length; i++) {
     var pair = vars[i].split('=');
-    var k = pair[0];
+    var k = decodeURIComponent(pair[0]);
     if (k in params) {
       // Duplicate parameters are not allowed to prevent attackers who can
       // append things to |location| from getting their parameter values to
       // override legitimate ones.
       return Object.create(null);
     } else {
-      params[k] = pair[1];
+      params[k] = decodeURIComponent(pair[1]);
     }
   }
   return params;
@@ -53,8 +53,13 @@ function createMostVisitedLink(params, href, title, text) {
   if (styles.textShadow)
     link.style.textShadow = styles.textShadow;
   link.href = href;
+  if ('pos' in params && isFinite(params.pos))
+    link.ping = '/log.html?pos=' + params.pos;
   link.title = title;
   link.target = '_top';
+  // Exclude links from the tab order.  The tabIndex is added to the thumbnail
+  // parent container instead.
+  link.tabIndex = '-1';
   if (text)
     link.textContent = text;
   return link;

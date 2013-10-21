@@ -80,6 +80,8 @@ class TestRenderWidgetHostView : public RenderWidgetHostViewBase {
   virtual GdkEventButton* GetLastMouseDown() OVERRIDE;
   virtual gfx::NativeView BuildInputMethodsGtkMenu() OVERRIDE;
 #endif  // defined(TOOLKIT_GTK)
+  virtual void OnSwapCompositorFrame(
+      scoped_ptr<cc::CompositorFrame> frame) OVERRIDE;
 
   // RenderWidgetHostViewPort implementation.
   virtual void InitAsPopup(RenderWidgetHostView* parent_host_view,
@@ -95,8 +97,8 @@ class TestRenderWidgetHostView : public RenderWidgetHostViewBase {
   virtual void Blur() OVERRIDE {}
   virtual void SetIsLoading(bool is_loading) OVERRIDE {}
   virtual void UpdateCursor(const WebCursor& cursor) OVERRIDE {}
-  virtual void TextInputStateChanged(
-      const ViewHostMsg_TextInputState_Params& params) OVERRIDE {}
+  virtual void TextInputTypeChanged(ui::TextInputType type,
+                                    bool can_compose_inline) OVERRIDE {}
   virtual void ImeCancelComposition() OVERRIDE {}
   virtual void ImeCompositionRangeChanged(
       const ui::Range& range,
@@ -104,11 +106,12 @@ class TestRenderWidgetHostView : public RenderWidgetHostViewBase {
   virtual void DidUpdateBackingStore(
       const gfx::Rect& scroll_rect,
       const gfx::Vector2d& scroll_delta,
-      const std::vector<gfx::Rect>& rects) OVERRIDE {}
+      const std::vector<gfx::Rect>& rects,
+      const ui::LatencyInfo& latency_info) OVERRIDE {}
   virtual void RenderViewGone(base::TerminationStatus status,
                               int error_code) OVERRIDE;
   virtual void WillDestroyRenderWidget(RenderWidgetHost* rwh) { }
-  virtual void Destroy() OVERRIDE {}
+  virtual void Destroy() OVERRIDE;
   virtual void SetTooltipText(const string16& tooltip_text) OVERRIDE {}
   virtual void SelectionBoundsChanged(
       const ViewHostMsg_SelectionBounds_Params& params) OVERRIDE {}
@@ -164,14 +167,20 @@ class TestRenderWidgetHostView : public RenderWidgetHostViewBase {
 #endif
   virtual bool LockMouse() OVERRIDE;
   virtual void UnlockMouse() OVERRIDE;
+#if defined(OS_WIN) && defined(USE_AURA)
+  virtual void SetParentNativeViewAccessible(
+      gfx::NativeViewAccessible accessible_parent) OVERRIDE;
+#endif
 
   bool is_showing() const { return is_showing_; }
+  bool did_swap_compositor_frame() const { return did_swap_compositor_frame_; }
 
  protected:
   RenderWidgetHostImpl* rwh_;
 
  private:
   bool is_showing_;
+  bool did_swap_compositor_frame_;
 };
 
 #if defined(COMPILER_MSVC)
@@ -223,6 +232,7 @@ class TestRenderViewHost
                      RenderViewHostDelegate* delegate,
                      RenderWidgetHostDelegate* widget_delegate,
                      int routing_id,
+                     int main_frame_routing_id,
                      bool swapped_out);
   virtual ~TestRenderViewHost();
 
@@ -246,6 +256,11 @@ class TestRenderViewHost
   void SendNavigateWithOriginalRequestURL(
       int page_id, const GURL& url, const GURL& original_request_url);
 
+  void SendNavigateWithFile(
+      int page_id, const GURL& url, const base::FilePath& file_path);
+
+  void TestOnUpdateStateWithFile(
+      int process_id, const base::FilePath& file_path);
 
   void TestOnStartDragging(const WebDropData& drop_data);
 
@@ -307,12 +322,13 @@ class TestRenderViewHost
   // Calls OnNavigate on the RenderViewHost with the given information.
   // Sets the rest of the parameters in the message to the "typical" values.
   // This is a helper function for simulating the most common types of loads.
-  void SendNavigateWithParameters(int page_id,
-                                  const GURL& url,
-                                  PageTransition transition,
-                                  const GURL& original_request_url,
-                                  int response_code);
-
+  void SendNavigateWithParameters(
+      int page_id,
+      const GURL& url,
+      PageTransition transition,
+      const GURL& original_request_url,
+      int response_code,
+      const base::FilePath* file_path_for_history_item);
 
   // Tracks if the caller thinks if it created the RenderView. This is so we can
   // respond to IsRenderViewLive appropriately.

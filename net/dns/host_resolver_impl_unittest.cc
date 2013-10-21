@@ -12,8 +12,8 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_vector.h"
 #include "base/message_loop.h"
-#include "base/string_util.h"
-#include "base/stringprintf.h"
+#include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "base/test/test_timeouts.h"
@@ -257,12 +257,11 @@ class Request {
   int WaitForResult() {
     if (completed())
       return result_;
-    base::CancelableClosure closure(MessageLoop::QuitClosure());
-    MessageLoop::current()->PostDelayedTask(FROM_HERE,
-                                            closure.callback(),
-                                            TestTimeouts::action_max_timeout());
+    base::CancelableClosure closure(base::MessageLoop::QuitClosure());
+    base::MessageLoop::current()->PostDelayedTask(
+        FROM_HERE, closure.callback(), TestTimeouts::action_max_timeout());
     quit_on_complete_ = true;
-    MessageLoop::current()->Run();
+    base::MessageLoop::current()->Run();
     bool did_quit = !quit_on_complete_;
     quit_on_complete_ = false;
     closure.Cancel();
@@ -286,7 +285,7 @@ class Request {
     if (handler_)
       handler_->Handle(this);
     if (quit_on_complete_) {
-      MessageLoop::current()->Quit();
+      base::MessageLoop::current()->Quit();
       quit_on_complete_ = false;
     }
   }
@@ -437,17 +436,16 @@ class HostResolverImplTest : public testing::Test {
   };
 
   void CreateResolver() {
-    resolver_.reset(new HostResolverImpl(
-        HostCache::CreateDefaultCache(),
-        DefaultLimits(),
-        DefaultParams(proc_),
-        NULL));
+    resolver_.reset(new HostResolverImpl(HostCache::CreateDefaultCache(),
+                                         DefaultLimits(),
+                                         DefaultParams(proc_.get()),
+                                         NULL));
   }
 
   // This HostResolverImpl will only allow 1 outstanding resolve at a time and
   // perform no retries.
   void CreateSerialResolver() {
-    HostResolverImpl::ProcTaskParams params = DefaultParams(proc_);
+    HostResolverImpl::ProcTaskParams params = DefaultParams(proc_.get());
     params.max_retry_attempts = 0u;
     PrioritizedDispatcher::Limits limits(NUM_PRIORITIES, 1);
     resolver_.reset(new HostResolverImpl(
@@ -531,6 +529,17 @@ TEST_F(HostResolverImplTest, AsynchronousLookup) {
   EXPECT_EQ("just.testing", proc_->GetCaptureList()[0].hostname);
 }
 
+TEST_F(HostResolverImplTest, EmptyListMeansNameNotResolved) {
+  proc_->AddRuleForAllFamilies("just.testing", "");
+  proc_->SignalMultiple(1u);
+
+  Request* req = CreateRequest("just.testing", 80);
+  EXPECT_EQ(ERR_IO_PENDING, req->Resolve());
+  EXPECT_EQ(ERR_NAME_NOT_RESOLVED, req->WaitForResult());
+  EXPECT_EQ(0u, req->NumberOfAddresses());
+  EXPECT_EQ("just.testing", proc_->GetCaptureList()[0].hostname);
+}
+
 TEST_F(HostResolverImplTest, FailedAsynchronousLookup) {
   proc_->AddRuleForAllFamilies(std::string(),
                                "0.0.0.0");  // Default to failures.
@@ -590,6 +599,13 @@ TEST_F(HostResolverImplTest, NumericIPv6Address) {
 TEST_F(HostResolverImplTest, EmptyHost) {
   Request* req = CreateRequest(std::string(), 5555);
   EXPECT_EQ(ERR_NAME_NOT_RESOLVED, req->Resolve());
+}
+
+TEST_F(HostResolverImplTest, EmptyDotsHost) {
+  for (int i = 0; i < 16; ++i) {
+    Request* req = CreateRequest(std::string(i, '.'), 5555);
+    EXPECT_EQ(ERR_NAME_NOT_RESOLVED, req->Resolve());
+  }
 }
 
 TEST_F(HostResolverImplTest, LongHost) {
@@ -695,7 +711,8 @@ TEST_F(HostResolverImplTest, DeleteWithinCallback) {
 
       // Quit after returning from OnCompleted (to give it a chance at
       // incorrectly running the cancelled tasks).
-      MessageLoop::current()->PostTask(FROM_HERE, MessageLoop::QuitClosure());
+      base::MessageLoop::current()->PostTask(FROM_HERE,
+                                             base::MessageLoop::QuitClosure());
     }
   };
   set_handler(new MyHandler());
@@ -707,7 +724,7 @@ TEST_F(HostResolverImplTest, DeleteWithinCallback) {
   proc_->SignalMultiple(1u);  // One for "a".
 
   // |MyHandler| will send quit message once all the requests have finished.
-  MessageLoop::current()->Run();
+  base::MessageLoop::current()->Run();
 }
 
 TEST_F(HostResolverImplTest, DeleteWithinAbortedCallback) {
@@ -720,7 +737,8 @@ TEST_F(HostResolverImplTest, DeleteWithinAbortedCallback) {
 
       // Quit after returning from OnCompleted (to give it a chance at
       // incorrectly running the cancelled tasks).
-      MessageLoop::current()->PostTask(FROM_HERE, MessageLoop::QuitClosure());
+      base::MessageLoop::current()->PostTask(FROM_HERE,
+                                             base::MessageLoop::QuitClosure());
     }
   };
   set_handler(new MyHandler());
@@ -739,7 +757,7 @@ TEST_F(HostResolverImplTest, DeleteWithinAbortedCallback) {
   NetworkChangeNotifier::NotifyObserversOfIPAddressChangeForTests();
 
   // |MyHandler| will send quit message once all the requests have finished.
-  MessageLoop::current()->Run();
+  base::MessageLoop::current()->Run();
 
   EXPECT_EQ(ERR_NETWORK_CHANGED, requests_[0]->result());
   EXPECT_EQ(ERR_IO_PENDING, requests_[1]->result());
@@ -762,11 +780,10 @@ TEST_F(HostResolverImplTest, StartWithinCallback) {
   set_handler(new MyHandler());
 
   // Turn off caching for this host resolver.
-  resolver_.reset(new HostResolverImpl(
-      scoped_ptr<HostCache>(),
-      DefaultLimits(),
-      DefaultParams(proc_),
-      NULL));
+  resolver_.reset(new HostResolverImpl(scoped_ptr<HostCache>(),
+                                       DefaultLimits(),
+                                       DefaultParams(proc_.get()),
+                                       NULL));
 
   for (size_t i = 0; i < 4; ++i) {
     EXPECT_EQ(ERR_IO_PENDING, CreateRequest("a", 80 + i)->Resolve()) << i;
@@ -798,7 +815,7 @@ TEST_F(HostResolverImplTest, BypassCache) {
         EXPECT_EQ(ERR_IO_PENDING, CreateRequest(info)->Resolve());
       } else if (71 == req->info().port()) {
         // Test is done.
-        MessageLoop::current()->Quit();
+        base::MessageLoop::current()->Quit();
       } else {
         FAIL() << "Unexpected request";
       }
@@ -810,7 +827,7 @@ TEST_F(HostResolverImplTest, BypassCache) {
   proc_->SignalMultiple(3u);  // Only need two, but be generous.
 
   // |verifier| will send quit message once all the requests have finished.
-  MessageLoop::current()->Run();
+  base::MessageLoop::current()->Run();
   EXPECT_EQ(2u, proc_->GetCaptureList().size());
 }
 
@@ -827,7 +844,7 @@ TEST_F(HostResolverImplTest, FlushCacheOnIPAddressChange) {
 
   // Flush cache by triggering an IP address change.
   NetworkChangeNotifier::NotifyObserversOfIPAddressChangeForTests();
-  MessageLoop::current()->RunUntilIdle();  // Notification happens async.
+  base::MessageLoop::current()->RunUntilIdle();  // Notification happens async.
 
   // Resolve "host1" again -- this time it won't be served from cache, so it
   // will complete asynchronously.
@@ -844,7 +861,7 @@ TEST_F(HostResolverImplTest, AbortOnIPAddressChanged) {
   EXPECT_TRUE(proc_->WaitFor(1u));
   // Triggering an IP address change.
   NetworkChangeNotifier::NotifyObserversOfIPAddressChangeForTests();
-  MessageLoop::current()->RunUntilIdle();  // Notification happens async.
+  base::MessageLoop::current()->RunUntilIdle();  // Notification happens async.
   proc_->SignalAll();
 
   EXPECT_EQ(ERR_NETWORK_CHANGED, req->WaitForResult());
@@ -862,7 +879,7 @@ TEST_F(HostResolverImplTest, ObeyPoolConstraintsAfterIPAddressChange) {
   EXPECT_TRUE(proc_->WaitFor(1u));
   // Triggering an IP address change.
   NetworkChangeNotifier::NotifyObserversOfIPAddressChangeForTests();
-  MessageLoop::current()->RunUntilIdle();  // Notification happens async.
+  base::MessageLoop::current()->RunUntilIdle();  // Notification happens async.
   proc_->SignalMultiple(3u);  // Let the false-start go so that we can catch it.
 
   EXPECT_EQ(ERR_NETWORK_CHANGED, requests_[0]->WaitForResult());
@@ -906,7 +923,7 @@ TEST_F(HostResolverImplTest, AbortOnlyExistingRequestsOnIPAddressChange) {
   // Trigger an IP address change.
   NetworkChangeNotifier::NotifyObserversOfIPAddressChangeForTests();
   // This should abort all running jobs.
-  MessageLoop::current()->RunUntilIdle();
+  base::MessageLoop::current()->RunUntilIdle();
   EXPECT_EQ(ERR_NETWORK_CHANGED, requests_[0]->result());
   EXPECT_EQ(ERR_NETWORK_CHANGED, requests_[1]->result());
   EXPECT_EQ(ERR_NETWORK_CHANGED, requests_[2]->result());
@@ -1214,7 +1231,7 @@ TEST_F(HostResolverImplTest, MultipleAttempts) {
 
   resolver_proc->WaitForAllAttemptsToFinish(
       base::TimeDelta::FromMilliseconds(60000));
-  MessageLoop::current()->RunUntilIdle();
+  base::MessageLoop::current()->RunUntilIdle();
 
   EXPECT_EQ(resolver_proc->total_attempts_resolved(), kTotalAttempts);
   EXPECT_EQ(resolver_proc->resolved_attempt_number(), kAttemptNumberToResolve);
@@ -1251,11 +1268,10 @@ class HostResolverImplDnsTest : public HostResolverImplTest {
   }
 
   void CreateResolver() {
-    resolver_.reset(new HostResolverImpl(
-        HostCache::CreateDefaultCache(),
-        DefaultLimits(),
-        DefaultParams(proc_),
-        NULL));
+    resolver_.reset(new HostResolverImpl(HostCache::CreateDefaultCache(),
+                                         DefaultLimits(),
+                                         DefaultParams(proc_.get()),
+                                         NULL));
     resolver_->SetDnsClient(CreateMockDnsClient(DnsConfig(), dns_rules_));
   }
 
@@ -1269,7 +1285,7 @@ class HostResolverImplDnsTest : public HostResolverImplTest {
   void ChangeDnsConfig(const DnsConfig& config) {
     NetworkChangeNotifier::SetDnsConfig(config);
     // Notification is delivered asynchronously.
-    MessageLoop::current()->RunUntilIdle();
+    base::MessageLoop::current()->RunUntilIdle();
   }
 
   MockDnsClientRuleList dns_rules_;
@@ -1495,7 +1511,7 @@ TEST_F(HostResolverImplDnsTest, DualFamilyLocalhost) {
   scoped_refptr<HostResolverProc> proc(new SystemHostResolverProc());
   resolver_.reset(new HostResolverImpl(HostCache::CreateDefaultCache(),
                                        DefaultLimits(),
-                                       DefaultParams(proc),
+                                       DefaultParams(proc.get()),
                                        NULL));
   resolver_->SetDnsClient(CreateMockDnsClient(DnsConfig(), dns_rules_));
   resolver_->SetDefaultAddressFamily(ADDRESS_FAMILY_IPV4);

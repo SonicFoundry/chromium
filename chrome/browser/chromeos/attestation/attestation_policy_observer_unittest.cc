@@ -66,23 +66,28 @@ const uint8 kTestKeyData[] = {
 };
 
 void DBusCallbackFalse(const BoolDBusMethodCallback& callback) {
-  MessageLoop::current()->PostTask(
+  base::MessageLoop::current()->PostTask(
       FROM_HERE, base::Bind(callback, DBUS_METHOD_CALL_SUCCESS, false));
 }
 
 void DBusCallbackTrue(const BoolDBusMethodCallback& callback) {
-  MessageLoop::current()->PostTask(
+  base::MessageLoop::current()->PostTask(
       FROM_HERE, base::Bind(callback, DBUS_METHOD_CALL_SUCCESS, true));
 }
 
+void DBusCallbackError(const BoolDBusMethodCallback& callback) {
+  base::MessageLoop::current()->PostTask(
+      FROM_HERE, base::Bind(callback, DBUS_METHOD_CALL_FAILURE, false));
+}
+
 void CertCallbackSuccess(const AttestationFlow::CertificateCallback& callback) {
-  MessageLoop::current()->PostTask(
+  base::MessageLoop::current()->PostTask(
       FROM_HERE, base::Bind(callback, true, "fake_cert"));
 }
 
 void StatusCallbackSuccess(
     const policy::CloudPolicyClient::StatusCallback& callback) {
-  MessageLoop::current()->PostTask(
+  base::MessageLoop::current()->PostTask(
       FROM_HERE, base::Bind(callback, true));
 }
 
@@ -91,7 +96,7 @@ class FakeDBusData {
   explicit FakeDBusData(const std::string& data) : data_(data) {}
 
   void operator() (const CryptohomeClient::DataMethodCallback& callback) {
-    MessageLoop::current()->PostTask(
+    base::MessageLoop::current()->PostTask(
         FROM_HERE,
         base::Bind(callback, DBUS_METHOD_CALL_SUCCESS, true, data_));
   }
@@ -105,7 +110,7 @@ class FakeDBusData {
 class AttestationPolicyObserverTest : public ::testing::Test {
  public:
   AttestationPolicyObserverTest()
-      : message_loop_(MessageLoop::TYPE_UI),
+      : message_loop_(base::MessageLoop::TYPE_UI),
         ui_thread_(content::BrowserThread::UI, &message_loop_) {
     // Remove the real DeviceSettingsProvider and replace it with a stub.
     CrosSettings* cros_settings = CrosSettings::Get();
@@ -187,6 +192,7 @@ class AttestationPolicyObserverTest : public ::testing::Test {
     AttestationPolicyObserver observer(&policy_client_,
                                        &cryptohome_client_,
                                        &attestation_flow_);
+    observer.set_retry_delay(0);
     base::RunLoop().RunUntilIdle();
   }
 
@@ -235,7 +241,7 @@ class AttestationPolicyObserverTest : public ::testing::Test {
     return result;
   }
 
-  MessageLoop message_loop_;
+  base::MessageLoop message_loop_;
   content::TestBrowserThread ui_thread_;
   ScopedTestDeviceSettingsService test_device_settings_service_;
   ScopedTestCrosSettings test_cros_settings_;
@@ -292,6 +298,15 @@ TEST_F(AttestationPolicyObserverTest, KeyExistsCertExpired) {
 
 TEST_F(AttestationPolicyObserverTest, IgnoreUnknownCertFormat) {
   SetupMocks(MOCK_KEY_EXISTS | MOCK_KEY_UPLOADED, "unsupported");
+  Run();
+}
+
+TEST_F(AttestationPolicyObserverTest, DBusFailureRetry) {
+  SetupMocks(MOCK_NEW_KEY, "");
+  // Simulate a DBus failure.
+  EXPECT_CALL(cryptohome_client_, TpmAttestationDoesKeyExist(_, _, _))
+      .WillOnce(WithArgs<2>(Invoke(DBusCallbackError)))
+      .WillRepeatedly(WithArgs<2>(Invoke(DBusCallbackFalse)));
   Run();
 }
 

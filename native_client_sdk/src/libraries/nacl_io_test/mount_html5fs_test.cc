@@ -3,6 +3,7 @@
  * found in the LICENSE file.
  */
 
+#include <errno.h>
 #include <fcntl.h>
 #include <string.h>
 #include <gmock/gmock.h>
@@ -17,6 +18,7 @@
 #include "mock_util.h"
 #include "nacl_io/mount_html5fs.h"
 #include "nacl_io/osdirent.h"
+#include "nacl_io/osunistd.h"
 #include "pepper_interface_mock.h"
 
 using ::testing::_;
@@ -36,9 +38,7 @@ class MountHtml5FsMock : public MountHtml5Fs {
     Init(1, map, ppapi);
   }
 
-  ~MountHtml5FsMock() {
-    Destroy();
-  }
+  ~MountHtml5FsMock() {}
 };
 
 class MountHtml5FsTest : public ::testing::Test {
@@ -93,13 +93,13 @@ class MountHtml5FsNodeTest : public MountHtml5FsTest {
   virtual void SetUp();
   virtual void TearDown();
 
-  void SetUpNodeExpectations();
+  void SetUpNodeExpectations(PP_FileType file_type);
   void InitFilesystem();
   void InitNode();
 
  protected:
-  MountHtml5FsMock* mnt_;
-  MountNode* node_;
+  ScopedRef<MountHtml5FsMock> mnt_;
+  ScopedMountNode node_;
 
   FileRefInterfaceMock* fileref_;
   FileIoInterfaceMock* fileio_;
@@ -113,9 +113,7 @@ class MountHtml5FsNodeTest : public MountHtml5FsTest {
 const char MountHtml5FsNodeTest::path_[] = "/foo";
 
 MountHtml5FsNodeTest::MountHtml5FsNodeTest()
-    : mnt_(NULL),
-      node_(NULL),
-      fileref_(NULL),
+    : fileref_(NULL),
       fileio_(NULL) {
 }
 
@@ -125,53 +123,78 @@ void MountHtml5FsNodeTest::SetUp() {
 }
 
 void MountHtml5FsNodeTest::TearDown() {
-  if (mnt_) {
-    mnt_->ReleaseNode(node_);
-    delete mnt_;
-  }
+  node_.reset();
+  mnt_.reset();
 }
 
-void MountHtml5FsNodeTest::SetUpNodeExpectations() {
+void MountHtml5FsNodeTest::SetUpNodeExpectations(PP_FileType file_type) {
   // Open.
   EXPECT_CALL(*fileref_, Create(filesystem_resource_, StrEq(&path_[0])))
       .WillOnce(Return(fileref_resource_));
-  EXPECT_CALL(*fileio_, Create(instance_)).WillOnce(Return(fileio_resource_));
-  int32_t open_flags = PP_FILEOPENFLAG_READ | PP_FILEOPENFLAG_WRITE |
-      PP_FILEOPENFLAG_CREATE;
-  EXPECT_CALL(*fileio_,
-              Open(fileio_resource_, fileref_resource_, open_flags, _))
-      .WillOnce(Return(int32_t(PP_OK)));
+  PP_FileInfo info;
+  memset(&info, 0, sizeof(PP_FileInfo));
+  info.type = file_type;
+  EXPECT_CALL(*fileref_, Query(fileref_resource_, _, _))
+      .WillOnce(DoAll(SetArgPointee<1>(info),
+                      Return(int32_t(PP_OK))));
+  if (file_type != PP_FILETYPE_DIRECTORY) {
+    EXPECT_CALL(*fileio_, Create(instance_)).WillOnce(Return(fileio_resource_));
+    int32_t open_flags = PP_FILEOPENFLAG_READ | PP_FILEOPENFLAG_WRITE |
+        PP_FILEOPENFLAG_CREATE;
+    EXPECT_CALL(*fileio_,
+                Open(fileio_resource_, fileref_resource_, open_flags, _))
+        .WillOnce(Return(int32_t(PP_OK)));
+
+    // Close.
+    EXPECT_CALL(*fileio_, Close(fileio_resource_));
+    EXPECT_CALL(*ppapi_, ReleaseResource(fileio_resource_));
+    EXPECT_CALL(*fileio_, Flush(fileio_resource_, _));
+  }
 
   // Close.
-  EXPECT_CALL(*fileio_, Close(fileio_resource_));
   EXPECT_CALL(*ppapi_, ReleaseResource(fileref_resource_));
-  EXPECT_CALL(*ppapi_, ReleaseResource(fileio_resource_));
-  EXPECT_CALL(*fileio_, Flush(fileio_resource_, _));
 }
 
 void MountHtml5FsNodeTest::InitFilesystem() {
   StringMap_t map;
-  mnt_ = new MountHtml5FsMock(map, ppapi_);
+  mnt_.reset(new MountHtml5FsMock(map, ppapi_));
 }
 
 void MountHtml5FsNodeTest::InitNode() {
-  node_ = mnt_->Open(Path(path_), O_CREAT | O_RDWR);
-  ASSERT_NE((MountNode*)NULL, node_);
+  ASSERT_EQ(0, mnt_->Open(Path(path_), O_CREAT | O_RDWR, &node_));
+  ASSERT_NE((MountNode*)NULL, node_.get());
 }
 
 // Node test where the filesystem is opened synchronously; that is, the
 // creation of the mount blocks until the filesystem is ready.
 class MountHtml5FsNodeSyncTest : public MountHtml5FsNodeTest {
  public:
+  void SetUpForFileType(PP_FileType file_type);
+
   virtual void SetUp();
 };
 
-void MountHtml5FsNodeSyncTest::SetUp() {
+void MountHtml5FsNodeSyncTest::SetUpForFileType(PP_FileType file_type) {
   MountHtml5FsNodeTest::SetUp();
   SetUpFilesystemExpectations(PP_FILESYSTEMTYPE_LOCALPERSISTENT, 0);
   InitFilesystem();
-  SetUpNodeExpectations();
+  SetUpNodeExpectations(file_type);
   InitNode();
+}
+
+void MountHtml5FsNodeSyncTest::SetUp() {
+  SetUpForFileType(PP_FILETYPE_REGULAR);
+}
+
+// Node test where the filesystem is opened synchronously, and the node is a
+// directory.
+class MountHtml5FsNodeSyncDirTest : public MountHtml5FsNodeSyncTest {
+ public:
+  virtual void SetUp();
+};
+
+void MountHtml5FsNodeSyncDirTest::SetUp() {
+  SetUpForFileType(PP_FILETYPE_DIRECTORY);
 }
 
 void ReadDirectoryEntriesAction(const PP_ArrayOutput& output) {
@@ -224,7 +247,7 @@ void MountHtml5FsNodeAsyncTest::SetUp() {
   // true => asynchronous filesystem open.
   SetUpFilesystemExpectations(PP_FILESYSTEMTYPE_LOCALPERSISTENT, 0, true);
   InitFilesystem();
-  SetUpNodeExpectations();
+  SetUpNodeExpectations(PP_FILETYPE_REGULAR);
 
   // Signal the other thread to try opening a Node.
   pthread_mutex_lock(&mutex_);
@@ -288,7 +311,78 @@ TEST_F(MountHtml5FsTest, FilesystemType) {
   StringMap_t map;
   map["type"] = "PERSISTENT";
   map["expected_size"] = "100";
-  MountHtml5FsMock mnt(map, ppapi_);
+  ScopedRef<MountHtml5FsMock> mnt(new MountHtml5FsMock(map, ppapi_));
+}
+
+TEST_F(MountHtml5FsTest, Access) {
+  const char path[] = "/foo";
+  const PP_Resource fileref_resource = 235;
+  const PP_Resource fileio_resource = 236;
+
+  // These are the default values.
+  SetUpFilesystemExpectations(PP_FILESYSTEMTYPE_LOCALPERSISTENT, 0);
+
+  FileRefInterfaceMock* fileref = ppapi_->GetFileRefInterface();
+  FileIoInterfaceMock* fileio = ppapi_->GetFileIoInterface();
+
+  EXPECT_CALL(*fileref, Create(filesystem_resource_, StrEq(&path[0])))
+      .WillOnce(Return(fileref_resource));
+  PP_FileInfo info;
+  memset(&info, 0, sizeof(PP_FileInfo));
+  info.type = PP_FILETYPE_REGULAR;
+  EXPECT_CALL(*fileref, Query(fileref_resource, _, _))
+      .WillOnce(DoAll(SetArgPointee<1>(info),
+                      Return(int32_t(PP_OK))));
+  EXPECT_CALL(*fileio, Create(instance_)).WillOnce(Return(fileio_resource));
+  int32_t open_flags = PP_FILEOPENFLAG_READ;
+  EXPECT_CALL(*fileio,
+              Open(fileio_resource, fileref_resource, open_flags, _))
+      .WillOnce(Return(int32_t(PP_OK)));
+  EXPECT_CALL(*fileio, Close(fileio_resource));
+  EXPECT_CALL(*fileio, Flush(fileio_resource, _));
+  EXPECT_CALL(*ppapi_, ReleaseResource(fileio_resource));
+  EXPECT_CALL(*ppapi_, ReleaseResource(fileref_resource));
+
+  StringMap_t map;
+  ScopedRef<MountHtml5FsMock> mnt(new MountHtml5FsMock(map, ppapi_));
+
+  ASSERT_EQ(0, mnt->Access(Path(path), R_OK | W_OK | X_OK));
+}
+
+TEST_F(MountHtml5FsTest, AccessFileNotFound) {
+  const char path[] = "/foo";
+  const PP_Resource fileref_resource = 235;
+  const PP_Resource fileio_resource = 236;
+
+  // These are the default values.
+  SetUpFilesystemExpectations(PP_FILESYSTEMTYPE_LOCALPERSISTENT, 0);
+
+  FileRefInterfaceMock* fileref = ppapi_->GetFileRefInterface();
+  FileIoInterfaceMock* fileio = ppapi_->GetFileIoInterface();
+
+  // Report the file as missing.
+  EXPECT_CALL(*fileref, Create(filesystem_resource_, StrEq(&path[0])))
+      .WillOnce(Return(fileref_resource));
+  PP_FileInfo info;
+  memset(&info, 0, sizeof(PP_FileInfo));
+  info.type = PP_FILETYPE_REGULAR;
+  EXPECT_CALL(*fileref, Query(fileref_resource, _, _))
+      .WillOnce(DoAll(SetArgPointee<1>(info),
+                      Return(int32_t(PP_ERROR_FILENOTFOUND))));
+  EXPECT_CALL(*fileio, Create(instance_)).WillOnce(Return(fileio_resource));
+  int32_t open_flags = PP_FILEOPENFLAG_READ;
+  EXPECT_CALL(*fileio,
+              Open(fileio_resource, fileref_resource, open_flags, _))
+      .WillOnce(Return(int32_t(PP_ERROR_FILENOTFOUND)));
+  EXPECT_CALL(*fileio, Close(fileio_resource));
+  EXPECT_CALL(*fileio, Flush(fileio_resource, _));
+  EXPECT_CALL(*ppapi_, ReleaseResource(fileio_resource));
+  EXPECT_CALL(*ppapi_, ReleaseResource(fileref_resource));
+
+  StringMap_t map;
+  ScopedRef<MountHtml5FsMock> mnt(new MountHtml5FsMock(map, ppapi_));
+
+  ASSERT_EQ(ENOENT, mnt->Access(Path(path), F_OK));
 }
 
 TEST_F(MountHtml5FsTest, Mkdir) {
@@ -307,10 +401,10 @@ TEST_F(MountHtml5FsTest, Mkdir) {
   EXPECT_CALL(*ppapi_, ReleaseResource(fileref_resource));
 
   StringMap_t map;
-  MountHtml5FsMock mnt(map, ppapi_);
+  ScopedRef<MountHtml5FsMock> mnt(new MountHtml5FsMock(map, ppapi_));
 
   const int permissions = 0;  // unused.
-  int32_t result = mnt.Mkdir(Path(path), permissions);
+  int32_t result = mnt->Mkdir(Path(path), permissions);
   ASSERT_EQ(0, result);
 }
 
@@ -330,9 +424,9 @@ TEST_F(MountHtml5FsTest, Remove) {
   EXPECT_CALL(*ppapi_, ReleaseResource(fileref_resource));
 
   StringMap_t map;
-  MountHtml5FsMock mnt(map, ppapi_);
+  ScopedRef<MountHtml5FsMock> mnt(new MountHtml5FsMock(map, ppapi_));
 
-  int32_t result = mnt.Remove(Path(path));
+  int32_t result = mnt->Remove(Path(path));
   ASSERT_EQ(0, result);
 }
 
@@ -350,7 +444,8 @@ TEST_F(MountHtml5FsNodeSyncTest, Write) {
   EXPECT_CALL(*fileio_, Write(fileio_resource_, offset, &buffer[0], count, _))
       .WillOnce(Return(count));
 
-  int result = node_->Write(offset, &buffer, count);
+  int result = 0;
+  EXPECT_EQ(0, node_->Write(offset, &buffer, count, &result));
   EXPECT_EQ(count, result);
 }
 
@@ -362,7 +457,8 @@ TEST_F(MountHtml5FsNodeSyncTest, Read) {
   EXPECT_CALL(*fileio_, Read(fileio_resource_, offset, &buffer[0], count, _))
       .WillOnce(Return(count));
 
-  int result = node_->Read(offset, &buffer, count);
+  int result = 0;
+  EXPECT_EQ(0, node_->Read(offset, &buffer, count, &result));
   EXPECT_EQ(count, result);
 }
 
@@ -380,7 +476,7 @@ TEST_F(MountHtml5FsNodeSyncTest, GetStat) {
   info.last_access_time = access_time;
   info.last_modified_time = modified_time;
 
-  EXPECT_CALL(*fileio_, Query(fileio_resource_, _, _))
+  EXPECT_CALL(*fileref_, Query(fileref_resource_, _, _))
       .WillOnce(DoAll(SetArgPointee<1>(info),
                       Return(int32_t(PP_OK))));
 
@@ -395,16 +491,86 @@ TEST_F(MountHtml5FsNodeSyncTest, GetStat) {
   EXPECT_EQ(creation_time, statbuf.st_ctime);
 }
 
-TEST_F(MountHtml5FsNodeSyncTest, Truncate) {
+TEST_F(MountHtml5FsNodeSyncTest, FTruncate) {
   const int size = 123;
   EXPECT_CALL(*fileio_, SetLength(fileio_resource_, size, _))
       .WillOnce(Return(int32_t(PP_OK)));
 
-  int result = node_->Truncate(size);
+  int result = node_->FTruncate(size);
   EXPECT_EQ(0, result);
 }
 
 TEST_F(MountHtml5FsNodeSyncTest, GetDents) {
+  struct dirent dirents[2];
+  memset(&dirents[0], 0, sizeof(dirents));
+
+  // Should fail for regular files.
+  int result_bytes = 0;
+  EXPECT_EQ(ENOTDIR, node_->GetDents(0, &dirents[0], sizeof(dirent) * 2,
+        &result_bytes));
+  ASSERT_EQ(0, result_bytes);
+}
+
+TEST_F(MountHtml5FsNodeSyncDirTest, OpenAndClose) {
+}
+
+TEST_F(MountHtml5FsNodeSyncDirTest, Write) {
+  const int offset = 10;
+  const int count = 20;
+  const char buffer[30] = {0};
+
+  // Should fail for directories.
+  int result_bytes = 0;
+  EXPECT_EQ(EISDIR, node_->Write(offset, &buffer, count, &result_bytes));
+  ASSERT_EQ(0, result_bytes);
+}
+
+TEST_F(MountHtml5FsNodeSyncDirTest, Read) {
+  const int offset = 10;
+  const int count = 20;
+  char buffer[30] = {0};
+
+  // Should fail for directories.
+  int result_bytes = 0;
+  EXPECT_EQ(EISDIR, node_->Read(offset, &buffer, count, &result_bytes));
+  ASSERT_EQ(0, result_bytes);
+}
+
+TEST_F(MountHtml5FsNodeSyncDirTest, GetStat) {
+  const int creation_time = 1000;
+  const int access_time = 2000;
+  const int modified_time = 3000;
+
+  PP_FileInfo info;
+  info.size = 0;
+  info.type = PP_FILETYPE_DIRECTORY;
+  info.system_type = PP_FILESYSTEMTYPE_LOCALPERSISTENT;
+  info.creation_time = creation_time;
+  info.last_access_time = access_time;
+  info.last_modified_time = modified_time;
+
+  EXPECT_CALL(*fileref_, Query(fileref_resource_, _, _))
+      .WillOnce(DoAll(SetArgPointee<1>(info),
+                      Return(int32_t(PP_OK))));
+
+  struct stat statbuf;
+  int result = node_->GetStat(&statbuf);
+
+  EXPECT_EQ(0, result);
+  EXPECT_EQ(S_IFDIR | S_IWRITE | S_IREAD, statbuf.st_mode);
+  EXPECT_EQ(0, statbuf.st_size);
+  EXPECT_EQ(access_time, statbuf.st_atime);
+  EXPECT_EQ(modified_time, statbuf.st_mtime);
+  EXPECT_EQ(creation_time, statbuf.st_ctime);
+}
+
+TEST_F(MountHtml5FsNodeSyncDirTest, FTruncate) {
+  const int size = 123;
+  // Should fail for directories.
+  EXPECT_EQ(EISDIR, node_->FTruncate(size));
+}
+
+TEST_F(MountHtml5FsNodeSyncDirTest, GetDents) {
   const int fileref_resource_1 = 238;
   const int fileref_resource_2 = 239;
 
@@ -441,9 +607,21 @@ TEST_F(MountHtml5FsNodeSyncTest, GetDents) {
 
   struct dirent dirents[2];
   memset(&dirents[0], 0, sizeof(dirents));
-  int result = node_->GetDents(0, &dirents[0], sizeof(dirent) * 2);
+  // +2 to test a size that is not a multiple of sizeof(dirent).
+  // Expect it to round down.
+  int result_bytes = 0;
+  EXPECT_EQ(
+      0,
+      node_->GetDents(0, &dirents[0], sizeof(dirent) * 2 + 2, &result_bytes));
 
-  EXPECT_EQ(0, result);
-  EXPECT_STREQ(&fileref_name_cstr_1[0], &dirents[0].d_name[0]);
-  EXPECT_STREQ(&fileref_name_cstr_2[0], &dirents[1].d_name[0]);
+  ASSERT_EQ(sizeof(dirent) * 2, result_bytes);
+  EXPECT_LT(0, dirents[0].d_ino);  // 0 is an invalid inode number.
+  EXPECT_EQ(sizeof(dirent), dirents[0].d_off);
+  EXPECT_EQ(sizeof(dirent), dirents[0].d_reclen);
+  EXPECT_STREQ(fileref_name_cstr_1, dirents[0].d_name);
+  EXPECT_LT(0, dirents[1].d_ino);  // 0 is an invalid inode number.
+  EXPECT_EQ(sizeof(dirent), dirents[1].d_off);
+  EXPECT_EQ(sizeof(dirent), dirents[1].d_reclen);
+  EXPECT_STREQ(fileref_name_cstr_2, dirents[1].d_name);
 }
+

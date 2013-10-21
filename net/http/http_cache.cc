@@ -23,10 +23,11 @@
 #include "base/metrics/field_trial.h"
 #include "base/pickle.h"
 #include "base/stl_util.h"
-#include "base/string_number_conversions.h"
-#include "base/string_util.h"
-#include "base/stringprintf.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/threading/worker_pool.h"
+#include "net/base/cache_type.h"
 #include "net/base/io_buffer.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
@@ -52,10 +53,12 @@ void DeletePath(base::FilePath path) {
 namespace net {
 
 HttpCache::DefaultBackend::DefaultBackend(CacheType type,
+                                          BackendType backend_type,
                                           const base::FilePath& path,
                                           int max_bytes,
                                           base::MessageLoopProxy* thread)
     : type_(type),
+      backend_type_(backend_type),
       path_(path),
       max_bytes_(max_bytes),
       thread_(thread) {
@@ -65,15 +68,23 @@ HttpCache::DefaultBackend::~DefaultBackend() {}
 
 // static
 HttpCache::BackendFactory* HttpCache::DefaultBackend::InMemory(int max_bytes) {
-  return new DefaultBackend(MEMORY_CACHE, base::FilePath(), max_bytes, NULL);
+  return new DefaultBackend(MEMORY_CACHE, net::CACHE_BACKEND_DEFAULT,
+                            base::FilePath(), max_bytes, NULL);
 }
 
 int HttpCache::DefaultBackend::CreateBackend(
     NetLog* net_log, disk_cache::Backend** backend,
     const CompletionCallback& callback) {
   DCHECK_GE(max_bytes_, 0);
-  return disk_cache::CreateCacheBackend(type_, path_, max_bytes_, true,
-                                        thread_, net_log, backend, callback);
+  return disk_cache::CreateCacheBackend(type_,
+                                        backend_type_,
+                                        path_,
+                                        max_bytes_,
+                                        true,
+                                        thread_.get(),
+                                        net_log,
+                                        backend,
+                                        callback);
 }
 
 //-----------------------------------------------------------------------------
@@ -237,7 +248,8 @@ void HttpCache::MetadataWriter::VerifyResponse(int result) {
     return SelfDestroy();
 
   result = transaction_->WriteMetadata(
-      buf_, buf_len_,
+      buf_.get(),
+      buf_len_,
       base::Bind(&MetadataWriter::OnIOComplete, base::Unretained(this)));
   if (result != ERR_IO_PENDING)
     SelfDestroy();
@@ -961,11 +973,9 @@ void HttpCache::ProcessPendingQueue(ActiveEntry* entry) {
     return;
   entry->will_process_pending_queue = true;
 
-  MessageLoop::current()->PostTask(
+  base::MessageLoop::current()->PostTask(
       FROM_HERE,
-      base::Bind(&HttpCache::OnProcessPendingQueue,
-                 AsWeakPtr(),
-                 entry));
+      base::Bind(&HttpCache::OnProcessPendingQueue, AsWeakPtr(), entry));
 }
 
 void HttpCache::OnProcessPendingQueue(ActiveEntry* entry) {
@@ -1121,10 +1131,10 @@ void HttpCache::OnBackendCreated(int result, PendingOp* pending_op) {
     // go away from the callback.
     pending_op->writer = pending_item;
 
-    MessageLoop::current()->PostTask(
+    base::MessageLoop::current()->PostTask(
         FROM_HERE,
-        base::Bind(&HttpCache::OnBackendCreated, AsWeakPtr(),
-                   result, pending_op));
+        base::Bind(
+            &HttpCache::OnBackendCreated, AsWeakPtr(), result, pending_op));
   } else {
     building_backend_ = false;
     DeletePendingOp(pending_op);

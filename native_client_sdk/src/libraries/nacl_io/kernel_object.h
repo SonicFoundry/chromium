@@ -6,14 +6,16 @@
 #define LIBRARIES_NACL_IO_KERNEL_OBJECT_H_
 
 #include <pthread.h>
+
 #include <map>
 #include <string>
 #include <vector>
 
+#include "nacl_io/error.h"
+#include "nacl_io/kernel_handle.h"
+#include "nacl_io/mount.h"
 #include "nacl_io/path.h"
 
-class KernelHandle;
-class Mount;
 
 // KernelObject provides basic functionality for threadsafe
 // access to kernel objects such as file descriptors and
@@ -21,34 +23,29 @@ class Mount;
 // path resolution.
 class KernelObject {
  public:
-  struct MMapInfo {
-    MMapInfo();
-    MMapInfo(void* addr, size_t length, KernelHandle* handle);
-
-    void* addr;
-    size_t length;
-    KernelHandle* handle;
-  };
-
-  typedef std::vector<KernelHandle*> HandleMap_t;
-  typedef std::map<std::string, Mount*> MountMap_t;
-  typedef std::vector<MMapInfo> MMapInfoList_t;
+  typedef std::vector<ScopedKernelHandle> HandleMap_t;
+  typedef std::map<std::string, ScopedMount> MountMap_t;
 
   KernelObject();
   virtual ~KernelObject();
 
-  // Find the mount for the given path, and acquires it
-  Mount* AcquireMountAndPath(const std::string& relpath, Path *pobj);
-  void ReleaseMount(Mount* mnt);
+  // Find the mount for the given path, and acquires it.
+  // Assumes |out_mount| and |out_path| are non-NULL.
+  Error AcquireMountAndPath(const std::string& relpath,
+                            ScopedMount* out_mount,
+                            Path* out_path);
 
   // Convert from FD to KernelHandle, and acquire the handle.
-  KernelHandle* AcquireHandle(int fd);
-  void ReleaseHandle(KernelHandle* handle);
+  // Assumes |out_handle| is non-NULL.
+  Error AcquireHandle(int fd, ScopedKernelHandle* out_handle);
 
   // Allocate a new fd and assign the handle to it, while
   // ref counting the handle and associated mount.
-  int AllocateFD(KernelHandle* handle);
-  void FreeAndReassignFD(int fd, KernelHandle* handle);
+  // Assumes |handle| is non-NULL;
+  int AllocateFD(const ScopedKernelHandle& handle);
+
+  // Assumes |handle| is non-NULL;
+  void FreeAndReassignFD(int fd, const ScopedKernelHandle& handle);
   void FreeFD(int fd);
 
  protected:
@@ -59,7 +56,6 @@ class KernelObject {
 
   HandleMap_t handle_map_;
   MountMap_t mounts_;
-  MMapInfoList_t mmap_info_list_;
 
   // Kernel lock protects kernel wide resources such as the mount table...
   pthread_mutex_t kernel_lock_;

@@ -30,10 +30,12 @@ var privateHelpers = {
             self.onNetworkChange);
         done();
       };
-      var expectedState = expectedStates.pop();
-      assertEq(expectedState, properties.ConnectionState);
-      if (expectedStates.length == 0)
-        finishTest();
+      if (expectedStates.length > 0) {
+        var expectedState = expectedStates.pop();
+        assertEq(expectedState, properties.ConnectionState);
+        if (expectedStates.length == 0)
+          finishTest();
+      }
     };
     this.onNetworkChange = function(changes) {
       assertEq([network], changes);
@@ -60,17 +62,21 @@ var availableTests = [
     chrome.networkingPrivate.startConnect("stub_wifi2", callbackPass());
   },
   function startDisconnect() {
-    chrome.networkingPrivate.startDisconnect("stub_wifi2", callbackPass());
+    // Must connect to a network before we can disconnect from it.
+    chrome.networkingPrivate.startConnect("stub_wifi2", callbackPass(
+      function() {
+        chrome.networkingPrivate.startDisconnect("stub_wifi2", callbackPass());
+      }));
   },
   function startConnectNonexistent() {
     chrome.networkingPrivate.startConnect(
       "nonexistent_path",
-      callbackFail("Error.InvalidService"));
+      callbackFail("not-found"));
   },
   function startDisconnectNonexistent() {
     chrome.networkingPrivate.startDisconnect(
       "nonexistent_path",
-      callbackFail("Error.InvalidService"));
+      callbackFail("not-found"));
   },
   function startGetPropertiesNonexistent() {
     chrome.networkingPrivate.getProperties(
@@ -94,6 +100,7 @@ var availableTests = [
                     "Type": "WiFi",
                     "WiFi": {
                       "AutoConnect": false,
+                      "FrequencyList": [2400],
                       "Security": "WEP-PSK",
                       "SignalStrength": 0
                     }
@@ -105,6 +112,7 @@ var availableTests = [
                     "Type": "WiFi",
                     "WiFi": {
                       "AutoConnect": false,
+                      "FrequencyList": [2400, 5000],
                       "Security": "WPA-PSK",
                       "SignalStrength": 80
                     }
@@ -143,6 +151,7 @@ var availableTests = [
                     "Type": "WiFi",
                     "WiFi": {
                       "AutoConnect": false,
+                      "FrequencyList": [2400],
                       "Security": "WEP-PSK",
                       "SignalStrength": 0
                     }
@@ -154,6 +163,7 @@ var availableTests = [
                     "Type": "WiFi",
                     "WiFi": {
                       "AutoConnect": false,
+                      "FrequencyList": [2400, 5000],
                       "Security": "WPA-PSK",
                       "SignalStrength": 80
                     }
@@ -184,6 +194,8 @@ var availableTests = [
                    "Name": "wifi2_PSK",
                    "Type": "WiFi",
                    "WiFi": {
+                     "Frequency": 5000,
+                     "FrequencyList": [2400, 5000],
                      "SSID": "stub_wifi2",
                      "Security": "WPA-PSK",
                      "SignalStrength": 80
@@ -215,6 +227,14 @@ var availableTests = [
                      "AutoConnect": {
                        "Active": false,
                        "UserEditable": true
+                     },
+                     "Frequency" : {
+                       "Active": 5000,
+                       "Effective": "Unmanaged"
+                     },
+                     "FrequencyList" : {
+                       "Active": [2400, 5000],
+                       "Effective": "Unmanaged"
                      },
                      "Passphrase": {
                        "Effective": "UserSetting",
@@ -267,6 +287,7 @@ var availableTests = [
           "Type": "WiFi",
           "WiFi": {
             "AutoConnect": false,
+            "FrequencyList": [2400, 5000],
             "Security": "WPA-PSK",
             "SignalStrength": 80
           }
@@ -276,7 +297,7 @@ var availableTests = [
   function onNetworksChangedEventConnect() {
     var network = "stub_wifi2";
     var done = chrome.test.callbackAdded();
-    var expectedStates = ["Connected", "Connecting"];
+    var expectedStates = ["Connected"];
     var listener =
         new privateHelpers.watchForStateChanges(network, expectedStates, done);
     chrome.networkingPrivate.startConnect(network, callbackPass());

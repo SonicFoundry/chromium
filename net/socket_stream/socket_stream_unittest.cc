@@ -10,7 +10,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
-#include "base/utf_string_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "net/base/auth.h"
 #include "net/base/net_log.h"
 #include "net/base/net_log_unittest.h"
@@ -52,6 +52,9 @@ struct SocketStreamEvent {
 
 class SocketStreamEventRecorder : public SocketStream::Delegate {
  public:
+  // |callback| will be run when the OnClose() or OnError() method is called.
+  // For OnClose(), |callback| is called with OK. For OnError(), it's called
+  // with the error code.
   explicit SocketStreamEventRecorder(const CompletionCallback& callback)
       : callback_(callback) {}
   virtual ~SocketStreamEventRecorder() {}
@@ -179,6 +182,54 @@ class SocketStreamEventRecorder : public SocketStream::Delegate {
   AuthCredentials credentials_;
 
   DISALLOW_COPY_AND_ASSIGN(SocketStreamEventRecorder);
+};
+
+// This is used for the test OnErrorDetachDelegate.
+class SelfDeletingDelegate : public SocketStream::Delegate {
+ public:
+  // |callback| must cause the test message loop to exit when called.
+  explicit SelfDeletingDelegate(const CompletionCallback& callback)
+      : socket_stream_(), callback_(callback) {}
+
+  virtual ~SelfDeletingDelegate() {}
+
+  // Call DetachDelegate(), delete |this|, then run the callback.
+  virtual void OnError(const SocketStream* socket, int error) OVERRIDE {
+    // callback_ will be deleted when we delete |this|, so copy it to call it
+    // afterwards.
+    CompletionCallback callback = callback_;
+    socket_stream_->DetachDelegate();
+    delete this;
+    callback.Run(OK);
+  }
+
+  // This can't be passed in the constructor because this object needs to be
+  // created before SocketStream.
+  void set_socket_stream(const scoped_refptr<SocketStream>& socket_stream) {
+    socket_stream_ = socket_stream;
+    EXPECT_EQ(socket_stream_->delegate(), this);
+  }
+
+  virtual void OnConnected(SocketStream* socket, int max_pending_send_allowed)
+      OVERRIDE {
+    ADD_FAILURE() << "OnConnected() should not be called";
+  }
+  virtual void OnSentData(SocketStream* socket, int amount_sent) OVERRIDE {
+    ADD_FAILURE() << "OnSentData() should not be called";
+  }
+  virtual void OnReceivedData(SocketStream* socket, const char* data, int len)
+      OVERRIDE {
+    ADD_FAILURE() << "OnReceivedData() should not be called";
+  }
+  virtual void OnClose(SocketStream* socket) OVERRIDE {
+    ADD_FAILURE() << "OnClose() should not be called";
+  }
+
+ private:
+  scoped_refptr<SocketStream> socket_stream_;
+  const CompletionCallback callback_;
+
+  DISALLOW_COPY_AND_ASSIGN(SelfDeletingDelegate);
 };
 
 class TestURLRequestContextWithProxy : public TestURLRequestContext {
@@ -366,6 +417,41 @@ TEST_F(SocketStreamTest, CloseFlushPendingWrite) {
   EXPECT_EQ(SocketStreamEvent::EVENT_SENT_DATA, events[4].event_type);
   EXPECT_EQ(SocketStreamEvent::EVENT_SENT_DATA, events[5].event_type);
   EXPECT_EQ(SocketStreamEvent::EVENT_CLOSE, events[6].event_type);
+}
+
+TEST_F(SocketStreamTest, ResolveFailure) {
+  TestCompletionCallback test_callback;
+
+  scoped_ptr<SocketStreamEventRecorder> delegate(
+      new SocketStreamEventRecorder(test_callback.callback()));
+
+  scoped_refptr<SocketStream> socket_stream(
+      new SocketStream(GURL("ws://example.com/demo"), delegate.get()));
+
+  // Make resolver fail.
+  TestURLRequestContext context;
+  scoped_ptr<MockHostResolver> mock_host_resolver(
+      new MockHostResolver());
+  mock_host_resolver->rules()->AddSimulatedFailure("example.com");
+  context.set_host_resolver(mock_host_resolver.get());
+  socket_stream->set_context(&context);
+
+  // No read/write on socket is expected.
+  StaticSocketDataProvider data_provider(NULL, 0, NULL, 0);
+  MockClientSocketFactory* mock_socket_factory =
+      GetMockClientSocketFactory();
+  mock_socket_factory->AddSocketDataProvider(&data_provider);
+  socket_stream->SetClientSocketFactory(mock_socket_factory);
+
+  socket_stream->Connect();
+
+  test_callback.WaitForResult();
+
+  const std::vector<SocketStreamEvent>& events = delegate->GetSeenEvents();
+  ASSERT_EQ(2U, events.size());
+
+  EXPECT_EQ(SocketStreamEvent::EVENT_ERROR, events[0].event_type);
+  EXPECT_EQ(SocketStreamEvent::EVENT_CLOSE, events[1].event_type);
 }
 
 TEST_F(SocketStreamTest, ExceedMaxPendingSendAllowed) {
@@ -844,6 +930,36 @@ TEST_F(SocketStreamTest, BeforeConnectFailed) {
   EXPECT_EQ(SocketStreamEvent::EVENT_ERROR, events[0].event_type);
   EXPECT_EQ(ERR_ACCESS_DENIED, events[0].error_code);
   EXPECT_EQ(SocketStreamEvent::EVENT_CLOSE, events[1].event_type);
+}
+
+// Check that a connect failure, followed by the delegate calling DetachDelegate
+// and deleting itself in the OnError callback, is handled correctly.
+TEST_F(SocketStreamTest, OnErrorDetachDelegate) {
+  MockClientSocketFactory mock_socket_factory;
+  TestCompletionCallback test_callback;
+
+  // SelfDeletingDelegate is self-owning; we just need a pointer to it to
+  // connect it and the SocketStream.
+  SelfDeletingDelegate* delegate =
+      new SelfDeletingDelegate(test_callback.callback());
+  MockConnect mock_connect(ASYNC, ERR_CONNECTION_REFUSED);
+  StaticSocketDataProvider data;
+  data.set_connect_data(mock_connect);
+  mock_socket_factory.AddSocketDataProvider(&data);
+
+  TestURLRequestContext context;
+  scoped_refptr<SocketStream> socket_stream(
+      new SocketStream(GURL("ws://localhost:9998/echo"), delegate));
+  socket_stream->set_context(&context);
+  socket_stream->SetClientSocketFactory(&mock_socket_factory);
+  delegate->set_socket_stream(socket_stream);
+  // The delegate pointer will become invalid during the test. Set it to NULL to
+  // avoid holding a dangling pointer.
+  delegate = NULL;
+
+  socket_stream->Connect();
+
+  EXPECT_EQ(OK, test_callback.WaitForResult());
 }
 
 }  // namespace net

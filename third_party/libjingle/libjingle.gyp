@@ -44,6 +44,7 @@
       '../../testing/gtest/include',
       '../../third_party',
       '../../third_party/libyuv/include',
+      '../../third_party/usrsctp',
       '../../third_party/webrtc',
     ],
     'dependencies': [
@@ -261,8 +262,6 @@
         '<(libjingle_source)/talk/base/base64.cc',
         '<(libjingle_source)/talk/base/base64.h',
         '<(libjingle_source)/talk/base/basicdefs.h',
-        '<(libjingle_source)/talk/base/basicpacketsocketfactory.cc',
-        '<(libjingle_source)/talk/base/basicpacketsocketfactory.h',
         '<(libjingle_source)/talk/base/bytebuffer.cc',
         '<(libjingle_source)/talk/base/bytebuffer.h',
         '<(libjingle_source)/talk/base/byteorder.h',
@@ -390,6 +389,10 @@
         '<(libjingle_source)/talk/base/urlencode.h',
         '<(libjingle_source)/talk/base/worker.cc',
         '<(libjingle_source)/talk/base/worker.h',
+        '<(libjingle_source)/talk/p2p/base/asyncstuntcpsocket.cc',
+        '<(libjingle_source)/talk/p2p/base/asyncstuntcpsocket.h',
+        '<(libjingle_source)/talk/p2p/base/basicpacketsocketfactory.cc',
+        '<(libjingle_source)/talk/p2p/base/basicpacketsocketfactory.h',
         '<(libjingle_source)/talk/p2p/base/candidate.h',
         '<(libjingle_source)/talk/p2p/base/common.h',
         '<(libjingle_source)/talk/p2p/base/dtlstransport.h',
@@ -617,7 +620,7 @@
     ['enable_webrtc==1', {
       'targets': [
         {
-          'target_name': 'libjingle_webrtc',
+          'target_name': 'libjingle_webrtc_common',
           'type': 'static_library',
           'all_dependent_settings': {
             'conditions': [
@@ -627,12 +630,12 @@
             ],
           },
           'sources': [
-            'overrides/init_webrtc.cc',
-            'overrides/init_webrtc.h',
             'overrides/talk/media/webrtc/webrtcexport.h',
 
             '<(libjingle_source)/talk/app/webrtc/audiotrack.cc',
             '<(libjingle_source)/talk/app/webrtc/audiotrack.h',
+            '<(libjingle_source)/talk/app/webrtc/audiotrackrenderer.cc',
+            '<(libjingle_source)/talk/app/webrtc/audiotrackrenderer.h',
             '<(libjingle_source)/talk/app/webrtc/datachannel.cc',
             '<(libjingle_source)/talk/app/webrtc/datachannel.h',
             '<(libjingle_source)/talk/app/webrtc/dtmfsender.cc',
@@ -681,6 +684,7 @@
             '<(libjingle_source)/talk/app/webrtc/webrtcsdp.h',
             '<(libjingle_source)/talk/app/webrtc/webrtcsession.cc',
             '<(libjingle_source)/talk/app/webrtc/webrtcsession.h',
+            '<(libjingle_source)/talk/media/base/audiorenderer.h',
             '<(libjingle_source)/talk/media/base/capturemanager.cc',
             '<(libjingle_source)/talk/media/base/capturemanager.h',
             '<(libjingle_source)/talk/media/base/capturerenderadapter.cc',
@@ -767,6 +771,23 @@
                 'overrides/allocator_shim/allocator_stub.h',
               ],
             }],
+            # TODO(mallinath) - Enable SCTP for Android and iOS platforms.
+            ['OS!="android" and OS!="ios"', {
+              'conditions': [
+                ['OS!="win"', {
+                  'defines': [
+                    'HAVE_SCTP',
+                  ],
+                }],
+              ],
+              'sources': [
+                '<(libjingle_source)/talk/media/sctp/sctpdataengine.cc',
+                '<(libjingle_source)/talk/media/sctp/sctpdataengine.h',
+              ],
+              'dependencies': [
+                '<(DEPTH)/third_party/usrsctp/usrsctp.gyp:usrsctplib',
+              ],
+            }],
             ['enabled_libjingle_device_manager==1', {
               'sources!': [
                 '<(libjingle_source)/talk/media/devices/dummydevicemanager.cc',
@@ -848,7 +869,18 @@
             '<(DEPTH)/third_party/webrtc/modules/modules.gyp:video_render_module',
             'libjingle',
           ],
-        },  # target libjingle_webrtc
+        },  # target libjingle_webrtc_common
+        {
+          'target_name': 'libjingle_webrtc',
+          'type': 'static_library',
+          'sources': [
+            'overrides/init_webrtc.cc',
+            'overrides/init_webrtc.h',
+          ],
+          'dependencies': [
+            'libjingle_webrtc_common',
+          ],
+        },
         {
           'target_name': 'libpeerconnection',
           'type': '<(libpeer_target_type)',
@@ -861,18 +893,17 @@
           'dependencies': [
             '<(DEPTH)/third_party/webrtc/system_wrappers/source/system_wrappers.gyp:system_wrappers',
             '<(DEPTH)/third_party/webrtc/video_engine/video_engine.gyp:video_engine_core',
-            '<(DEPTH)/third_party/webrtc/voice_engine/voice_engine.gyp:voice_engine_core',
+            '<(DEPTH)/third_party/webrtc/voice_engine/voice_engine.gyp:voice_engine',
             '<@(libjingle_peerconnection_additional_deps)',
-            'libjingle_webrtc',
+            'libjingle_webrtc_common',
           ],
           'conditions': [
-            ['libpeer_allocator_shim==1 and '
-             'libpeer_target_type!="static_library"', {
+            ['libpeer_target_type!="static_library"', {
               'sources': [
                 'overrides/initialize_module.cc',
               ],
               'conditions': [
-                ['OS!="mac"', {
+                ['OS!="mac" and OS!="android"', {
                   'sources': [
                     'overrides/allocator_shim/allocator_proxy.cc',
                   ],
@@ -904,7 +935,7 @@
             ['OS=="mac" and libpeer_target_type!="static_library"', {
               'product_name': 'libpeerconnection',
             }],
-            ['OS=="android"', {
+            ['OS=="android" and "<(libpeer_target_type)"=="static_library"', {
               'standalone_static_library': 1,
             }],
             ['OS=="linux" and libpeer_target_type!="static_library"', {

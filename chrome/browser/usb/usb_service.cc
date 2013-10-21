@@ -14,6 +14,7 @@
 #include "third_party/libusb/src/libusb/libusb.h"
 
 #if defined(OS_CHROMEOS)
+#include "base/chromeos/chromeos_version.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/permission_broker_client.h"
 #endif  // defined(OS_CHROMEOS)
@@ -70,26 +71,34 @@ void UsbService::Cleanup() {
 
 void UsbService::FindDevices(const uint16 vendor_id,
                              const uint16 product_id,
+                             int interface_id,
                              vector<scoped_refptr<UsbDevice> >* devices,
                              const base::Callback<void()>& callback) {
   DCHECK(event_handler_) << "FindDevices called after event handler stopped.";
 #if defined(OS_CHROMEOS)
-  chromeos::PermissionBrokerClient* client =
-      chromeos::DBusThreadManager::Get()->GetPermissionBrokerClient();
-  DCHECK(client) << "Could not get permission broker client.";
-  if (!client) {
-    callback.Run();
-    return;
-  }
+  // ChromeOS builds on non-ChromeOS machines (dev) should not attempt to
+  // use permission broker.
+  if (base::chromeos::IsRunningOnChromeOS()) {
+    chromeos::PermissionBrokerClient* client =
+        chromeos::DBusThreadManager::Get()->GetPermissionBrokerClient();
+    DCHECK(client) << "Could not get permission broker client.";
+    if (!client) {
+      callback.Run();
+      return;
+    }
 
-  client->RequestUsbAccess(vendor_id,
-                           product_id,
-                           base::Bind(&UsbService::FindDevicesImpl,
-                                      base::Unretained(this),
-                                      vendor_id,
-                                      product_id,
-                                      devices,
-                                      callback));
+    client->RequestUsbAccess(vendor_id,
+                             product_id,
+                             interface_id,
+                             base::Bind(&UsbService::FindDevicesImpl,
+                                        base::Unretained(this),
+                                        vendor_id,
+                                        product_id,
+                                        devices,
+                                        callback));
+  } else {
+    FindDevicesImpl(vendor_id, product_id, devices, callback, true);
+  }
 #else
   FindDevicesImpl(vendor_id, product_id, devices, callback, true);
 #endif  // defined(OS_CHROMEOS)
@@ -193,5 +202,5 @@ UsbDevice* UsbService::LookupOrCreateDevice(PlatformUsbDevice device) {
     UsbDevice* wrapper = new UsbDevice(this, handle);
     devices_[device] = wrapper;
   }
-  return devices_[device];
+  return devices_[device].get();
 }

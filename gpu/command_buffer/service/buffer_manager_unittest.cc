@@ -108,11 +108,10 @@ class BufferManagerClientSideArraysTest : public BufferManagerTestBase {
   scoped_refptr<FeatureInfo> feature_info_;
 };
 
-#define EXPECT_MEMORY_ALLOCATION_CHANGE(old_size, new_size, pool) \
-    EXPECT_CALL(*mock_memory_tracker_, \
-                TrackMemoryAllocatedChange(old_size, new_size, pool)) \
-        .Times(1) \
-        .RetiresOnSaturation() \
+#define EXPECT_MEMORY_ALLOCATION_CHANGE(old_size, new_size, pool)   \
+  EXPECT_CALL(*mock_memory_tracker_.get(),                          \
+              TrackMemoryAllocatedChange(old_size, new_size, pool)) \
+      .Times(1).RetiresOnSaturation()
 
 TEST_F(BufferManagerTest, Basic) {
   const GLuint kClientBuffer1Id = 1;
@@ -359,12 +358,12 @@ TEST_F(BufferManagerTest, UseDeletedBuffer) {
   const uint32 data[] = {10, 9, 8, 7, 6, 5, 4, 3, 2, 1};
   manager_->CreateBuffer(kClientBufferId, kServiceBufferId);
   scoped_refptr<Buffer> buffer = manager_->GetBuffer(kClientBufferId);
-  ASSERT_TRUE(buffer != NULL);
-  manager_->SetTarget(buffer, GL_ARRAY_BUFFER);
+  ASSERT_TRUE(buffer.get() != NULL);
+  manager_->SetTarget(buffer.get(), GL_ARRAY_BUFFER);
   // Remove buffer
   manager_->RemoveBuffer(kClientBufferId);
   // Use it after removing
-  DoBufferData(buffer, sizeof(data), GL_STATIC_DRAW, NULL, GL_NO_ERROR);
+  DoBufferData(buffer.get(), sizeof(data), GL_STATIC_DRAW, NULL, GL_NO_ERROR);
   // Check that it gets deleted when the last reference is released.
   EXPECT_CALL(*gl_, DeleteBuffersARB(1, ::testing::Pointee(kServiceBufferId)))
       .Times(1)
@@ -386,6 +385,39 @@ TEST_F(BufferManagerClientSideArraysTest, StreamBuffersAreShadowed) {
   EXPECT_EQ(0, memcmp(data, buffer->GetRange(0, sizeof(data)), sizeof(data)));
   DoBufferData(buffer, sizeof(data), GL_DYNAMIC_DRAW, data, GL_NO_ERROR);
   EXPECT_FALSE(buffer->IsClientSideArray());
+}
+
+TEST_F(BufferManagerTest, MaxValueCacheClearedCorrectly) {
+  const GLuint kClientBufferId = 1;
+  const GLuint kServiceBufferId = 11;
+  const uint32 data1[] = {10, 9, 8, 7, 6, 5, 4, 3, 2, 1};
+  const uint32 data2[] = {11, 12, 13, 14, 15, 16, 17, 18, 19, 20};
+  const uint32 data3[] = {30, 29, 28};
+  manager_->CreateBuffer(kClientBufferId, kServiceBufferId);
+  Buffer* buffer = manager_->GetBuffer(kClientBufferId);
+  ASSERT_TRUE(buffer != NULL);
+  manager_->SetTarget(buffer, GL_ELEMENT_ARRAY_BUFFER);
+  GLuint max_value;
+  // Load the buffer with some initial data, and then get the maximum value for
+  // a range, which has the side effect of caching it.
+  DoBufferData(buffer, sizeof(data1), GL_STATIC_DRAW, data1, GL_NO_ERROR);
+  EXPECT_TRUE(
+      buffer->GetMaxValueForRange(0, 10, GL_UNSIGNED_INT, &max_value));
+  EXPECT_EQ(10u, max_value);
+  // Check that any cached values are invalidated if the buffer is reloaded
+  // with the same amount of data (but different content)
+  ASSERT_EQ(sizeof(data2), sizeof(data1));
+  DoBufferData(buffer, sizeof(data2), GL_STATIC_DRAW, data2, GL_NO_ERROR);
+  EXPECT_TRUE(
+      buffer->GetMaxValueForRange(0, 10, GL_UNSIGNED_INT, &max_value));
+  EXPECT_EQ(20u, max_value);
+  // Check that any cached values are invalidated if the buffer is reloaded
+  // with entirely different content.
+  ASSERT_NE(sizeof(data3), sizeof(data1));
+  DoBufferData(buffer, sizeof(data3), GL_STATIC_DRAW, data3, GL_NO_ERROR);
+  EXPECT_TRUE(
+      buffer->GetMaxValueForRange(0, 3, GL_UNSIGNED_INT, &max_value));
+  EXPECT_EQ(30u, max_value);
 }
 
 }  // namespace gles2

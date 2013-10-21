@@ -17,7 +17,6 @@ GLContextVirtual::GLContextVirtual(
   : GLContext(share_group),
     shared_context_(shared_context),
     display_(NULL),
-    state_restorer_(new GLStateRestorerImpl(decoder)),
     decoder_(decoder) {
 }
 
@@ -27,6 +26,8 @@ gfx::Display* GLContextVirtual::display() {
 
 bool GLContextVirtual::Initialize(
     gfx::GLSurface* compatible_surface, gfx::GpuPreference gpu_preference) {
+  SetGLStateRestorer(new GLStateRestorerImpl(decoder_));
+
   display_ = static_cast<gfx::Display*>(compatible_surface->GetDisplay());
 
   // Virtual contexts obviously can't make a context that is compatible
@@ -42,33 +43,36 @@ bool GLContextVirtual::Initialize(
   }
 
   shared_context_->SetupForVirtualization();
+  shared_context_->MakeVirtuallyCurrent(this, compatible_surface);
   return true;
 }
 
 void GLContextVirtual::Destroy() {
-  shared_context_->OnDestroyVirtualContext(this);
+  shared_context_->OnReleaseVirtuallyCurrent(this);
   shared_context_ = NULL;
   display_ = NULL;
 }
 
 bool GLContextVirtual::MakeCurrent(gfx::GLSurface* surface) {
-  if (decoder_.get() && decoder_->initialized())
-    shared_context_->MakeVirtuallyCurrent(this, surface);
-  else
-    shared_context_->MakeCurrent(surface);
-  return true;
+  if (decoder_.get())
+    return shared_context_->MakeVirtuallyCurrent(this, surface);
+
+  LOG(ERROR) << "Trying to make virtual context current without decoder.";
+  return false;
 }
 
 void GLContextVirtual::ReleaseCurrent(gfx::GLSurface* surface) {
-  if (IsCurrent(surface))
+  if (IsCurrent(surface)) {
+    shared_context_->OnReleaseVirtuallyCurrent(this);
     shared_context_->ReleaseCurrent(surface);
+  }
 }
 
 bool GLContextVirtual::IsCurrent(gfx::GLSurface* surface) {
   // If it's a real surface it needs to be current.
   if (surface &&
-      !surface->GetBackingFrameBufferObject() &&
-      !surface->IsOffscreen())
+      !surface->IsOffscreen() &&
+      !surface->GetBackingFrameBufferObject())
     return shared_context_->IsCurrent(surface);
 
   // Otherwise, only insure the context itself is current.
@@ -77,10 +81,6 @@ bool GLContextVirtual::IsCurrent(gfx::GLSurface* surface) {
 
 void* GLContextVirtual::GetHandle() {
   return shared_context_->GetHandle();
-}
-
-gfx::GLStateRestorer* GLContextVirtual::GetGLStateRestorer() {
-  return state_restorer_.get();
 }
 
 void GLContextVirtual::SetSwapInterval(int interval) {

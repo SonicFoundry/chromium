@@ -12,7 +12,7 @@
 #include "base/lazy_instance.h"
 #include "base/md5.h"
 #include "base/prefs/pref_service.h"
-#include "base/utf_string_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/value_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/download/download_prefs.h"
@@ -32,8 +32,8 @@
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
-#include "webkit/fileapi/file_system_util.h"
-#include "webkit/fileapi/isolated_context.h"
+#include "webkit/browser/fileapi/isolated_context.h"
+#include "webkit/common/fileapi/file_system_util.h"
 
 using base::Bind;
 using base::Callback;
@@ -318,7 +318,8 @@ void DevToolsFileHelper::AddUserConfirmedFileSystem(
   DictionaryPrefUpdate update(profile_->GetPrefs(),
                               prefs::kDevToolsFileSystemPaths);
   DictionaryValue* file_systems_paths_value = update.Get();
-  file_systems_paths_value->Set(file_system_path, Value::CreateNullValue());
+  file_systems_paths_value->SetWithoutPathExpansion(file_system_path,
+                                                    Value::CreateNullValue());
 
   FileSystem filesystem = CreateFileSystemStruct(web_contents_,
                                                  file_system_id,

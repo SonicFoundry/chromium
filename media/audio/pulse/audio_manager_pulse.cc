@@ -112,13 +112,13 @@ AudioParameters AudioManagerPulse::GetInputStreamParameters(
 AudioOutputStream* AudioManagerPulse::MakeLinearOutputStream(
     const AudioParameters& params) {
   DCHECK_EQ(AudioParameters::AUDIO_PCM_LINEAR, params.format());
-  return MakeOutputStream(params);
+  return MakeOutputStream(params, std::string());
 }
 
 AudioOutputStream* AudioManagerPulse::MakeLowLatencyOutputStream(
-    const AudioParameters& params) {
+    const AudioParameters& params, const std::string& input_device_id) {
   DCHECK_EQ(AudioParameters::AUDIO_PCM_LOW_LATENCY, params.format());
-  return MakeOutputStream(params);
+  return MakeOutputStream(params, input_device_id);
 }
 
 AudioInputStream* AudioManagerPulse::MakeLinearInputStream(
@@ -141,11 +141,15 @@ AudioParameters AudioManagerPulse::GetPreferredOutputStreamParameters(
   int buffer_size = kDefaultOutputBufferSize;
   int bits_per_sample = 16;
   int input_channels = 0;
+  int sample_rate;
   if (input_params.IsValid()) {
     bits_per_sample = input_params.bits_per_sample();
     channel_layout = input_params.channel_layout();
     input_channels = input_params.input_channels();
     buffer_size = std::min(buffer_size, input_params.frames_per_buffer());
+    sample_rate = input_params.sample_rate();
+  } else {
+    sample_rate = GetNativeSampleRate();
   }
 
   int user_buffer_size = GetUserBufferSize();
@@ -154,13 +158,13 @@ AudioParameters AudioManagerPulse::GetPreferredOutputStreamParameters(
 
   return AudioParameters(
       AudioParameters::AUDIO_PCM_LOW_LATENCY, channel_layout, input_channels,
-      GetNativeSampleRate(), bits_per_sample, buffer_size);
+      sample_rate, bits_per_sample, buffer_size);
 }
 
 AudioOutputStream* AudioManagerPulse::MakeOutputStream(
-    const AudioParameters& params) {
+    const AudioParameters& params, const std::string& input_device_id) {
   if (params.input_channels()) {
-    return new PulseAudioUnifiedStream(params, this);
+    return new PulseAudioUnifiedStream(params, input_device_id, this);
   }
 
   return new PulseAudioOutputStream(params, this);
@@ -204,9 +208,8 @@ bool AudioManagerPulse::Init() {
     return false;
 
   // Start the threaded mainloop.
-  if (pa_threaded_mainloop_start(input_mainloop_)) {
+  if (pa_threaded_mainloop_start(input_mainloop_))
     return false;
-  }
 
   // Lock the event loop object, effectively blocking the event loop thread
   // from processing events. This is necessary.
@@ -215,15 +218,14 @@ bool AudioManagerPulse::Init() {
   pa_mainloop_api* pa_mainloop_api =
       pa_threaded_mainloop_get_api(input_mainloop_);
   input_context_ = pa_context_new(pa_mainloop_api, "Chrome input");
-  DCHECK(input_context_) << "Failed to create PA context";
-  if (!input_context_) {
+  if (!input_context_)
     return false;
-  }
 
   pa_context_set_state_callback(input_context_, &pulse::ContextStateCallback,
                                 input_mainloop_);
   if (pa_context_connect(input_context_, NULL, PA_CONTEXT_NOAUTOSPAWN, NULL)) {
-    DLOG(ERROR) << "Failed to connect to the context";
+    DLOG(ERROR) << "Failed to connect to the context.  Error: "
+                << pa_strerror(pa_context_errno(input_context_));
     return false;
   }
 
@@ -232,9 +234,8 @@ bool AudioManagerPulse::Init() {
   // otherwise pa_threaded_mainloop_wait() will hang indefinitely.
   while (true) {
     pa_context_state_t context_state = pa_context_get_state(input_context_);
-    if (!PA_CONTEXT_IS_GOOD(context_state)) {
+    if (!PA_CONTEXT_IS_GOOD(context_state))
       return false;
-    }
     if (context_state == PA_CONTEXT_READY)
       break;
     pa_threaded_mainloop_wait(input_mainloop_);

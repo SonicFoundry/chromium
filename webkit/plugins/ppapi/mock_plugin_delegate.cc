@@ -5,10 +5,10 @@
 #include "webkit/plugins/ppapi/mock_plugin_delegate.h"
 
 #include "base/logging.h"
-#include "base/message_loop_proxy.h"
+#include "base/message_loop/message_loop_proxy.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/shared_impl/ppapi_preferences.h"
-#include "third_party/WebKit/Source/Platform/chromium/public/WebGamepads.h"
+#include "third_party/WebKit/public/platform/WebGamepads.h"
 #include "webkit/plugins/ppapi/mock_platform_image_2d.h"
 #include "webkit/plugins/ppapi/plugin_delegate.h"
 #include "webkit/plugins/ppapi/ppapi_plugin_instance.h"
@@ -88,9 +88,6 @@ PluginDelegate::PlatformGraphics2D* MockPluginDelegate::GetGraphics2D(
 MockPluginDelegate::PlatformContext3D* MockPluginDelegate::CreateContext3D() {
   return NULL;
 }
-void MockPluginDelegate::ReparentContext(
-    MockPluginDelegate::PlatformContext3D* context) {
-}
 
 MockPluginDelegate::PlatformVideoDecoder*
 MockPluginDelegate::CreateVideoDecoder(
@@ -102,6 +99,7 @@ MockPluginDelegate::CreateVideoDecoder(
 MockPluginDelegate::PlatformVideoCapture*
 MockPluginDelegate::CreateVideoCapture(
     const std::string& device_id,
+    const GURL& document_url,
     PlatformVideoCaptureEventHandler* handler){
   return NULL;
 }
@@ -123,6 +121,7 @@ MockPluginDelegate::PlatformAudioOutput* MockPluginDelegate::CreateAudioOutput(
 
 MockPluginDelegate::PlatformAudioInput* MockPluginDelegate::CreateAudioInput(
     const std::string& device_id,
+    const GURL& document_url,
     uint32_t sample_rate,
     uint32_t sample_count,
     PlatformAudioInputClient* client) {
@@ -173,30 +172,24 @@ GURL MockPluginDelegate::GetFileSystemRootUrl(
   return GURL();
 }
 
-bool MockPluginDelegate::OpenFileSystem(
-    const GURL& origin_url,
-    fileapi::FileSystemType type,
-    long long size,
-    fileapi::FileSystemCallbackDispatcher* dispatcher) {
-  return false;
-}
-
 bool MockPluginDelegate::MakeDirectory(
     const GURL& path,
     bool recursive,
-    fileapi::FileSystemCallbackDispatcher* dispatcher) {
+    const StatusCallback& callback) {
   return false;
 }
 
 bool MockPluginDelegate::Query(
     const GURL& path,
-    fileapi::FileSystemCallbackDispatcher* dispatcher) {
+    const MetadataCallback& success_callback,
+    const StatusCallback& error_callback) {
   return false;
 }
 
 bool MockPluginDelegate::ReadDirectoryEntries(
     const GURL& path,
-    fileapi::FileSystemCallbackDispatcher* dispatcher) {
+    const ReadDirectoryCallback& success_callback,
+    const StatusCallback& error_callback) {
   return false;
 }
 
@@ -204,33 +197,34 @@ bool MockPluginDelegate::Touch(
     const GURL& path,
     const base::Time& last_access_time,
     const base::Time& last_modified_time,
-    fileapi::FileSystemCallbackDispatcher* dispatcher) {
+    const StatusCallback& callback) {
   return false;
 }
 
 bool MockPluginDelegate::SetLength(
     const GURL& path,
     int64_t length,
-    fileapi::FileSystemCallbackDispatcher* dispatcher) {
+    const StatusCallback& callback) {
   return false;
 }
 
 bool MockPluginDelegate::Delete(
     const GURL& path,
-    fileapi::FileSystemCallbackDispatcher* dispatcher) {
+    const StatusCallback& callback) {
   return false;
 }
 
 bool MockPluginDelegate::Rename(
     const GURL& file_path,
     const GURL& new_file_path,
-    fileapi::FileSystemCallbackDispatcher* dispatcher) {
+    const StatusCallback& callback) {
   return false;
 }
 
 bool MockPluginDelegate::ReadDirectory(
     const GURL& directory_path,
-    fileapi::FileSystemCallbackDispatcher* dispatcher) {
+    const ReadDirectoryCallback& success_callback,
+    const StatusCallback& error_callback) {
   return false;
 }
 
@@ -289,9 +283,10 @@ void MockPluginDelegate::TCPSocketWrite(uint32 socket_id,
                                         const std::string& buffer) {
 }
 
-void MockPluginDelegate::TCPSocketSetBoolOption(uint32 socket_id,
-                                                PP_TCPSocketOption_Private name,
-                                                bool value) {
+void MockPluginDelegate::TCPSocketSetOption(
+    uint32 socket_id,
+    PP_TCPSocket_Option name,
+    const ::ppapi::SocketOptionData& value) {
 }
 
 void MockPluginDelegate::TCPSocketDisconnect(uint32 socket_id) {
@@ -416,6 +411,11 @@ IPC::PlatformFileForTransit MockPluginDelegate::ShareHandleWithRemote(
 
 bool MockPluginDelegate::IsRunningInProcess(PP_Instance instance) const {
   return false;
+}
+
+void MockPluginDelegate::HandleDocumentLoad(
+    PluginInstance* instance,
+    const WebKit::WebURLResponse& response) {
 }
 
 }  // namespace ppapi

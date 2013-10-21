@@ -6,10 +6,10 @@
 
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
-#include "base/string16.h"
-#include "base/string_util.h"
+#include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/utf_string_conversions.h"
+#include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_icon_set.h"
@@ -20,7 +20,7 @@
 #include "grit/generated_resources.h"
 #include "net/base/escape.h"
 #include "net/base/net_errors.h"
-#include "third_party/WebKit/Source/Platform/chromium/public/WebURLError.h"
+#include "third_party/WebKit/public/platform/WebURLError.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/webui/web_ui_util.h"
 #include "webkit/glue/webkit_glue.h"
@@ -64,7 +64,10 @@ struct LocalizedErrorMap {
   int error_code;
   unsigned int title_resource_id;
   unsigned int heading_resource_id;
+  // Detailed summary used when the error is in the main frame.
   unsigned int summary_resource_id;
+  // Short one sentence description shown on mouse over when the error is in
+  // a frame.
   unsigned int details_resource_id;
   int suggestions;  // Bitmap of SUGGEST_* values.
 };
@@ -408,8 +411,8 @@ bool LocaleIsRTL() {
 
 // Returns a dictionary containing the strings for the settings menu under the
 // wrench, and the advanced settings button.
-DictionaryValue* GetStandardMenuItemsText() {
-  DictionaryValue* standard_menu_items_text = new DictionaryValue();
+base::DictionaryValue* GetStandardMenuItemsText() {
+  base::DictionaryValue* standard_menu_items_text = new base::DictionaryValue();
   standard_menu_items_text->SetString("settingsTitle",
       l10n_util::GetStringUTF16(IDS_SETTINGS_TITLE));
   standard_menu_items_text->SetString("advancedTitle",
@@ -424,7 +427,7 @@ const char LocalizedError::kHttpErrorDomain[] = "http";
 void LocalizedError::GetStrings(const WebKit::WebURLError& error,
                                 bool is_post,
                                 const std::string& locale,
-                                DictionaryValue* error_strings) {
+                                base::DictionaryValue* error_strings) {
   bool rtl = LocaleIsRTL();
   error_strings->SetString("textdirection", rtl ? "rtl" : "ltr");
 
@@ -471,7 +474,7 @@ void LocalizedError::GetStrings(const WebKit::WebURLError& error,
   error_strings->SetString("heading",
       l10n_util::GetStringUTF16(options.heading_resource_id));
 
-  DictionaryValue* summary = new DictionaryValue;
+  base::DictionaryValue* summary = new base::DictionaryValue;
   summary->SetString("msg",
       l10n_util::GetStringUTF16(options.summary_resource_id));
   // TODO(tc): We want the unicode url and host here since they're being
@@ -540,17 +543,17 @@ void LocalizedError::GetStrings(const WebKit::WebURLError& error,
 
   if (options.suggestions & SUGGEST_RELOAD) {
     if (!is_post) {
-      DictionaryValue* reload_button = new DictionaryValue;
+      base::DictionaryValue* reload_button = new base::DictionaryValue;
       reload_button->SetString("msg",
           l10n_util::GetStringUTF16(IDS_ERRORPAGES_BUTTON_RELOAD));
-      reload_button->SetString("reloadUrl", failed_url_string);
+      reload_button->SetString("reloadUrl", failed_url.spec());
       error_strings->Set("reload", reload_button);
     } else {
       // If the page was created by a post, it can't be reloaded in the same
       // way, so just add a suggestion instead.
       // TODO(mmenke):  Make the reload button bring up the repost confirmation
       //                dialog for pages resulting from posts.
-      DictionaryValue* suggest_reload_repost = new DictionaryValue;
+      base::DictionaryValue* suggest_reload_repost = new base::DictionaryValue;
       suggest_reload_repost->SetString("header",
           l10n_util::GetStringUTF16(
               IDS_ERRORPAGES_SUGGESTION_RELOAD_REPOST_HEADER));
@@ -562,7 +565,7 @@ void LocalizedError::GetStrings(const WebKit::WebURLError& error,
   }
 
   if (options.suggestions & SUGGEST_CHECK_CONNECTION) {
-    DictionaryValue* suggest_check_connection = new DictionaryValue;
+    base::DictionaryValue* suggest_check_connection = new base::DictionaryValue;
     suggest_check_connection->SetString("header",
         l10n_util::GetStringUTF16(
             IDS_ERRORPAGES_SUGGESTION_CHECK_CONNECTION_HEADER));
@@ -573,7 +576,7 @@ void LocalizedError::GetStrings(const WebKit::WebURLError& error,
   }
 
   if (options.suggestions & SUGGEST_DNS_CONFIG) {
-    DictionaryValue* suggest_dns_config = new DictionaryValue;
+    base::DictionaryValue* suggest_dns_config = new base::DictionaryValue;
     suggest_dns_config->SetString("header",
         l10n_util::GetStringUTF16(
             IDS_ERRORPAGES_SUGGESTION_DNS_CONFIG_HEADER));
@@ -582,7 +585,8 @@ void LocalizedError::GetStrings(const WebKit::WebURLError& error,
             IDS_ERRORPAGES_SUGGESTION_DNS_CONFIG_BODY));
     suggestions->Append(suggest_dns_config);
 
-    DictionaryValue* suggest_network_prediction = GetStandardMenuItemsText();
+    base::DictionaryValue* suggest_network_prediction =
+        GetStandardMenuItemsText();
     suggest_network_prediction->SetString("header",
         l10n_util::GetStringUTF16(
             IDS_ERRORPAGES_SUGGESTION_NETWORK_PREDICTION_HEADER));
@@ -597,7 +601,7 @@ void LocalizedError::GetStrings(const WebKit::WebURLError& error,
   }
 
   if (options.suggestions & SUGGEST_FIREWALL_CONFIG) {
-    DictionaryValue* suggest_firewall_config = new DictionaryValue;
+    base::DictionaryValue* suggest_firewall_config = new base::DictionaryValue;
     suggest_firewall_config->SetString("header",
         l10n_util::GetStringUTF16(
             IDS_ERRORPAGES_SUGGESTION_FIREWALL_CONFIG_HEADER));
@@ -608,7 +612,7 @@ void LocalizedError::GetStrings(const WebKit::WebURLError& error,
   }
 
   if (options.suggestions & SUGGEST_PROXY_CONFIG) {
-    DictionaryValue* suggest_proxy_config = GetStandardMenuItemsText();
+    base::DictionaryValue* suggest_proxy_config = GetStandardMenuItemsText();
     suggest_proxy_config->SetString("header",
         l10n_util::GetStringUTF16(
             IDS_ERRORPAGES_SUGGESTION_PROXY_CONFIG_HEADER));
@@ -623,7 +627,8 @@ void LocalizedError::GetStrings(const WebKit::WebURLError& error,
   }
 
   if (options.suggestions & SUGGEST_DISABLE_EXTENSION) {
-    DictionaryValue* suggest_disable_extension = new DictionaryValue;
+    base::DictionaryValue* suggest_disable_extension =
+        new base::DictionaryValue;
     // There's only a header for this suggestion.
     suggest_disable_extension->SetString("header",
         l10n_util::GetStringUTF16(
@@ -632,7 +637,7 @@ void LocalizedError::GetStrings(const WebKit::WebURLError& error,
   }
 
   if (options.suggestions & SUGGEST_VIEW_POLICIES) {
-    DictionaryValue* suggest_view_policies = new DictionaryValue;
+    base::DictionaryValue* suggest_view_policies = new base::DictionaryValue;
     suggest_view_policies->SetString(
         "header",
         l10n_util::GetStringUTF16(
@@ -645,7 +650,8 @@ void LocalizedError::GetStrings(const WebKit::WebURLError& error,
   }
 
   if (options.suggestions & SUGGEST_CONTACT_ADMINISTRATOR) {
-    DictionaryValue* suggest_contant_administrator = new DictionaryValue;
+    base::DictionaryValue* suggest_contant_administrator =
+        new base::DictionaryValue;
     suggest_contant_administrator->SetString(
         "body",
         l10n_util::GetStringUTF16(
@@ -673,7 +679,7 @@ void LocalizedError::GetStrings(const WebKit::WebURLError& error,
       repl.SetQueryStr(query);
       learn_more_url = learn_more_url.ReplaceComponents(repl);
 
-      DictionaryValue* suggest_learn_more = new DictionaryValue;
+      base::DictionaryValue* suggest_learn_more = new base::DictionaryValue;
       // There's only a body for this suggestion.
       suggest_learn_more->SetString("body",
           l10n_util::GetStringUTF16(IDS_ERRORPAGES_SUGGESTION_LEARNMORE_BODY));
@@ -707,7 +713,7 @@ void LocalizedError::GetAppErrorStrings(
     const WebURLError& error,
     const GURL& display_url,
     const extensions::Extension* app,
-    DictionaryValue* error_strings) {
+    base::DictionaryValue* error_strings) {
   DCHECK(app);
 
   bool rtl = LocaleIsRTL();
@@ -735,7 +741,7 @@ void LocalizedError::GetAppErrorStrings(
 
 #if defined(OS_CHROMEOS)
   GURL learn_more_url(kAppWarningLearnMoreUrl);
-  DictionaryValue* suggest_learn_more = new DictionaryValue();
+  base::DictionaryValue* suggest_learn_more = new base::DictionaryValue();
   suggest_learn_more->SetString("msg",
                                 l10n_util::GetStringUTF16(
                                     IDS_ERRORPAGES_SUGGESTION_LEARNMORE_BODY));

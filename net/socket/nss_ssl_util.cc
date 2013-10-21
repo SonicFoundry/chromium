@@ -172,6 +172,8 @@ int MapNSSError(PRErrorCode err) {
       return ERR_SSL_CLIENT_AUTH_CERT_NO_PRIVATE_KEY;
     case SEC_ERROR_INVALID_KEY:
     case SSL_ERROR_SIGN_HASHES_FAILURE:
+      LOG(ERROR) << "ERR_SSL_CLIENT_AUTH_SIGNATURE_FAILED: NSS error " << err
+                 << ", OS error " << PR_GetOSError();
       return ERR_SSL_CLIENT_AUTH_SIGNATURE_FAILED;
     // A handshake (initial or renegotiation) may fail because some signature
     // (for example, the signature in the ServerKeyExchange message for an
@@ -193,6 +195,8 @@ int MapNSSError(PRErrorCode err) {
       return ERR_SSL_DECOMPRESSION_FAILURE_ALERT;
     case SSL_ERROR_BAD_MAC_ALERT:
       return ERR_SSL_BAD_RECORD_MAC_ALERT;
+    case SSL_ERROR_DECRYPT_ERROR_ALERT:
+      return ERR_SSL_DECRYPT_ERROR_ALERT;
     case SSL_ERROR_UNSAFE_NEGOTIATION:
       return ERR_SSL_UNSAFE_NEGOTIATION;
     case SSL_ERROR_WEAK_SERVER_EPHEMERAL_DH_KEY:
@@ -226,12 +230,12 @@ int MapNSSError(PRErrorCode err) {
 // Returns parameters to attach to the NetLog when we receive an error in
 // response to a call to an NSS function.  Used instead of
 // NetLogSSLErrorCallback with events of type TYPE_SSL_NSS_ERROR.
-Value* NetLogSSLFailedNSSFunctionCallback(
+base::Value* NetLogSSLFailedNSSFunctionCallback(
     const char* function,
     const char* param,
     int ssl_lib_error,
     NetLog::LogLevel /* log_level */) {
-  DictionaryValue* dict = new DictionaryValue();
+  base::DictionaryValue* dict = new base::DictionaryValue();
   dict->SetString("function", function);
   if (param[0] != '\0')
     dict->SetString("param", param);

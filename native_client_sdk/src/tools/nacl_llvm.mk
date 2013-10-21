@@ -6,17 +6,16 @@
 # GNU Make based build file.  For details on GNU Make see:
 #   http://www.gnu.org/software/make/manual/make.html
 #
-#
 
 
 #
 # Paths to Tools
 #
-PNACL_CC?=$(TC_PATH)/$(OSNAME)_x86_$(TOOLCHAIN)/newlib/bin/pnacl-clang -c
-PNACL_CXX?=$(TC_PATH)/$(OSNAME)_x86_$(TOOLCHAIN)/newlib/bin/pnacl-clang++ -c
-PNACL_LINK?=$(TC_PATH)/$(OSNAME)_x86_$(TOOLCHAIN)/newlib/bin/pnacl-clang++
-PNACL_LIB?=$(TC_PATH)/$(OSNAME)_x86_$(TOOLCHAIN)/newlib/bin/pnacl-ar r
-PNACL_STRIP?=$(TC_PATH)/$(OSNAME)_x86_$(TOOLCHAIN)/newlib/bin/pnacl-finalize
+PNACL_CC ?= $(TC_PATH)/$(OSNAME)_x86_$(TOOLCHAIN)/newlib/bin/pnacl-clang -c
+PNACL_CXX ?= $(TC_PATH)/$(OSNAME)_x86_$(TOOLCHAIN)/newlib/bin/pnacl-clang++ -c
+PNACL_LINK ?= $(TC_PATH)/$(OSNAME)_x86_$(TOOLCHAIN)/newlib/bin/pnacl-clang++
+PNACL_LIB ?= $(TC_PATH)/$(OSNAME)_x86_$(TOOLCHAIN)/newlib/bin/pnacl-ar
+PNACL_STRIP ?= $(TC_PATH)/$(OSNAME)_x86_$(TOOLCHAIN)/newlib/bin/pnacl-finalize
 
 #
 # Compile Macro
@@ -28,13 +27,13 @@ PNACL_STRIP?=$(TC_PATH)/$(OSNAME)_x86_$(TOOLCHAIN)/newlib/bin/pnacl-finalize
 define C_COMPILER_RULE
 -include $(call SRC_TO_DEP,$(1),_pnacl)
 $(call SRC_TO_OBJ,$(1),_pnacl): $(1) $(TOP_MAKE) | $(dir $(call SRC_TO_OBJ,$(1)))dir.stamp
-	$(call LOG,CC,$$@,$(PNACL_CC) -o $$@ -c $$< $(POSIX_FLAGS) $(2) $(NACL_CFLAGS))
+	$(call LOG,CC  ,$$@,$(PNACL_CC) -o $$@ -c $$< $(POSIX_FLAGS) $(2) $(NACL_CFLAGS))
 endef
 
 define CXX_COMPILER_RULE
--include $(call SRC_TO_DEP,$(1))
+-include $(call SRC_TO_DEP,$(1),_pnacl)
 $(call SRC_TO_OBJ,$(1),_pnacl): $(1) $(TOP_MAKE) | $(dir $(call SRC_TO_OBJ,$(1)))dir.stamp
-	$(call LOG,CXX,$$@,$(PNACL_CXX) -o $$@ -c $$< $(POSIX_FLAGS) $(2) $(NACL_CFLAGS))
+	$(call LOG,CXX ,$$@,$(PNACL_CXX) -o $$@ -c $$< $(POSIX_FLAGS) $(2) $(NACL_CFLAGS))
 endef
 
 
@@ -77,7 +76,7 @@ $(STAMPDIR)/$(1).stamp: $(LIBDIR)/$(TOOLCHAIN)/$(CONFIG)/lib$(1).a
 all: $(LIBDIR)/$(TOOLCHAIN)/$(CONFIG)/lib$(1).a
 $(LIBDIR)/$(TOOLCHAIN)/$(CONFIG)/lib$(1).a: $(foreach src,$(2),$(call SRC_TO_OBJ,$(src),_pnacl))
 	$(MKDIR) -p $$(dir $$@)
-	$(call LOG,LIB,$$@,$(PNACL_LIB) $$@ $$^ $(3))
+	$(call LOG,LIB,$$@,$(PNACL_LIB) -cr $$@ $$^ $(3))
 endef
 
 
@@ -140,7 +139,18 @@ endef
 NMF:=python $(NACL_SDK_ROOT)/tools/create_nmf.py
 
 define NMF_RULE
-all:$(OUTDIR)/$(1).nmf
-$(OUTDIR)/$(1).nmf : $(OUTDIR)/$(1).pexe
+all: $(OUTDIR)/$(1).nmf
+$(OUTDIR)/$(1).nmf: $(OUTDIR)/$(1).pexe
 	$(call LOG,CREATE_NMF,$$@,$(NMF) -o $$@ $$^ -s $(OUTDIR) $(2))
+endef
+
+#
+# HTML file generation
+#
+CREATE_HTML := python $(NACL_SDK_ROOT)/tools/create_html.py
+
+define HTML_RULE
+all: $(OUTDIR)/$(1).html
+$(OUTDIR)/$(1).html: $(foreach arch,$(ARCH_SUFFIXES),$(OUTDIR)/$(1)$(arch)) $(GLIBC_SO_LIST)
+	$(call LOG,CREATE_HTML,$$@,$(CREATE_HTML) -o $$@ $$^)
 endef

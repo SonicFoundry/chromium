@@ -4,9 +4,8 @@
 
 // An API that can be used to override the system's power management
 // features.
-[permissions=power]
 namespace power {
-  enum Level {
+  [noinline_doc] enum Level {
     // Prevent the system from sleeping in response to user inactivity.
     system,
 

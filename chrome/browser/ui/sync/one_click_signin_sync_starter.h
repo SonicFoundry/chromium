@@ -10,7 +10,9 @@
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/signin_tracker.h"
+#include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/host_desktop.h"
+#include "chrome/browser/ui/sync/profile_signin_confirmation_helper.h"
 
 class Browser;
 class ProfileSyncService;
@@ -22,7 +24,8 @@ class CloudPolicyClient;
 // Waits for successful singin notification from the signin manager and then
 // starts the sync machine.  Instances of this class delete themselves once
 // the job is done.
-class OneClickSigninSyncStarter : public SigninTracker::Observer {
+class OneClickSigninSyncStarter : public SigninTracker::Observer,
+                                  public chrome::BrowserListObserver {
  public:
   enum StartSyncMode {
     // Starts the process of signing the user in with the SigninManager, and
@@ -38,6 +41,19 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer {
     UNDO_SYNC
   };
 
+  enum ConfirmationRequired {
+    // No need to display a "post-signin" confirmation bubble (for example, if
+    // the user was doing a re-auth flow).
+    NO_CONFIRMATION,
+
+    // Signin flow redirected outside of trusted domains, so ask the user to
+    // confirm before signing in.
+    CONFIRM_UNTRUSTED_SIGNIN,
+
+    // Display a confirmation after signing in.
+    CONFIRM_AFTER_SIGNIN
+  };
+
   // |profile| must not be NULL, however |browser| can be. When using the
   // OneClickSigninSyncStarter from a browser, provide both.
   // If |display_confirmation| is true, the user will be prompted to confirm the
@@ -49,7 +65,10 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer {
                             const std::string& password,
                             StartSyncMode start_mode,
                             bool force_same_tab_navigation,
-                            bool display_confirmation);
+                            ConfirmationRequired display_confirmation);
+
+  // chrome::BrowserListObserver override.
+  virtual void OnBrowserRemoved(Browser* browser) OVERRIDE;
 
  private:
   virtual ~OneClickSigninSyncStarter();
@@ -59,12 +78,25 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer {
   void Initialize(Profile* profile, Browser* browser);
 
   // SigninTracker::Observer override.
-  virtual void GaiaCredentialsValid() OVERRIDE;
   virtual void SigninFailed(const GoogleServiceAuthError& error) OVERRIDE;
   virtual void SigninSuccess() OVERRIDE;
 
-
 #if defined(ENABLE_CONFIGURATION_POLICY)
+  // User input handler for the signin confirmation dialog.
+  class SigninDialogDelegate
+    : public ui::ProfileSigninConfirmationDelegate {
+   public:
+    SigninDialogDelegate(
+        base::WeakPtr<OneClickSigninSyncStarter> sync_starter);
+    virtual ~SigninDialogDelegate();
+    virtual void OnCancelSignin() OVERRIDE;
+    virtual void OnContinueSignin() OVERRIDE;
+    virtual void OnSigninWithNewProfile() OVERRIDE;
+   private:
+    base::WeakPtr<OneClickSigninSyncStarter> sync_starter_;
+  };
+  friend class SigninDialogDelegate;
+
   // Callback invoked once policy registration is complete. If registration
   // fails, |client| will be null.
   void OnRegisteredForPolicy(scoped_ptr<policy::CloudPolicyClient> client);
@@ -82,9 +114,10 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer {
   void LoadPolicyWithCachedClient();
 
   // Callback invoked once a profile is created, so we can complete the
-  // credentials transfer and load policy.
-  void CompleteSigninForNewProfile(Profile* profile,
-                                   Profile::CreateStatus status);
+  // credentials transfer, load policy, and open the first window.
+  void CompleteInitForNewProfile(chrome::HostDesktopType desktop_type,
+                                 Profile* profile,
+                                 Profile::CreateStatus status);
 
   // Cancels the in-progress signin for this profile.
   void CancelSigninAndDelete();
@@ -94,20 +127,36 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer {
   // confirmation is required (in which case we have to prompt the user first).
   void ConfirmSignin(const std::string& oauth_token);
 
-  // Displays confirmation UI to the user if confirmation_required_ is true,
-  // otherwise completes the pending signin process.
-  void SigninAfterSAMLConfirmation();
+  // Displays confirmation UI to the user if confirmation_required_ ==
+  // CONFIRM_UNTRUSTED_SIGNIN, otherwise completes the pending signin process.
+  void ConfirmAndSignin();
 
   // Callback invoked once the user has responded to the signin confirmation UI.
   // If response == UNDO_SYNC, the signin is cancelled, otherwise the pending
   // signin is completed.
-  void SigninConfirmationComplete(StartSyncMode response);
+  void UntrustedSigninConfirmed(StartSyncMode response);
 
+  // GetProfileSyncService returns non-NULL pointer if sync is enabled.
+  // There is a scenario when when ProfileSyncService discovers that sync is
+  // disabled during setup. In this case GetProfileSyncService will return NULL,
+  // but we still need to call PSS::SetSetupInProgress(false). For this purpose
+  // call FinishProfileSyncServiceSetup() function.
   ProfileSyncService* GetProfileSyncService();
 
-  // Displays the sync configuration UI, then frees this object.
+  void FinishProfileSyncServiceSetup();
+
+  // Displays the sync configuration UI.
   void ConfigureSync();
   void ShowSyncSettingsPageOnSameTab();
+
+  // Shows the post-signin confirmation bubble. If |custom_message| is empty,
+  // the default "You are signed in" message is displayed.
+  void DisplayFinalConfirmationBubble(const string16& custom_message);
+
+  // Makes sure browser_ points to a valid browser (opens a new browser if
+  // necessary). Useful in the case where the user has created a new Profile as
+  // part of the signin process.
+  void EnsureBrowser();
 
   Profile* profile_;
   Browser* browser_;
@@ -115,7 +164,7 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer {
   StartSyncMode start_mode_;
   chrome::HostDesktopType desktop_type_;
   bool force_same_tab_navigation_;
-  bool confirmation_required_;
+  ConfirmationRequired confirmation_required_;
   base::WeakPtrFactory<OneClickSigninSyncStarter> weak_pointer_factory_;
 
 #if defined(ENABLE_CONFIGURATION_POLICY)

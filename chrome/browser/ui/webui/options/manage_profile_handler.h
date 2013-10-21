@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/memory/weak_ptr.h"
+#include "base/prefs/pref_change_registrar.h"
 #include "chrome/browser/ui/webui/options/options_ui.h"
 
 namespace base {
@@ -70,10 +71,6 @@ class ManageProfileHandler : public OptionsPageUIHandler {
   // ]
   void SetProfileNameAndIcon(const base::ListValue* args);
 
-  // Callback for the "deleteProfile" message. Deletes the given profile.
-  // |args| is of the form: [ {string} profileFilePath ]
-  void DeleteProfile(const base::ListValue* args);
-
 #if defined(ENABLE_SETTINGS_APP)
   // Callback for the "switchAppListProfile" message. Asks the
   // app_list_controller to change the profile registered for the AppList.
@@ -90,6 +87,16 @@ class ManageProfileHandler : public OptionsPageUIHandler {
   // the profile has shortcuts and gets the result in |OnHasProfileShortcuts()|.
   // |args| is of the form: [ {string} profileFilePath ]
   void RequestHasProfileShortcuts(const base::ListValue* args);
+
+  // Callback for the "RequestCreateProfileUpdate" message.
+  // Sends the email address of the signed-in user, or an empty string if the
+  // user is not signed in. Also sends information about whether managed users
+  // may be created.
+  void RequestCreateProfileUpdate(const base::ListValue* args);
+
+  // When the pref allowing managed-user creation changes, sends the new value
+  // to the UI.
+  void OnCreateManagedUserPrefChange();
 
   // Callback invoked from the profile manager indicating whether the profile
   // being edited has any desktop shortcuts.
@@ -110,6 +117,10 @@ class ManageProfileHandler : public OptionsPageUIHandler {
 
   // For generating weak pointers to itself for callbacks.
   base::WeakPtrFactory<ManageProfileHandler> weak_factory_;
+
+  // Used to observe the preference that allows creating managed users, which
+  // can be changed by policy.
+  PrefChangeRegistrar pref_change_registrar_;
 
   DISALLOW_COPY_AND_ASSIGN(ManageProfileHandler);
 };

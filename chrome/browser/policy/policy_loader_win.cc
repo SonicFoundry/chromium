@@ -24,11 +24,11 @@
 #include "base/logging.h"
 #include "base/scoped_native_library.h"
 #include "base/stl_util.h"
-#include "base/string16.h"
-#include "base/string_util.h"
+#include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/sys_byteorder.h"
-#include "base/utf_string_conversions.h"
 #include "base/win/registry.h"
 #include "chrome/browser/policy/policy_bundle.h"
 #include "chrome/browser/policy/policy_load_status.h"
@@ -49,6 +49,7 @@ namespace {
 
 const char kKeyMandatory[] = "policy";
 const char kKeyRecommended[] = "recommended";
+const char kKeyRecommendedChrome[] = "Recommended";
 const char kKeySchema[] = "schema";
 const char kKeyThirdParty[] = "3rdparty";
 
@@ -64,14 +65,14 @@ class Wow64Functions {
       wow_64_disable_wow_64_fs_redirection_(NULL),
       wow_64_revert_wow_64_fs_redirection_(NULL) {
     if (kernel32_lib_.is_valid()) {
-      is_wow_64_process_ = static_cast<IsWow64Process>(
+      is_wow_64_process_ = reinterpret_cast<IsWow64Process>(
           kernel32_lib_.GetFunctionPointer("IsWow64Process"));
       wow_64_disable_wow_64_fs_redirection_ =
-          static_cast<Wow64DisableWow64FSRedirection>(
+          reinterpret_cast<Wow64DisableWow64FSRedirection>(
               kernel32_lib_.GetFunctionPointer(
                   "Wow64DisableWow64FsRedirection"));
       wow_64_revert_wow_64_fs_redirection_ =
-          static_cast<Wow64RevertWow64FSRedirection>(
+          reinterpret_cast<Wow64RevertWow64FSRedirection>(
               kernel32_lib_.GetFunctionPointer(
                   "Wow64RevertWow64FsRedirection"));
     }
@@ -531,7 +532,7 @@ scoped_ptr<PolicyBundle> PolicyLoaderWin::Load() {
     // Remove special-cased entries from the GPO dictionary.
     base::DictionaryValue* temp_dict = NULL;
     scoped_ptr<base::DictionaryValue> recommended_dict(
-        RemoveDict(&gpo_dict, kKeyRecommended));
+        RemoveDict(&gpo_dict, kKeyRecommendedChrome));
     scoped_ptr<base::DictionaryValue> third_party_dict(
         RemoveDict(&gpo_dict, kKeyThirdParty));
 

@@ -6,6 +6,7 @@
 #define CHROMEOS_DISPLAY_OUTPUT_CONFIGURATOR_H_
 
 #include <map>
+#include <string>
 #include <vector>
 
 #include "base/basictypes.h"
@@ -35,18 +36,10 @@ enum OutputState {
   STATE_DUAL_EXTENDED,
 };
 
-// Information that is necessary to construct display id
-// in |OutputConfigurator::Delegate|.
-// TODO(oshima): Move xrandr related functions to here
-// from ui/base/x and replace this with display id list.
-struct OutputInfo {
-  RROutput output;
-  int output_index;
-};
-
 // This class interacts directly with the underlying Xrandr API to manipulate
 // CTRCs and Outputs.
-class CHROMEOS_EXPORT OutputConfigurator : public MessageLoop::Dispatcher {
+class CHROMEOS_EXPORT OutputConfigurator
+    : public base::MessageLoop::Dispatcher {
  public:
   // Information about an output's current state.
   struct OutputSnapshot {
@@ -70,6 +63,11 @@ class CHROMEOS_EXPORT OutputConfigurator : public MessageLoop::Dispatcher {
 
     // XInput device ID or 0 if this output isn't a touchscreen.
     int touch_device_id;
+
+    // Display id for this output.
+    int64 display_id;
+
+    bool has_display_id;
   };
 
   struct CoordinateTransformation {
@@ -113,8 +111,17 @@ class CHROMEOS_EXPORT OutputConfigurator : public MessageLoop::Dispatcher {
     virtual ~StateController() {}
 
     // Called when displays are detected.
-    virtual OutputState GetStateForOutputs(
-        const std::vector<OutputInfo>& outputs) const = 0;
+    virtual OutputState GetStateForDisplayIds(
+        const std::vector<int64>& display_ids) const = 0;
+  };
+
+  // Interface for classes that implement software based mirroring.
+  class SoftwareMirroringController {
+   public:
+    virtual ~SoftwareMirroringController() {}
+
+    // Called when the hardware mirroring failed.
+    virtual void SetSoftwareMirroring(bool enabled) = 0;
   };
 
   // Interface for classes that perform actions on behalf of OutputController.
@@ -221,9 +228,6 @@ class CHROMEOS_EXPORT OutputConfigurator : public MessageLoop::Dispatcher {
   // See crbug.com/130188 for initial discussion.
   static const int kVerticalGap = 60;
 
-  // Returns true if an output named |name| is an internal display.
-  static bool IsInternalOutputName(const std::string& name);
-
   OutputConfigurator();
   virtual ~OutputConfigurator();
 
@@ -232,6 +236,9 @@ class CHROMEOS_EXPORT OutputConfigurator : public MessageLoop::Dispatcher {
 
   void set_state_controller(StateController* controller) {
     state_controller_ = controller;
+  }
+  void set_mirroring_controller(SoftwareMirroringController* controller) {
+    mirroring_controller_ = controller;
   }
 
   // Replaces |delegate_| with |delegate| and sets |configure_display_| to
@@ -296,6 +303,16 @@ class CHROMEOS_EXPORT OutputConfigurator : public MessageLoop::Dispatcher {
   void NotifyOnDisplayChanged();
 
   // Switches to the state specified in |output_state| and |power_state|.
+  // If the hardware mirroring failed and |mirroring_controller_| is set,
+  // it switches to |STATE_DUAL_EXTENDED| and calls |SetSoftwareMirroring()|
+  // to enable software based mirroing.
+  // On success, updates |output_state_| and |power_state_| and returns true.
+  bool EnterStateOrFallBackToSoftwareMirroring(
+      OutputState output_state,
+      DisplayPowerState power_state,
+      const std::vector<OutputSnapshot>& outputs);
+
+  // Switches to the state specified in |output_state| and |power_state|.
   // On success, updates |output_state_| and |power_state_| and returns true.
   bool EnterState(OutputState output_state,
                   DisplayPowerState power_state,
@@ -318,6 +335,7 @@ class CHROMEOS_EXPORT OutputConfigurator : public MessageLoop::Dispatcher {
       const OutputConfigurator::OutputSnapshot* output);
 
   StateController* state_controller_;
+  SoftwareMirroringController* mirroring_controller_;
   scoped_ptr<Delegate> delegate_;
 
   // Key of the map is the touch display's id, and the value of the map is the
@@ -353,6 +371,8 @@ class CHROMEOS_EXPORT OutputConfigurator : public MessageLoop::Dispatcher {
 
   DISALLOW_COPY_AND_ASSIGN(OutputConfigurator);
 };
+
+typedef std::vector<OutputConfigurator::OutputSnapshot> OutputSnapshotList;
 
 }  // namespace chromeos
 

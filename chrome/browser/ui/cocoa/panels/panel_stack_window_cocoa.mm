@@ -84,7 +84,9 @@ void PanelStackWindowCocoa::AddPanel(Panel* panel) {
 void PanelStackWindowCocoa::RemovePanel(Panel* panel) {
   panels_.remove(panel);
 
-  [window_ removeChildWindow:panel->GetNativeWindow()];
+  // If the native panel is closed, the native window should already be gone.
+  if (!static_cast<PanelCocoa*>(panel->native_panel())->IsClosed())
+    [window_ removeChildWindow:panel->GetNativeWindow()];
 
   UpdateStackWindowBounds();
 }
@@ -224,7 +226,7 @@ void PanelStackWindowCocoa::EndBatchUpdatePanelBounds() {
   int num_of_animations = 1;
   if (need_to_animate_individual_panels)
     num_of_animations += bounds_updates_.size();
-  scoped_nsobject<NSMutableArray> animations(
+  base::scoped_nsobject<NSMutableArray> animations(
       [[NSMutableArray alloc] initWithCapacity:num_of_animations]);
 
   // Add the animation for each panel in the update list.
@@ -331,6 +333,10 @@ void PanelStackWindowCocoa::DrawSystemAttention(bool draw_attention) {
     [NSApp cancelUserAttentionRequest:attention_request_id_];
     attention_request_id_ = 0;
   }
+}
+
+void PanelStackWindowCocoa::OnPanelActivated(Panel* panel) {
+  // Nothing to do.
 }
 
 void PanelStackWindowCocoa::TerminateBoundsAnimation() {

@@ -18,8 +18,8 @@
 #include "cc/trees/single_thread_proxy.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/Source/Platform/chromium/public/WebFilterOperation.h"
-#include "third_party/WebKit/Source/Platform/chromium/public/WebFilterOperations.h"
+#include "third_party/WebKit/public/platform/WebFilterOperation.h"
+#include "third_party/WebKit/public/platform/WebFilterOperations.h"
 #include "ui/gfx/transform.h"
 
 namespace cc {
@@ -220,7 +220,7 @@ template <typename Types> class OcclusionTrackerTest : public testing::Test {
     typename Types::ContentLayerType* layer_ptr = layer.get();
     SetProperties(layer_ptr, transform, position, bounds);
 
-    DCHECK(!root_);
+    DCHECK(!root_.get());
     root_ = Types::PassLayerPtr(&layer);
     return layer_ptr;
   }
@@ -316,11 +316,13 @@ template <typename Types> class OcclusionTrackerTest : public testing::Test {
     LayerTreeHostCommon::CalculateDrawProperties(
         root,
         root->bounds(),
+        gfx::Transform(),
         1.f,
         1.f,
         NULL,
         dummy_max_texture_size,
-        false,
+        false,  // can_use_lcd_text
+        true,  // can_adjust_raster_scales
         &render_surface_layer_list_impl_);
 
     layer_iterator_ = layer_iterator_begin_ =
@@ -333,14 +335,17 @@ template <typename Types> class OcclusionTrackerTest : public testing::Test {
 
     DCHECK(!root->render_surface());
 
-    LayerTreeHostCommon::CalculateDrawProperties(root,
-                                                 root->bounds(),
-                                                 1.f,
-                                                 1.f,
-                                                 NULL,
-                                                 dummy_max_texture_size,
-                                                 false,
-                                                 &render_surface_layer_list_);
+    LayerTreeHostCommon::CalculateDrawProperties(
+        root,
+        root->bounds(),
+        gfx::Transform(),
+        1.f,
+        1.f,
+        NULL,
+        dummy_max_texture_size,
+        false,  // can_use_lcd_text
+        true,  // can_adjust_raster_scales
+        &render_surface_layer_list_);
 
     layer_iterator_ = layer_iterator_begin_ =
         Types::TestLayerIterator::Begin(&render_surface_layer_list_);
@@ -831,7 +836,7 @@ class OcclusionTrackerTestChildInRotatedChild
     typename Types::ContentLayerType* parent = this->CreateRoot(
         this->identity_matrix, gfx::PointF(), gfx::Size(100, 100));
     parent->SetMasksToBounds(true);
-    typename Types::LayerType* child = this->CreateLayer(
+    typename Types::LayerType* child = this->CreateSurface(
         parent, child_transform, gfx::PointF(30.f, 30.f), gfx::Size(500, 500));
     child->SetMasksToBounds(true);
     typename Types::ContentLayerType* layer =
@@ -994,7 +999,7 @@ class OcclusionTrackerTestVisitTargetTwoTimes
     typename Types::ContentLayerType* parent = this->CreateDrawingLayer(
         root, this->identity_matrix, gfx::PointF(), gfx::Size(100, 100), true);
     parent->SetMasksToBounds(true);
-    typename Types::LayerType* child = this->CreateLayer(
+    typename Types::LayerType* child = this->CreateSurface(
         parent, child_transform, gfx::PointF(30.f, 30.f), gfx::Size(500, 500));
     child->SetMasksToBounds(true);
     typename Types::ContentLayerType* layer =
@@ -1231,7 +1236,7 @@ class OcclusionTrackerTestSurfaceWithTwoOpaqueChildren
         root, this->identity_matrix, gfx::PointF(), gfx::Size(100, 100), true);
     parent->SetMasksToBounds(true);
     typename Types::ContentLayerType* child =
-        this->CreateDrawingLayer(parent,
+        this->CreateDrawingSurface(parent,
                                  child_transform,
                                  gfx::PointF(30.f, 30.f),
                                  gfx::Size(500, 500),

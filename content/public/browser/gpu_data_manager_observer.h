@@ -16,7 +16,7 @@ namespace content {
 
 // Observers can register themselves via GpuDataManager::AddObserver, and
 // can un-register with GpuDataManager::RemoveObserver.
-class GpuDataManagerObserver {
+class CONTENT_EXPORT GpuDataManagerObserver {
  public:
   // Called for any observers whenever there is a GPU info update.
   virtual void OnGpuInfoUpdate() {}
@@ -34,6 +34,9 @@ class GpuDataManagerObserver {
 
   // Called for any observer when the GPU process crashed.
   virtual void OnGpuProcessCrashed(base::TerminationStatus exit_code) {}
+
+  // Called for any observer when the system switches to a different GPU.
+  virtual void OnGpuSwitching() {}
 
  protected:
   virtual ~GpuDataManagerObserver() {}

@@ -5,6 +5,9 @@
 #ifndef  CC_TEST_FAKE_TILE_MANAGER_H_
 #define  CC_TEST_FAKE_TILE_MANAGER_H_
 
+#include <set>
+#include <vector>
+
 #include "cc/resources/tile_manager.h"
 
 namespace cc {
@@ -12,12 +15,16 @@ namespace cc {
 class FakeTileManager : public TileManager {
  public:
   explicit FakeTileManager(TileManagerClient* client);
+  FakeTileManager(TileManagerClient* client,
+                  ResourceProvider* resource_provider);
 
-  virtual ~FakeTileManager() { }
+  bool HasBeenAssignedMemory(Tile* tile);
+  void AssignMemoryToTiles();
 
-  protected:
-  // Do nothing
-  virtual void DispatchMoreTasks() OVERRIDE { }
+  virtual ~FakeTileManager();
+
+  std::vector<Tile*> tiles_for_raster;
+  std::vector<scoped_refptr<Tile> > all_tiles;
 };
 
 }  // namespace cc

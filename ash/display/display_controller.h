@@ -32,6 +32,7 @@ namespace ash {
 namespace internal {
 class DisplayManager;
 class FocusActivationStore;
+class MirrorWindowController;
 class RootWindowController;
 }
 
@@ -89,7 +90,7 @@ class ASH_EXPORT DisplayController : public gfx::DisplayObserver {
    public:
     // Invoked when the display configuration change is requested,
     // but before the change is applied to aura/ash.
-    virtual void OnDisplayConfigurationChanging() = 0;
+    virtual void OnDisplayConfigurationChanging() {}
 
     // Invoked when the all display configuration changes
     // have been applied.
@@ -132,8 +133,8 @@ class ASH_EXPORT DisplayController : public gfx::DisplayObserver {
   // Returns the root window for |display_id|.
   aura::RootWindow* GetRootWindowForDisplayId(int64 id);
 
-  // Cycles display mode.
-  void CycleDisplayMode();
+  // Toggle mirror mode.
+  void ToggleMirrorMode();
 
   // Swap primary and secondary display.
   void SwapPrimaryDisplay();
@@ -210,9 +211,7 @@ class ASH_EXPORT DisplayController : public gfx::DisplayObserver {
 
  private:
   friend class internal::DisplayManager;
-
-  // Create a root window for given |display|.
-  aura::RootWindow* CreateRootWindowForDisplay(const gfx::Display& display);
+  friend class internal::MirrorWindowController;
 
   // Creates a root window for |display| and stores it in the |root_windows_|
   // map.
@@ -233,6 +232,14 @@ class ASH_EXPORT DisplayController : public gfx::DisplayObserver {
       bool override);
 
   void OnFadeOutForSwapDisplayFinished();
+
+  // Returns the display layout for the display id pair
+  // with display swapping applied.  That is, this returns
+  // flipped layout if the displays are swapped.
+  DisplayLayout ComputeDisplayLayoutForDisplayIdPair(
+      const DisplayIdPair& display_pair) const;
+
+  void UpdateHostWindowNames();
 
   bool in_bootstrap() const { return in_bootstrap_; }
 

@@ -79,8 +79,13 @@ bool FullscreenController::IsFullscreenCausedByTab() const {
 
 void FullscreenController::ToggleFullscreenModeForTab(WebContents* web_contents,
                                                       bool enter_fullscreen) {
-  if (web_contents != browser_->tab_strip_model()->GetActiveWebContents())
+  if (fullscreened_tab_) {
+    if (web_contents != fullscreened_tab_)
+      return;
+  } else if (
+      web_contents != browser_->tab_strip_model()->GetActiveWebContents()) {
     return;
+  }
   if (IsFullscreenForTabOrPending() == enter_fullscreen)
     return;
 
@@ -468,9 +473,11 @@ void FullscreenController::UpdateNotificationRegistrations() {
 
 void FullscreenController::PostFullscreenChangeNotification(
     bool is_fullscreen) {
-  MessageLoop::current()->PostTask(FROM_HERE,
+  base::MessageLoop::current()->PostTask(
+      FROM_HERE,
       base::Bind(&FullscreenController::NotifyFullscreenChange,
-          ptr_factory_.GetWeakPtr(), is_fullscreen));
+                 ptr_factory_.GetWeakPtr(),
+                 is_fullscreen));
 }
 
 void FullscreenController::NotifyFullscreenChange(bool is_fullscreen) {

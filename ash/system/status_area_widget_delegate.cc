@@ -9,7 +9,7 @@
 #include "ash/shell.h"
 #include "ash/shell_window_ids.h"
 #include "ash/system/tray/tray_constants.h"
-#include "base/utf_string_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "ui/aura/root_window.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
@@ -20,6 +20,11 @@
 
 namespace ash {
 namespace internal {
+namespace {
+
+const int kStatusTrayOffsetFromScreenEdge = 4;
+
+}
 
 StatusAreaWidgetDelegate::StatusAreaWidgetDelegate()
     : focus_cycler_for_testing_(NULL),
@@ -83,25 +88,46 @@ void StatusAreaWidgetDelegate::UpdateLayout() {
   views::ColumnSet* columns = layout->AddColumnSet(0);
   if (alignment_ == SHELF_ALIGNMENT_BOTTOM ||
       alignment_ == SHELF_ALIGNMENT_TOP) {
+    if (alignment_ == SHELF_ALIGNMENT_TOP)
+      layout->SetInsets(kStatusTrayOffsetFromScreenEdge, 0, 0, 0);
+    else
+      layout->SetInsets(0, 0, kStatusTrayOffsetFromScreenEdge, 0);
+    bool is_first_visible_child = true;
     for (int c = 0; c < child_count(); ++c) {
-      if (c != 0)
+      views::View* child = child_at(c);
+      if (!child->visible())
+        continue;
+      if (!is_first_visible_child)
         columns->AddPaddingColumn(0, kTraySpacing);
+      is_first_visible_child = false;
       columns->AddColumn(views::GridLayout::CENTER, views::GridLayout::FILL,
                          0, /* resize percent */
                          views::GridLayout::USE_PREF, 0, 0);
     }
     layout->StartRow(0, 0);
-    for (int c = child_count() - 1; c >= 0; --c)
-      layout->AddView(child_at(c));
+    for (int c = child_count() - 1; c >= 0; --c) {
+      views::View* child = child_at(c);
+      if (child->visible())
+        layout->AddView(child);
+    }
   } else {
+    if (alignment_ == SHELF_ALIGNMENT_LEFT)
+      layout->SetInsets(0, kStatusTrayOffsetFromScreenEdge, 0, 0);
+    else
+      layout->SetInsets(0, 0, 0, kStatusTrayOffsetFromScreenEdge);
     columns->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER,
                        0, /* resize percent */
                        views::GridLayout::USE_PREF, 0, 0);
+    bool is_first_visible_child = true;
     for (int c = child_count() - 1; c >= 0; --c) {
-      if (c != child_count() - 1)
+      views::View* child = child_at(c);
+      if (!child->visible())
+        continue;
+      if (!is_first_visible_child)
         layout->AddPaddingRow(0, kTraySpacing);
+      is_first_visible_child = false;
       layout->StartRow(0, 0);
-      layout->AddView(child_at(c));
+      layout->AddView(child);
     }
   }
   Layout();
@@ -111,6 +137,10 @@ void StatusAreaWidgetDelegate::UpdateLayout() {
 void StatusAreaWidgetDelegate::ChildPreferredSizeChanged(View* child) {
   // Need to resize the window when trays or items are added/removed.
   UpdateWidgetSize();
+}
+
+void StatusAreaWidgetDelegate::ChildVisibilityChanged(View* child) {
+  UpdateLayout();
 }
 
 void StatusAreaWidgetDelegate::UpdateWidgetSize() {
