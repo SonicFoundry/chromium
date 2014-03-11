@@ -508,11 +508,11 @@ bool RenderProcessHostImpl::Init() {
     base::Thread::Options options;
 #if defined(OS_WIN) && !defined(OS_MACOSX)
     // In-process plugins require this to be a UI message loop.
-    options.message_loop_type = base::MessageLoop::TYPE_UI;
+    options.message_loop_type = base::MessageLoop::TYPE_NODE;
 #else
     // We can't have multiple UI loops on Linux and Android, so we don't support
     // in-process plugins.
-    options.message_loop_type = base::MessageLoop::TYPE_DEFAULT;
+    options.message_loop_type = base::MessageLoop::TYPE_NODE;
 #endif
     in_process_renderer_->StartWithOptions(options);
 

@@ -507,35 +507,147 @@ void MessagePumpCFRunLoop::EnterExitRunLoop(CFRunLoopActivity activity) {
   }
 }
 
-MessagePumpNSRunLoop::MessagePumpNSRunLoop()
-    : keep_running_(true) {
+MessagePumpNSRunLoop::MessagePumpNSRunLoop(bool for_node)
+    : keep_running_(true),
+      running_own_loop_(false),
+      pause_uv_(false),
+      for_node_(for_node) {
   CFRunLoopSourceContext source_context = CFRunLoopSourceContext();
   source_context.perform = NoOp;
   quit_source_ = CFRunLoopSourceCreate(NULL,  // allocator
                                        0,     // priority
                                        &source_context);
   CFRunLoopAddSource(run_loop(), quit_source_, kCFRunLoopCommonModes);
+
+  wake_source_ = CFRunLoopSourceCreate(NULL, 0, &source_context);
+  CFRunLoopAddSource(run_loop(), wake_source_, kCFRunLoopCommonModes);
+
+  if (for_node_) {
+    // Add dummy handle for libuv, otherwise libuv would quit when there is
+    // nothing to do.
+    uv_async_init(uv_default_loop(), &dummy_uv_handle_, UvNoOp);
+
+    // Start worker that will interrupt main loop when having uv events.
+    embed_closed_ = 0;
+    uv_sem_init(&embed_sem_, 0);
+    uv_thread_create(&embed_thread_, EmbedThreadRunner, this);
+
+    // Execute loop for once.
+    uv_run(uv_default_loop(), UV_RUN_NOWAIT);
+  }
 }
 
 MessagePumpNSRunLoop::~MessagePumpNSRunLoop() {
   CFRunLoopRemoveSource(run_loop(), quit_source_, kCFRunLoopCommonModes);
   CFRelease(quit_source_);
+  // Clear uv.
+  embed_closed_ = 1;
+  if (for_node_) {
+    uv_thread_join(&embed_thread_);
+  }
 }
 
 void MessagePumpNSRunLoop::DoRun(Delegate* delegate) {
-  while (keep_running_) {
-    // NSRunLoop manages autorelease pools itself.
-    [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
-                             beforeDate:[NSDate distantFuture]];
+  // sofo-ryanm: this causes a BusError for some reason and node seems to work
+  // just fine without it...
+  //v8::HandleScope scope;
+
+  // Pause uv in nested loop.
+  if (for_node_ && (nesting_level() > 0)) {
+    pause_uv_ = true;
   }
 
+  bool last_running_own_loop_ = running_own_loop_;
+
+  // NSApp must be initialized by calling:
+  // [{some class which implements CrAppProtocol} sharedApplication]
+  // Most likely candidates are CrApplication or BrowserCrApplication.
+  // These can be initialized from C++ code by calling
+  // RegisterCrApp() or RegisterBrowserCrApp().
+  //CHECK(NSApp);
+
+  while (keep_running_) {
+    if (!for_node_) {
+      running_own_loop_ = false;
+      // NSRunLoop manages autorelease pools itself.
+      [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
+        beforeDate:[NSDate distantFuture]];
+    } else {
+      running_own_loop_ = true;
+      MessagePumpScopedAutoreleasePool autorelease_pool(this);
+
+      [[NSRunLoop currentRunLoop] acceptInputForMode:NSDefaultRunLoopMode
+                                          beforeDate:[NSDate distantFuture]];
+
+      if (for_node_ && nesting_level() == 0) {
+        // Deal with uv events.
+        if (!uv_run(uv_default_loop(), UV_RUN_NOWAIT)) {
+          VLOG(1) << "Quit from uv";
+          keep_running_ = false; // Quit from uv.
+        }
+
+        // Tell the worker thread to continue polling.
+        uv_sem_post(&embed_sem_);
+      }
+    }
+  }
   keep_running_ = true;
+
+  running_own_loop_ = last_running_own_loop_;
+
+  // Resume uv.
+  if (for_node_ && (nesting_level() > 0)) {
+    pause_uv_ = false;
+    uv_sem_post(&embed_sem_);
+  }
 }
 
 void MessagePumpNSRunLoop::Quit() {
   keep_running_ = false;
   CFRunLoopSourceSignal(quit_source_);
   CFRunLoopWakeUp(run_loop());
+}
+
+void MessagePumpNSRunLoop::EmbedThreadRunner(void *arg) {
+  base::MessagePumpNSRunLoop* message_pump =
+      static_cast<base::MessagePumpNSRunLoop*>(arg);
+
+  int r;
+  struct kevent errors[1];
+
+  while (!message_pump->embed_closed_) {
+    uv_loop_t* loop = uv_default_loop();
+
+    // We should at leat poll every 500ms.
+    int timeout = uv_backend_timeout(loop);
+    if (timeout > 500 || timeout < 0)
+      timeout = 500;
+
+    // Wait for new libuv events.
+    int fd = uv_backend_fd(loop);
+
+    do {
+      struct timespec ts;
+      ts.tv_sec = timeout / 1000;
+      ts.tv_nsec = (timeout % 1000) * 1000000;
+      r = kevent(fd, NULL, 0, errors, 1, &ts);
+    } while (r == -1 && errno == EINTR);
+
+    // Don't wake up main loop if in a nested loop, so we'll keep waiting for
+    // the semaphore and uv loop will be paused.
+    if (!message_pump->pause_uv_) {
+      // Send a fake event to wake the loop up.
+      NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
+
+      CFRunLoopSourceSignal(message_pump->wake_source_);
+      CFRunLoopWakeUp(message_pump->run_loop());
+
+      [pool release];
+    }
+
+    // Wait for the main loop to deal with events.
+    uv_sem_wait(&message_pump->embed_sem_);
+  }
 }
 
 #if defined(OS_IOS)
@@ -780,15 +892,15 @@ bool MessagePumpMac::IsHandlingSendEvent() {
 
 // static
 MessagePump* MessagePumpMac::Create(bool forNode) {
+  if (!CommandLine::ForCurrentProcess()->HasSwitch("nodejs"))
+    forNode = false;
+
   if ([NSThread isMainThread]) {
 #if defined(OS_IOS)
     return new MessagePumpUIApplication;
 #else
     if ([NSApp conformsToProtocol:@protocol(CrAppProtocol)])
       return new MessagePumpCrApplication();
-
-    if (!CommandLine::ForCurrentProcess()->HasSwitch("nodejs"))
-      forNode = false;
 
     // The main-thread MessagePump implementations REQUIRE an NSApp.
     // Executables which have specific requirements for their
@@ -800,7 +912,7 @@ MessagePump* MessagePumpMac::Create(bool forNode) {
 #endif
   }
 
-  return new MessagePumpNSRunLoop;
+  return new MessagePumpNSRunLoop(forNode);
 }
 
 }  // namespace base
